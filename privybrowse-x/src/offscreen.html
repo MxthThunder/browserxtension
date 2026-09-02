@@ -1,0 +1,25 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>PrivyBrowse X — offscreen inference host</title>
+</head>
+<body>
+  <!--
+    This document is never visible. It exists because of three MV3 constraints
+    that together make the service worker the wrong place for a vision model:
+
+      1. The service worker has no DOM, so no canvas, no ImageBitmap drawing,
+         and no OffscreenCanvas 2d context in the way we need it.
+      2. navigator.gpu is generally not exposed to service workers, so the
+         WebGPU execution provider cannot initialise there at all.
+      3. Service workers are terminated after ~30s idle. Reloading ~6MB of
+         weights on every wake would dominate the latency number we have to
+         report, and would make the first action after any pause feel broken.
+
+    The offscreen document keeps the ORT session warm for the life of the
+    browser session. The service worker becomes a pure message router.
+  -->
+  <script type="module" src="offscreen.js"></script>
+</body>
+</html>

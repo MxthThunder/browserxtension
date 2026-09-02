@@ -1,0 +1,90 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <style>
+    :root {
+      --bg: #0f172a;
+      --card: #1e293b;
+      --accent: #3b82f6;
+      --text: #f8fafc;
+      --muted: #94a3b8;
+    }
+    body {
+      width: 260px;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      padding: 16px;
+      margin: 0;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .brand {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-bottom: 12px;
+    }
+    .brand-icon { font-size: 20px; }
+    h1 {
+      font-size: 13px;
+      margin: 0;
+      font-weight: 700;
+      color: #fff;
+    }
+    .badge-pill {
+      display: inline-block;
+      font-size: 10px;
+      padding: 2px 6px;
+      background: rgba(16, 185, 129, 0.2);
+      color: #34d399;
+      border-radius: 9999px;
+      font-weight: 600;
+      margin-bottom: 12px;
+    }
+    button {
+      width: 100%;
+      padding: 9px;
+      margin-bottom: 8px;
+      border: none;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 12px;
+      font-weight: 600;
+      transition: all 0.15s;
+    }
+    .btn-hud {
+      background: #2563eb;
+      color: white;
+      box-shadow: 0 2px 4px rgba(37, 99, 235, 0.3);
+    }
+    .btn-hud:hover { background: #1d4ed8; }
+    .btn-scan { background: #ef4444; color: white; }
+    .btn-scan:hover { background: #dc2626; }
+    .btn-demo { background: #334155; color: #e2e8f0; }
+    .btn-demo:hover { background: #475569; }
+    .btn-clear { background: transparent; border: 1px solid #334155; color: var(--muted); }
+    .btn-clear:hover { background: #1e293b; }
+    #status {
+      font-size: 11px;
+      color: var(--muted);
+      margin-top: 6px;
+      text-align: center;
+    }
+  </style>
+</head>
+<body>
+  <div class="brand">
+    <span class="brand-icon">🛡️</span>
+    <h1>Visual Privacy Agent</h1>
+  </div>
+  <div class="badge-pill">⚡ WebGPU Accelerated</div>
+
+  <button id="openHud" class="btn-hud">📊 Open Live Side-by-Side HUD</button>
+  <button id="scan" class="btn-scan">🔍 Highlight DOM PII in Page</button>
+  <button id="openDemo" class="btn-demo">🧪 Open Demo Banking Page</button>
+  <button id="clear" class="btn-clear">Clear Page Overlays</button>
+
+  <div id="status">Ready.</div>
+  <script src="popup.js"></script>
+</body>
+</html>

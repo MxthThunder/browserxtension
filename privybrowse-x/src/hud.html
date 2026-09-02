@@ -1,0 +1,206 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<title>PrivyBrowse X — Live Redaction HUD</title>
+<style>
+  :root {
+    color-scheme: light;
+    --bg: #f7f7f5;
+    --panel: #ffffff;
+    --ink: #16150f;
+    --muted: #6b6a63;
+    --line: #e3e2dc;
+    --danger: #c0392b;
+    --safe: #1a7f4b;
+    --accent: #1f4fd8;
+    --mono: ui-monospace, "SF Mono", "Cascadia Mono", Menlo, monospace;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: var(--bg); color: var(--ink);
+    font: 14px/1.5 -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  header {
+    padding: 14px 20px; background: var(--panel);
+    border-bottom: 1px solid var(--line);
+    display: flex; align-items: center; gap: 14px; flex-wrap: wrap;
+  }
+  h1 { font-size: 15px; margin: 0; letter-spacing: -0.01em; font-weight: 650; }
+  .sub { color: var(--muted); font-size: 12px; }
+  .spacer { flex: 1; }
+
+  button {
+    font: inherit; font-size: 13px; padding: 7px 14px;
+    border: 1px solid var(--line); border-radius: 6px;
+    background: var(--panel); color: var(--ink); cursor: pointer;
+  }
+  button:hover:not(:disabled) { background: #f0efe9; }
+  button:disabled { opacity: .45; cursor: not-allowed; }
+  button.primary { background: var(--ink); color: #fff; border-color: var(--ink); }
+  button.primary:hover:not(:disabled) { background: #333127; }
+
+  .badge {
+    font: 600 11px/1 var(--mono); padding: 4px 8px;
+    border-radius: 4px; text-transform: uppercase; letter-spacing: .04em;
+  }
+  .badge.webgpu { background: #d6f5e3; color: var(--safe); }
+  .badge.wasm   { background: #fdf0d0; color: #8a6100; }
+  .badge.none   { background: #f6dcd8; color: var(--danger); }
+
+  main { padding: 20px; display: grid; gap: 18px; grid-template-columns: 1fr 340px; }
+  @media (max-width: 1100px) { main { grid-template-columns: 1fr; } }
+
+  .panels { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 720px) { .panels { grid-template-columns: 1fr; } }
+
+  .panel {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; overflow: hidden;
+  }
+  .panel h2 {
+    margin: 0; padding: 10px 14px; font-size: 12px; font-weight: 650;
+    letter-spacing: .04em; text-transform: uppercase;
+    border-bottom: 1px solid var(--line); display: flex;
+    align-items: center; justify-content: space-between; gap: 8px;
+  }
+  .panel.raw h2   { color: var(--danger); }
+  .panel.safe h2  { color: var(--safe); }
+  .panel .body { padding: 10px; min-height: 220px; display: grid; place-items: center; }
+  canvas { max-width: 100%; height: auto; display: block; border-radius: 4px; }
+  .placeholder { color: var(--muted); font-size: 13px; text-align: center; padding: 40px 20px; }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line);
+    border-radius: 10px; padding: 14px; margin-bottom: 14px;
+  }
+  .card h3 {
+    margin: 0 0 10px; font-size: 12px; text-transform: uppercase;
+    letter-spacing: .04em; color: var(--muted); font-weight: 650;
+  }
+  .kv { display: flex; justify-content: space-between; gap: 12px; padding: 3px 0; font-size: 13px; }
+  .kv .k { color: var(--muted); }
+  .kv .v { font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .big { font: 650 26px/1.1 var(--mono); font-variant-numeric: tabular-nums; }
+
+  .bar { height: 7px; border-radius: 4px; background: #eceae2; overflow: hidden; display: flex; margin: 6px 0 2px; }
+  .bar span { display: block; height: 100%; }
+
+  table { width: 100%; border-collapse: collapse; font-size: 12px; }
+  th, td { text-align: left; padding: 5px 6px; border-bottom: 1px solid var(--line); }
+  th { color: var(--muted); font-weight: 600; font-size: 11px; text-transform: uppercase; }
+  td.num { font-family: var(--mono); text-align: right; font-variant-numeric: tabular-nums; }
+  .src-dom   { color: var(--accent); font-weight: 600; }
+  .src-model { color: #8a3ffc; font-weight: 600; }
+
+  .alert { padding: 10px 12px; border-radius: 7px; font-size: 13px; margin-bottom: 12px; display: none; }
+  .alert.err  { background: #fbe6e2; color: #8c2a1c; border: 1px solid #f0c2b8; display: block; }
+  .alert.warn { background: #fdf3da; color: #7a5c00; border: 1px solid #f0dfae; display: block; }
+  .alert.ok   { background: #ddf5e7; color: #14663c; border: 1px solid #b6e6cb; display: block; }
+
+  code { font-family: var(--mono); font-size: 12px; background: #f0efe9; padding: 1px 4px; border-radius: 3px; }
+  pre {
+    font-family: var(--mono); font-size: 11px; background: #f7f6f1;
+    border: 1px solid var(--line); border-radius: 6px; padding: 10px;
+    max-height: 220px; overflow: auto; margin: 0; white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .foot { padding: 0 20px 24px; color: var(--muted); font-size: 12px; max-width: 900px; }
+</style>
+</head>
+<body>
+
+<header>
+  <h1>PrivyBrowse X</h1>
+  <span class="sub">Live redaction HUD</span>
+  <span id="backendBadge" class="badge none">loading</span>
+  <div class="spacer"></div>
+  <button id="btnCapture" class="primary" disabled>Capture &amp; redact</button>
+  <button id="btnLoop" disabled>Start loop</button>
+  <button id="btnExport" disabled>Export metrics</button>
+</header>
+
+<main>
+  <div>
+    <div id="alert" class="alert"></div>
+
+    <div class="panels">
+      <section class="panel raw">
+        <h2>
+          <span>Raw capture — never transmitted</span>
+          <span id="rawDims" class="sub"></span>
+        </h2>
+        <div class="body">
+          <canvas id="rawCanvas" hidden></canvas>
+          <div id="rawPlaceholder" class="placeholder">
+            Switch to the tab you want to analyse, then come back and press
+            <strong>Capture &amp; redact</strong>.
+          </div>
+        </div>
+      </section>
+
+      <section class="panel safe">
+        <h2>
+          <span>Redacted — this is what leaves the device</span>
+          <span id="safeDims" class="sub"></span>
+        </h2>
+        <div class="body">
+          <canvas id="safeCanvas" hidden></canvas>
+          <div id="safePlaceholder" class="placeholder">Awaiting first frame.</div>
+        </div>
+      </section>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h3>Sanitized payload — exactly what the server receives</h3>
+      <pre id="digestOut">No payload yet.</pre>
+    </div>
+  </div>
+
+  <aside>
+    <div class="card">
+      <h3>End-to-end latency</h3>
+      <div class="big"><span id="totalMs">—</span> <span style="font-size:14px;color:var(--muted)">ms</span></div>
+      <div class="bar" id="stageBar"></div>
+      <div id="stageList"></div>
+    </div>
+
+    <div class="card">
+      <h3>Steady state</h3>
+      <div class="kv"><span class="k">p50</span><span class="v" id="p50">—</span></div>
+      <div class="kv"><span class="k">p95</span><span class="v" id="p95">—</span></div>
+      <div class="kv"><span class="k">frames (post-warmup)</span><span class="v" id="frameCount">—</span></div>
+      <div class="kv"><span class="k">cold start</span><span class="v" id="coldStart">—</span></div>
+      <div class="kv"><span class="k">model load</span><span class="v" id="loadMs">—</span></div>
+      <div class="kv"><span class="k">JS heap</span><span class="v" id="heap">—</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Detections this frame</h3>
+      <div class="kv"><span class="k">DOM layer</span><span class="v" id="domCount">—</span></div>
+      <div class="kv"><span class="k">Vision layer</span><span class="v" id="visionCount">—</span></div>
+      <div class="kv"><span class="k">Masks applied</span><span class="v" id="maskCount">—</span></div>
+      <div class="kv"><span class="k">Digest redactions</span><span class="v" id="digestCount">—</span></div>
+    </div>
+
+    <div class="card">
+      <h3>Mask inventory</h3>
+      <table>
+        <thead><tr><th>Src</th><th>Kind</th><th>Layer</th><th class="num">Conf</th></tr></thead>
+        <tbody id="maskRows"><tr><td colspan="4" style="color:var(--muted)">No frame yet.</td></tr></tbody>
+      </table>
+    </div>
+  </aside>
+</main>
+
+<p class="foot">
+  The left panel is rendered locally for demonstration only and is never serialised
+  to the network. Masks are fully opaque — no alpha blending, no pixelation — because
+  blurred and pixelated text is recoverable. If the vision model fails to load or
+  inference throws, the pipeline <strong>fails closed</strong> and emits nothing rather
+  than transmitting a partially-redacted frame.
+</p>
+
+<script type="module" src="hud.js"></script>
+</body>
+</html>

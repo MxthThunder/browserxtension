@@ -1,0 +1,38 @@
+{
+  "manifest_version": 3,
+  "name": "Visual Perception Privacy Agent (On-Device WebGPU)",
+  "version": "0.3.0",
+  "description": "Day 3: Client-side visual perception with zero-leakage canvas redaction and live side-by-side telemetry HUD.",
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "offscreen"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": ["lib/*", "hud.html", "hud.js", "hud.css", "demo.html"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
