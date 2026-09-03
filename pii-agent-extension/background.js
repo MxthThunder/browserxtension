@@ -56,8 +56,9 @@ async function captureAndRedactActiveTab(options = {}) {
     type: "PROCESS_FRAME",
     payload: {
       screenshotUrl,
-      domBoxes: domData.boxes || [],
-      viewport: domData.viewport || { width: 1, height: 1 },
+      domBoxes:       domData.boxes          || [],
+      visualElements: domData.visualElements || [], // <img>/<canvas>/<video> for targeted OCR
+      viewport:       domData.viewport       || { width: 1, height: 1 },
       options,
     },
   });

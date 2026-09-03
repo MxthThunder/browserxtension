@@ -185,14 +185,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       };
     });
 
-    // Also extract non-sensitive interactive elements for server VLM reasoning
+    // Non-sensitive interactive elements for server VLM reasoning
     const interactive = getInteractiveElements();
+
+    // Visual element regions for targeted OCR (images, canvases, video frames).
+    // These are areas DOM scanner is blind to — the OCR layer will scan them.
+    const visualElements = getVisualElements();
 
     sendResponse({
       ok: true,
       boxes,
       count: boxes.length,
       interactiveElements: interactive,
+      visualElements,
       dpr: window.devicePixelRatio || 1,
       viewport: {
         width: window.innerWidth,
@@ -248,6 +253,36 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
   return true;
 });
+
+/**
+ * Returns viewport-visible <img>, <canvas>, <video>, and <embed> regions.
+ * The OCR layer crops these from the screenshot and scans only these areas,
+ * avoiding expensive full-page OCR. Minimum 50×50 px to skip decorative icons.
+ */
+function getVisualElements() {
+  const selectors = "img, canvas, video, object, embed, svg";
+  const elements  = document.querySelectorAll(selectors);
+  const list      = [];
+
+  elements.forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    // Skip tiny/hidden elements (decorative icons, tracking pixels, etc.)
+    if (rect.width < 50 || rect.height < 50) return;
+    if (rect.top > window.innerHeight || rect.bottom < 0) return; // off-screen
+
+    list.push({
+      tag:    el.tagName.toLowerCase(),
+      x:      Math.round(rect.left),
+      y:      Math.round(rect.top),
+      width:  Math.round(rect.width),
+      height: Math.round(rect.height),
+      src:    el.src || el.data || "",
+      alt:    el.alt || el.title || "",
+    });
+  });
+
+  return list;
+}
 
 function getInteractiveElements() {
   const elements = document.querySelectorAll("button, a, input, select, textarea");
