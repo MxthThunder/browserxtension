@@ -67,3 +67,7 @@ pii-agent-extension/lib/tesseract/tesseract-core*.wasm.js
 
 # All model weight directories (download separately via setup script)
 pii-agent-extension/models/Xenova/
+
+# Local nested workspaces
+browserxtension/
+browserxtension-models_added/

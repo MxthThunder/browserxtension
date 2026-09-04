@@ -24,42 +24,22 @@ FILES = [
         "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.min.js",
         "lib/transformers.min.js",
     ),
+    # ORT WASM (ONNX Runtime Web 1.14.0 matching @xenova/transformers 2.17.2)
     (
-        "https://cdn.jsdelivr.net/npm/@xenova/transformers@2.17.2/dist/transformers.web.min.js",
-        "lib/transformers.web.min.js",
-    ),
-    # ORT WASM (ONNX Runtime Web)
-    (
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/ort-wasm-simd-threaded.asyncify.mjs",
-        "lib/ort-wasm-simd-threaded.asyncify.mjs",
+        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort-wasm.wasm",
+        "lib/ort-wasm.wasm",
     ),
     (
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/ort-wasm-simd-threaded.asyncify.wasm",
-        "lib/ort-wasm-simd-threaded.asyncify.wasm",
-    ),
-    (
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/ort-wasm-simd-threaded.jsep.mjs",
-        "lib/ort-wasm-simd-threaded.jsep.mjs",
-    ),
-    (
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/ort-wasm-simd-threaded.jsep.wasm",
-        "lib/ort-wasm-simd-threaded.jsep.wasm",
-    ),
-    (
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/ort-wasm-simd-threaded.mjs",
-        "lib/ort-wasm-simd-threaded.mjs",
-    ),
-    (
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/ort-wasm-simd-threaded.wasm",
-        "lib/ort-wasm-simd-threaded.wasm",
-    ),
-    (
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/ort-wasm-simd.wasm",
+        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort-wasm-simd.wasm",
         "lib/ort-wasm-simd.wasm",
     ),
     (
-        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.20.0/dist/ort-wasm.wasm",
-        "lib/ort-wasm.wasm",
+        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort-wasm-threaded.wasm",
+        "lib/ort-wasm-threaded.wasm",
+    ),
+    (
+        "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort-wasm-simd-threaded.wasm",
+        "lib/ort-wasm-simd-threaded.wasm",
     ),
     # Tesseract.js
     (
@@ -91,6 +71,36 @@ FILES = [
         "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@0.10.14/vision_bundle.mjs",
         "lib/mediapipe/vision_bundle.mjs",
     ),
+    # MediaPipe Face Model
+    (
+        "https://storage.googleapis.com/mediapipe-models/face_detector/blaze_face_short_range/float16/latest/blaze_face_short_range.tflite",
+        "lib/mediapipe/blaze_face_short_range.tflite",
+    ),
+    # OWL-ViT Model Configs & Weights (Transformers.js / ONNX)
+    (
+        "https://huggingface.co/Xenova/owlvit-base-patch32/raw/main/config.json",
+        "models/Xenova/owlvit-base-patch32/config.json",
+    ),
+    (
+        "https://huggingface.co/Xenova/owlvit-base-patch32/raw/main/preprocessor_config.json",
+        "models/Xenova/owlvit-base-patch32/preprocessor_config.json",
+    ),
+    (
+        "https://huggingface.co/Xenova/owlvit-base-patch32/raw/main/tokenizer.json",
+        "models/Xenova/owlvit-base-patch32/tokenizer.json",
+    ),
+    (
+        "https://huggingface.co/Xenova/owlvit-base-patch32/raw/main/tokenizer_config.json",
+        "models/Xenova/owlvit-base-patch32/tokenizer_config.json",
+    ),
+    (
+        "https://huggingface.co/Xenova/owlvit-base-patch32/raw/main/special_tokens_map.json",
+        "models/Xenova/owlvit-base-patch32/special_tokens_map.json",
+    ),
+    (
+        "https://huggingface.co/Xenova/owlvit-base-patch32/resolve/main/onnx/model_quantized.onnx",
+        "models/Xenova/owlvit-base-patch32/onnx/model_quantized.onnx",
+    ),
 ]
 
 MODEL_INSTRUCTIONS = """
@@ -116,17 +126,18 @@ def download(url, dest_rel):
         return
     print(f"  [DL]    {dest_rel} ...")
     try:
-        with urllib.request.urlopen(url, timeout=60) as r, open(dest, "wb") as f:
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=60) as r, open(dest, "wb") as f:
             shutil.copyfileobj(r, f)
         size_kb = os.path.getsize(dest) // 1024
-        print(f"          → {size_kb} KB")
+        print(f"          -> {size_kb} KB")
     except Exception as e:
         print(f"  [FAIL]  {dest_rel}: {e}", file=sys.stderr)
 
 
 if __name__ == "__main__":
     print("=" * 60)
-    print("PrivyBrowse-X — Vendor File Setup")
+    print("PrivyBrowse-X -- Vendor File Setup")
     print("=" * 60)
     for url, dest in FILES:
         download(url, dest)
@@ -134,3 +145,4 @@ if __name__ == "__main__":
     print(MODEL_INSTRUCTIONS)
     print("=" * 60)
     print("Done. Reload the extension at chrome://extensions")
+

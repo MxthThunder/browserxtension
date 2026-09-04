@@ -71,6 +71,7 @@
     {
       "resources": [
         "models/*",
+        "models/**/*",
         "lib/*",
         "lib/mediapipe/*",
         "lib/tesseract/*",
