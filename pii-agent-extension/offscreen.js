@@ -11,6 +11,9 @@
  */
 
 import { pipeline, env, RawImage } from "./lib/transformers.min.js";
+import { buildUnifiedPerceptionState } from "./perception.js";
+import { defaultPrivacyEngine } from "./privacy_engine.js";
+import { defaultPrivacyReasoner } from "./local_reasoner.js";
 
 // ── ONNX Runtime / Transformers.js config ────────────────────────────────────
 env.allowLocalModels  = true;
@@ -175,12 +178,12 @@ async function initOCR() {
         return null;
       }
       tessWorker = await Tesseract.createWorker("eng", 1, {
-        workerPath: chrome.runtime.getURL("lib/tesseract/worker.min.js"),
-        corePath:   chrome.runtime.getURL("lib/tesseract/"),
-        // Language data fetched from CDN via fetch() (not importScripts, so CSP-safe)
-        langPath:   "https://tessdata.projectnaptha.com/4.0.0_fast",
-        cacheMethod: "write",
-        logger: () => {},
+        workerPath:    chrome.runtime.getURL("lib/tesseract/worker.min.js"),
+        corePath:      chrome.runtime.getURL("lib/tesseract/tesseract-core.wasm.js"),
+        langPath:      chrome.runtime.getURL("lib/tesseract/"),
+        workerBlobURL: false,
+        cacheMethod:   "write",
+        logger:        () => {},
       });
       tessReady = true;
       console.log("[Offscreen] Tesseract OCR ready");
@@ -505,6 +508,31 @@ async function processAndRedactFrame(payload) {
     `(${Math.round(totalTime)}ms)`
   );
 
+  // ── Step 1: Build Unified Perception Representation ───────────────────────
+  const unifiedPerceptionState = buildUnifiedPerceptionState({
+    domElements: payload.interactiveElements || [],
+    domSensitiveBoxes: domBoxes || [],
+    owlvitDetections: owlRedactions || [],
+    faceDetections: faceRedactions || [],
+    ocrDetections: ocrRedactions || [],
+    viewport: viewport,
+    url: payload.url || "",
+  });
+
+  // ── Step 2: Local Privacy Engine Evaluation ────────────────────────────────
+  let privacyDecisionManifest = defaultPrivacyEngine.evaluatePerceptionState(
+    unifiedPerceptionState,
+    { url: payload.url || "", options: payload.options || {} }
+  );
+
+  // ── Step 3: Local Reasoning Model (Ambiguity Resolution) ───────────────────
+  if (privacyDecisionManifest.ambiguousElements?.length > 0) {
+    privacyDecisionManifest = await defaultPrivacyReasoner.resolveManifestAmbiguities(
+      privacyDecisionManifest,
+      { url: payload.url || "", userTask: payload.userTask || "" }
+    );
+  }
+
   return {
     ok: true,
     activeBackend,
@@ -512,6 +540,8 @@ async function processAndRedactFrame(payload) {
     rawImageUrl,
     integrityHash,
     redactionList: finalRedactionBoxes,
+    unifiedPerceptionState,
+    privacyDecisionManifest,
     resolution: { width, height },
     timings: {
       totalRedactionLatencyMs: totalTime,

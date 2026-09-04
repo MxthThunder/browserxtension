@@ -171,8 +171,10 @@ async function captureAndRedactActiveTab(options = {}) {
     payload: {
       screenshotUrl,
       domBoxes: domData.boxes || [],
+      interactiveElements: domData.interactiveElements || [],
       viewport: domData.viewport || { width: 1, height: 1, devicePixelRatio: 1 },
       options: mergedOptions,
+      url: tab.url || "",
     },
   });
 

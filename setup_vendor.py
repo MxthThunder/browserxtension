@@ -41,7 +41,7 @@ FILES = [
         "https://cdn.jsdelivr.net/npm/onnxruntime-web@1.14.0/dist/ort-wasm-simd-threaded.wasm",
         "lib/ort-wasm-simd-threaded.wasm",
     ),
-    # Tesseract.js
+    # Tesseract.js & Local Core WASM
     (
         "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/tesseract.min.js",
         "lib/tesseract/tesseract.min.js",
@@ -49,6 +49,30 @@ FILES = [
     (
         "https://cdn.jsdelivr.net/npm/tesseract.js@5.1.0/dist/worker.min.js",
         "lib/tesseract/worker.min.js",
+    ),
+    (
+        "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm.js",
+        "lib/tesseract/tesseract-core.wasm.js",
+    ),
+    (
+        "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core.wasm",
+        "lib/tesseract/tesseract-core.wasm",
+    ),
+    (
+        "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core-simd.wasm",
+        "lib/tesseract/tesseract-core-simd.wasm",
+    ),
+    (
+        "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core-simd-lstm.wasm",
+        "lib/tesseract/tesseract-core-simd-lstm.wasm",
+    ),
+    (
+        "https://cdn.jsdelivr.net/npm/tesseract.js-core@5.0.0/tesseract-core-lstm.wasm",
+        "lib/tesseract/tesseract-core-lstm.wasm",
+    ),
+    (
+        "https://tessdata.projectnaptha.com/4.0.0_fast/eng.traineddata.gz",
+        "lib/tesseract/eng.traineddata.gz",
     ),
     # MediaPipe Vision
     (
