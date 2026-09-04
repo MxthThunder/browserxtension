@@ -82,6 +82,7 @@
         "local_reasoner.js",
         "vault.js",
         "semantic_redactor.js",
+        "agent_client.js",
         "popup.html",
         "popup.js",
         "popup.css",

@@ -56,8 +56,7 @@ export async function getSettings() {
           resolve({ ...DEFAULT_SETTINGS });
         }
       });
-    } else {
-      // Local fallback for standalone testing
+    } else if (typeof localStorage !== "undefined") {
       const saved = localStorage.getItem("pii_agent_settings");
       if (saved) {
         try {
@@ -68,6 +67,8 @@ export async function getSettings() {
       } else {
         resolve({ ...DEFAULT_SETTINGS });
       }
+    } else {
+      resolve({ ...DEFAULT_SETTINGS });
     }
   });
 }
