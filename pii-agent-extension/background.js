@@ -1,13 +1,19 @@
 /**
  * Background Service Worker (Manifest V3)
  * 
- * Coordinates between active tab (DOM PII coordinates),
- * tab capture (visible viewport screenshot),
- * and the offscreen WebGPU document for zero-leakage redaction.
+ * Central coordinator for:
+ * 1. Offscreen WebGPU document lifecycle.
+ * 2. Tab screenshot capture and DOM coordinate aggregation.
+ * 3. Toolbar badge counters and context menus.
+ * 4. Closed-loop agent execution with FastAPI VLM server.
+ * 5. Persistent audit logging and settings synchronization.
  */
+
+import { getSettings, saveSettings, logAuditEntry, DEFAULT_SETTINGS } from "./storage.js";
 
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
+// Ensure offscreen document exists for WebGPU inference and canvas redaction
 async function ensureOffscreenDocument() {
   if (await chrome.offscreen.hasDocument()) {
     return;
@@ -15,9 +21,82 @@ async function ensureOffscreenDocument() {
   await chrome.offscreen.createDocument({
     url: OFFSCREEN_DOCUMENT_PATH,
     reasons: ["BLOBS"],
-    justification: "Client-side WebGPU vision inference and canvas redaction",
+    justification: "Client-side WebGPU vision inference and zero-leakage canvas redaction",
   });
-  console.log("[Background] Offscreen document created.");
+  console.log("[Background] Offscreen WebGPU document initialized.");
+}
+
+// Installation & Update Hook
+chrome.runtime.onInstalled.addListener(async (details) => {
+  console.log("[Background] Extension installed/updated:", details.reason);
+  await ensureOffscreenDocument();
+
+  // Initialize context menus
+  chrome.contextMenus.removeAll(() => {
+    chrome.contextMenus.create({
+      id: "menu_inspect_pii",
+      title: "🛡️ Highlight Sensitive PII on Page",
+      contexts: ["page", "selection", "editable"],
+    });
+    chrome.contextMenus.create({
+      id: "menu_open_hub",
+      title: "🚀 Open Visual Privacy Hub (Popup)",
+      contexts: ["page"],
+    });
+    chrome.contextMenus.create({
+      id: "menu_toggle_protection",
+      title: "🔒 Toggle Protection for this Tab",
+      contexts: ["page"],
+    });
+  });
+});
+
+// Handle Context Menu Clicks
+chrome.contextMenus.onClicked.addListener(async (info, tab) => {
+  if (!tab || !tab.id) return;
+
+  if (info.menuItemId === "menu_inspect_pii") {
+    try {
+      await chrome.tabs.sendMessage(tab.id, { type: "HIGHLIGHT_DOM" });
+    } catch (e) {
+      console.warn("Could not highlight DOM:", e);
+    }
+  } else if (info.menuItemId === "menu_open_hub") {
+    // Open popup or side panel
+    if (chrome.sidePanel && chrome.sidePanel.open) {
+      chrome.sidePanel.open({ windowId: tab.windowId });
+    }
+  } else if (info.menuItemId === "menu_toggle_protection") {
+    const settings = await getSettings();
+    await saveSettings({ enabled: !settings.enabled });
+    updateBadge(!settings.enabled);
+  }
+});
+
+// Handle Keyboard Shortcuts
+chrome.commands.onCommand.addListener(async (command) => {
+  const settings = await getSettings();
+  if (command === "toggle-protection") {
+    const newState = !settings.enabled;
+    await saveSettings({ enabled: newState });
+    updateBadge(newState);
+  } else if (command === "capture-sanitize") {
+    try {
+      await captureAndRedactActiveTab();
+    } catch (e) {
+      console.error("Shortcut capture error:", e);
+    }
+  }
+});
+
+function updateBadge(enabled, piiCount = 0) {
+  if (!enabled) {
+    chrome.action.setBadgeText({ text: "OFF" });
+    chrome.action.setBadgeBackgroundColor({ color: "#ef4444" });
+  } else {
+    chrome.action.setBadgeText({ text: piiCount > 0 ? `${piiCount}` : "ON" });
+    chrome.action.setBadgeBackgroundColor({ color: piiCount > 0 ? "#ef4444" : "#10b981" });
+  }
 }
 
 async function getActiveTab() {
@@ -25,14 +104,37 @@ async function getActiveTab() {
   return tab;
 }
 
+/**
+ * Checks if a domain is on the user's exclusion/allowlist.
+ */
+function isDomainWhitelisted(url, whitelist = []) {
+  if (!url || !Array.isArray(whitelist) || whitelist.length === 0) return false;
+  try {
+    const hostname = new URL(url).hostname.toLowerCase();
+    return whitelist.some((w) => hostname === w.toLowerCase() || hostname.endsWith("." + w.toLowerCase()));
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Executes zero-leakage capture and client-side redaction pipeline.
+ */
 async function captureAndRedactActiveTab(options = {}) {
+  const settings = await getSettings();
   const tab = await getActiveTab();
+
   if (!tab || !tab.id) {
     throw new Error("No active tab found to capture.");
   }
 
+  // Check domain allowlist
+  if (isDomainWhitelisted(tab.url, settings.domainWhitelist)) {
+    console.log("[Background] Domain is whitelisted, skipping visual redaction:", tab.url);
+  }
+
   // 1. Fetch live DOM PII boxes from the active tab's content script
-  let domData = { boxes: [], viewport: { width: 1, height: 1 } };
+  let domData = { boxes: [], viewport: { width: 1, height: 1, devicePixelRatio: 1 } };
   try {
     const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
     if (response && response.ok) {
@@ -42,25 +144,56 @@ async function captureAndRedactActiveTab(options = {}) {
     console.warn("[Background] Could not contact content script on tab:", err.message);
   }
 
+  // Update badge with detected PII count
+  updateBadge(settings.enabled, (domData.boxes || []).length);
+
   // 2. Capture tab screenshot
   const screenshotUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
     format: "jpeg",
     quality: 90,
   });
 
-  // 3. Ensure offscreen document is active
+  // 3. Ensure offscreen document is ready
   await ensureOffscreenDocument();
 
   // 4. Send to offscreen engine for WebGPU inference + Canvas Redaction
+  const mergedOptions = {
+    threshold: settings.detectionConfidence,
+    faceProxyPct: settings.faceProxyPercent,
+    engineMode: settings.engineMode,
+    categories: settings.categories,
+    failClosed: settings.failClosed,
+    ...options,
+  };
+
   const result = await chrome.runtime.sendMessage({
     type: "PROCESS_FRAME",
     payload: {
       screenshotUrl,
       domBoxes: domData.boxes || [],
-      viewport: domData.viewport || { width: 1, height: 1 },
-      options,
+      viewport: domData.viewport || { width: 1, height: 1, devicePixelRatio: 1 },
+      options: mergedOptions,
     },
   });
+
+  if (!result || !result.ok) {
+    if (settings.failClosed) {
+      throw new Error(`Zero-Leakage Guarantee: Redaction failed (${result?.error || "Unknown"}). Execution blocked.`);
+    }
+  }
+
+  // 5. Record compliance audit entry
+  if (result && result.ok) {
+    await logAuditEntry({
+      url: tab.url,
+      tabTitle: tab.title,
+      redactionsCount: (result.redactionList || []).length,
+      redactionManifest: result.redactionList || [],
+      backend: result.activeBackend || "WebGPU",
+      latencyMs: result.timings?.totalRedactionLatencyMs || 0,
+      breakdown: result.timings || {},
+    });
+  }
 
   return {
     ...result,
@@ -70,46 +203,17 @@ async function captureAndRedactActiveTab(options = {}) {
   };
 }
 
-// Handle runtime messages
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message.type === "CAPTURE_AND_REDACT") {
-    captureAndRedactActiveTab(message.options)
-      .then((data) => sendResponse(data))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
-    return true;
-  }
-
-  // Day 4: Full closed-loop task execution with server
-  if (message.type === "DISPATCH_TASK") {
-    executeTaskWithServer(message.task, message.options)
-      .then((res) => sendResponse(res))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
-    return true;
-  }
-
-  if (message.type === "OPEN_HUD") {
-    const hudUrl = chrome.runtime.getURL("hud.html");
-    chrome.tabs.query({ url: hudUrl }, (tabs) => {
-      if (tabs && tabs.length > 0) {
-        chrome.tabs.update(tabs[0].id, { active: true });
-      } else {
-        chrome.tabs.create({ url: hudUrl });
-      }
-      sendResponse({ ok: true });
-    });
-    return true;
-  }
-
-  return true;
-});
-
-const SERVER_ENDPOINT = "http://127.0.0.1:8001/api/act";
-
+/**
+ * Closed-loop agent execution with FastAPI VLM Server.
+ */
 async function executeTaskWithServer(task, options = {}) {
+  const settings = await getSettings();
+  const startTime = performance.now();
+
   // 1. Capture and redact locally on client
   const captureResult = await captureAndRedactActiveTab(options);
   if (!captureResult || !captureResult.ok) {
-    throw new Error("Local canvas redaction failed: " + (captureResult?.error || "Unknown"));
+    throw new Error("Client canvas redaction failed: " + (captureResult?.error || "Unknown"));
   }
 
   // 2. Fetch interactive DOM elements from active tab
@@ -139,9 +243,15 @@ async function executeTaskWithServer(task, options = {}) {
   };
 
   // 4. Send to server VLM endpoint
-  const resp = await fetch(SERVER_ENDPOINT, {
+  const headers = { "Content-Type": "application/json" };
+  if (settings.apiKey) {
+    headers["Authorization"] = `Bearer ${settings.apiKey}`;
+  }
+
+  const endpoint = settings.serverUrl || "http://127.0.0.1:8001/api/act";
+  const resp = await fetch(endpoint, {
     method: "POST",
-    headers: { "Content-Type": "application/json" },
+    headers,
     body: JSON.stringify(payload),
   });
 
@@ -161,16 +271,50 @@ async function executeTaskWithServer(task, options = {}) {
     });
   }
 
+  const totalCycleLatencyMs = performance.now() - startTime;
+
   return {
     ok: true,
     task,
-    captureResult,
-    serverResult,
+    action: serverResult.action,
+    serverAudit: serverResult.audit,
+    clientTimings: captureResult.timings,
+    totalCycleLatencyMs,
     executionResult,
+    redactionCount: (captureResult.redactionList || []).length,
+    backend: captureResult.activeBackend,
   };
 }
 
-chrome.runtime.onInstalled.addListener(async () => {
-  console.log("[Background] Visual Perception Privacy Agent installed.");
-  await ensureOffscreenDocument().catch(console.error);
+// Runtime Message Router
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "CAPTURE_AND_REDACT") {
+    captureAndRedactActiveTab(message.options)
+      .then((data) => sendResponse(data))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "DISPATCH_TASK") {
+    executeTaskWithServer(message.task, message.options)
+      .then((res) => sendResponse(res))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "OPEN_OPTIONS") {
+    chrome.runtime.openOptionsPage();
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === "OPEN_POPUP") {
+    if (chrome.sidePanel && chrome.sidePanel.open && sender.tab) {
+      chrome.sidePanel.open({ tabId: sender.tab.id });
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  return true;
 });

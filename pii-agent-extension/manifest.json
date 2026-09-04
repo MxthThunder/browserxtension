@@ -1,13 +1,21 @@
 {
   "manifest_version": 3,
   "name": "Visual Perception Privacy Agent (On-Device WebGPU)",
-  "version": "0.3.0",
-  "description": "Day 3: Client-side visual perception with zero-leakage canvas redaction and live side-by-side telemetry HUD.",
+  "version": "1.2.0",
+  "description": "Zero-Leakage On-Device Visual Perception Privacy Agent for Autonomous Browser Automation (ISRO PS #26171)",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
   "permissions": [
     "activeTab",
     "scripting",
     "tabs",
-    "offscreen"
+    "offscreen",
+    "sidePanel",
+    "storage",
+    "contextMenus"
   ],
   "host_permissions": [
     "<all_urls>"
@@ -17,7 +25,36 @@
     "type": "module"
   },
   "action": {
-    "default_popup": "popup.html"
+    "default_popup": "popup.html",
+    "default_title": "Visual Perception Privacy Agent",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "commands": {
+    "toggle-protection": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+P",
+        "mac": "Command+Shift+P"
+      },
+      "description": "Toggle Privacy Protection On/Off"
+    },
+    "capture-sanitize": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Capture and Redact Current Screen"
+    }
   },
   "content_scripts": [
     {
@@ -31,7 +68,19 @@
   },
   "web_accessible_resources": [
     {
-      "resources": ["lib/*", "hud.html", "hud.js", "hud.css", "demo.html"],
+      "resources": [
+        "lib/*",
+        "icons/*",
+        "popup.html",
+        "popup.js",
+        "popup.css",
+        "options.html",
+        "options.js",
+        "options.css",
+        "demo.html",
+        "demo-photo.jpg",
+        "benchmark_results.json"
+      ],
       "matches": ["<all_urls>"]
     }
   ]

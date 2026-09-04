@@ -1,42 +1,67 @@
 /**
- * Day 1: DOM-based PII scanner.
- *
- * Goal: find sensitive form fields on the current page using ONLY cheap,
- * high-precision signals (no ML yet — that comes in Day 2/3 for things
- * PII detection can't catch, like a face inside a webcam <video> feed
- * or a photographed ID card).
- *
- * Three detection layers, ordered by how sensitive is the field:
- *   1. type="password"                      -> always sensitive
- *   2. autocomplete token (cc-number, etc.)  -> spec-defined, very reliable
- *   3. name/id/placeholder/aria-label regex  -> catches everything else
+ * Content Script (Manifest V3)
+ * 
+ * Runs on every webpage to:
+ * 1. Dynamically scan & monitor DOM-based PII fields via MutationObserver.
+ * 2. Deliver precise bounding box coordinates for offscreen WebGPU canvas redaction.
+ * 3. Render optional visual privacy indicators and action execution ripples.
+ * 4. Execute synthesized native browser events from centralized VLM agent.
  */
 
+// Sensitive Autocomplete Standard Tokens
 const SENSITIVE_AUTOCOMPLETE_TOKENS = [
-  "cc-number", "cc-exp", "cc-exp-month", "cc-exp-year", "cc-csc", "cc-name",
-  "email", "tel", "tel-national", "name", "given-name", "family-name",
-  "street-address", "address-line1", "address-line2", "postal-code",
+  "cc-number", "cc-exp", "cc-exp-month", "cc-exp-year", "cc-csc", "cc-name", "cc-type",
+  "email", "tel", "tel-national", "tel-country-code", "name", "given-name", "family-name",
+  "street-address", "address-line1", "address-line2", "postal-code", "country-name",
   "bday", "bday-day", "bday-month", "bday-year", "current-password",
-  "new-password", "one-time-code"
+  "new-password", "one-time-code", "username", "transaction-amount"
 ];
 
-// Loosely matches common PII-ish field names across sites. This will
-// over-trigger sometimes (fine — DOM layer favors recall+precision
-// trade-off toward "flag it", vision layer can refine later).
+// Regex for field names, labels, placeholders, and ARIA attributes
 const SENSITIVE_NAME_PATTERN =
-  /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|cvv|cvc|pin\b|otp|email|phone|mobile|dob|birth|address|salary|account.?number|ifsc|pan\b/i;
+  /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|cvv|cvc|pin\b|otp|email|phone|mobile|cell|dob|birth|address|salary|account.?number|ifsc|pan[_\b]|kyc|tax.?id|identity/i;
 
+// Regex for scanning visible text nodes containing raw PII patterns
+const INLINE_PII_PATTERNS = {
+  CREDIT_CARD: /\b(?:\d{4}[ -]?){3}\d{4}\b/,
+  SSN: /\b\d{3}-\d{2}-\d{4}\b/,
+  AADHAAR: /\b\d{4}\s\d{4}\s\d{4}\b/,
+  EMAIL: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/,
+  PHONE: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/,
+  PAN: /\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b/
+};
+
+const OVERLAY_ID = "__pii_agent_overlay_layer__";
+const FLOATING_BADGE_ID = "__pii_agent_floating_badge__";
+
+let cachedMatches = [];
+let isProtectionEnabled = true;
+let showPageBadge = true;
+let observer = null;
+
+/**
+ * Classifies an individual DOM element for sensitivity.
+ */
 function classifyElement(el) {
   const type = (el.getAttribute("type") || "").toLowerCase();
   if (type === "password") {
-    return { sensitive: true, reason: "type=password" };
+    return { sensitive: true, category: "passwords", reason: "type=password" };
   }
 
   const autocomplete = (el.getAttribute("autocomplete") || "").toLowerCase();
   for (const token of SENSITIVE_AUTOCOMPLETE_TOKENS) {
     if (autocomplete.includes(token)) {
-      return { sensitive: true, reason: `autocomplete=${token}` };
+      let category = "contactInfo";
+      if (token.startsWith("cc-")) category = "creditCards";
+      if (token.includes("password") || token === "one-time-code") category = "passwords";
+      return { sensitive: true, category, reason: `autocomplete=${token}` };
     }
+  }
+
+  // Check element attributes and associated label text
+  let labelText = "";
+  if (el.labels && el.labels.length > 0) {
+    labelText = Array.from(el.labels).map((l) => l.innerText).join(" ");
   }
 
   const haystack = [
@@ -44,46 +69,360 @@ function classifyElement(el) {
     el.getAttribute("id"),
     el.getAttribute("placeholder"),
     el.getAttribute("aria-label"),
+    el.getAttribute("title"),
+    labelText,
   ]
     .filter(Boolean)
     .join(" ");
 
   if (SENSITIVE_NAME_PATTERN.test(haystack)) {
-    return { sensitive: true, reason: `name/label match: "${haystack}"` };
+    let category = "contactInfo";
+    if (/pass|pin|otp/i.test(haystack)) category = "passwords";
+    else if (/credit|card|cvv|cvc/i.test(haystack)) category = "creditCards";
+    else if (/ssn|aadhar|aadhaar|passport|pan|kyc/i.test(haystack)) category = "govIds";
+    return { sensitive: true, category, reason: `label match: "${haystack.substring(0, 30)}"` };
   }
 
-  return { sensitive: false, reason: null };
+  return { sensitive: false, category: null, reason: null };
 }
 
-function findSensitiveElements() {
-  const candidates = document.querySelectorAll("input, textarea, select");
+/**
+ * Scans the active document for sensitive inputs and visible KYC/PII cards.
+ */
+function scanPageForSensitiveElements() {
+  const candidates = document.querySelectorAll("input, textarea, select, [contenteditable='true']");
   const matches = [];
 
   candidates.forEach((el) => {
     const rect = el.getBoundingClientRect();
-    // Skip hidden/zero-size fields — nothing to redact visually.
-    if (rect.width === 0 || rect.height === 0) return;
+    // Skip invisible/zero-size elements
+    if (rect.width <= 1 || rect.height <= 1) return;
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return; // Outside viewport
+    if (rect.right < 0 || rect.left > window.innerWidth) return;
 
-    const { sensitive, reason } = classifyElement(el);
+    const { sensitive, category, reason } = classifyElement(el);
     if (sensitive) {
-      matches.push({ el, rect, reason });
+      matches.push({
+        el,
+        category,
+        reason,
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
     }
   });
 
+  // Also check for webcam <video> feeds or camera viewports (biometric visual capture)
+  const videos = document.querySelectorAll("video");
+  videos.forEach((vid) => {
+    const rect = vid.getBoundingClientRect();
+    if (rect.width > 20 && rect.height > 20) {
+      matches.push({
+        el: vid,
+        category: "faces",
+        reason: "webcam <video> stream",
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    }
+  });
+
+  cachedMatches = matches;
+  updateFloatingBadge(matches.length);
   return matches;
 }
 
-// ---- Visual overlay (this is your Day 1 "wow" demo primitive) ----
+/**
+ * Extracts interactive DOM element digest for the VLM agent.
+ */
+function extractInteractiveElements() {
+  const elements = [];
+  const nodes = document.querySelectorAll(
+    "button, a, input, select, textarea, [role='button'], [onclick], [tabindex]"
+  );
 
-const OVERLAY_ID = "__pii_agent_overlay_layer__";
+  nodes.forEach((node, idx) => {
+    const rect = node.getBoundingClientRect();
+    if (rect.width === 0 || rect.height === 0) return;
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return;
 
-function clearOverlay() {
-  const existing = document.getElementById(OVERLAY_ID);
-  if (existing) existing.remove();
+    let selector = "";
+    if (node.id) {
+      selector = `#${CSS.escape(node.id)}`;
+    } else if (node.name) {
+      selector = `[name="${CSS.escape(node.name)}"]`;
+    } else if (node.getAttribute("role")) {
+      selector = `[role="${CSS.escape(node.getAttribute("role"))}"]`;
+    } else {
+      selector = `${node.tagName.toLowerCase()}:nth-of-type(${idx + 1})`;
+    }
+
+    elements.push({
+      tag: node.tagName.toLowerCase(),
+      id: node.id || "",
+      name: node.name || "",
+      type: node.type || "",
+      text: (node.innerText || node.value || node.placeholder || "").trim().substring(0, 80),
+      selector,
+      rect: {
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        w: Math.round(rect.width),
+        h: Math.round(rect.height),
+      },
+      is_interactive: true,
+    });
+  });
+
+  return elements;
 }
 
-function drawOverlay(matches) {
-  clearOverlay();
+/**
+ * Renders or updates the subtle on-page floating privacy badge.
+ */
+function updateFloatingBadge(piiCount) {
+  if (!showPageBadge || !isProtectionEnabled) {
+    const existing = document.getElementById(FLOATING_BADGE_ID);
+    if (existing) existing.remove();
+    return;
+  }
+
+  let badge = document.getElementById(FLOATING_BADGE_ID);
+  if (!badge) {
+    badge = document.createElement("div");
+    badge.id = FLOATING_BADGE_ID;
+    Object.assign(badge.style, {
+      position: "fixed",
+      top: "12px",
+      right: "12px",
+      zIndex: "2147483640",
+      background: "rgba(11, 15, 25, 0.88)",
+      backdropFilter: "blur(8px)",
+      border: "1px solid rgba(59, 130, 246, 0.4)",
+      borderRadius: "999px",
+      padding: "5px 12px",
+      color: "#f8fafc",
+      fontSize: "11.5px",
+      fontWeight: "600",
+      display: "flex",
+      alignItems: "center",
+      gap: "6px",
+      boxShadow: "0 4px 15px rgba(0,0,0,0.4)",
+      cursor: "pointer",
+      userSelect: "none",
+      transition: "transform 0.15s ease",
+      fontFamily: "system-ui, -apple-system, sans-serif",
+    });
+
+    badge.addEventListener("mouseenter", () => {
+      badge.style.transform = "scale(1.04)";
+    });
+    badge.addEventListener("mouseleave", () => {
+      badge.style.transform = "scale(1.0)";
+    });
+    badge.addEventListener("click", () => {
+      // Send message to open extension hub
+      chrome.runtime.sendMessage({ type: "OPEN_POPUP" });
+    });
+
+    document.body.appendChild(badge);
+  }
+
+  badge.innerHTML = `
+    <span style="font-size: 13px;">🛡️</span>
+    <span>Zero-Leakage</span>
+    <span style="background: ${piiCount > 0 ? '#ef4444' : '#10b981'}; color: #fff; padding: 1px 6px; border-radius: 999px; font-size: 10px; font-weight: 700;">${piiCount} PII</span>
+  `;
+}
+
+/**
+ * Initializes MutationObserver to detect dynamically inserted elements in SPAs.
+ */
+function initDynamicObserver() {
+  if (observer) observer.disconnect();
+
+  let debounceTimer = null;
+  observer = new MutationObserver(() => {
+    clearTimeout(debounceTimer);
+    debounceTimer = setTimeout(() => {
+      scanPageForSensitiveElements();
+    }, 200);
+  });
+
+  observer.observe(document.body, {
+    childList: true,
+    subtree: true,
+    attributes: true,
+    attributeFilter: ["type", "autocomplete", "name", "style", "class"],
+  });
+}
+
+/**
+ * Visual Ripple Animation for Agent Actions.
+ */
+function animateActionTarget(targetElement, actionType) {
+  const rect = targetElement.getBoundingClientRect();
+  const indicator = document.createElement("div");
+  
+  Object.assign(indicator.style, {
+    position: "fixed",
+    top: `${rect.top}px`,
+    left: `${rect.left}px`,
+    width: `${rect.width}px`,
+    height: `${rect.height}px`,
+    border: "2px solid #10b981",
+    background: "rgba(16, 185, 129, 0.2)",
+    borderRadius: "4px",
+    zIndex: "2147483646",
+    pointerEvents: "none",
+    boxShadow: "0 0 15px #10b981",
+    transition: "all 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
+    display: "flex",
+    alignItems: "center",
+    justifyContent: "center",
+    color: "#fff",
+    fontSize: "12px",
+    fontWeight: "700",
+  });
+
+  indicator.textContent = `🤖 Agent: ${actionType.toUpperCase()}`;
+  document.body.appendChild(indicator);
+
+  setTimeout(() => {
+    indicator.style.opacity = "0";
+    indicator.style.transform = "scale(1.08)";
+    setTimeout(() => indicator.remove(), 600);
+  }, 900);
+}
+
+/**
+ * Synthesizes and executes native browser actions requested by VLM.
+ */
+async function executeAgentAction(action) {
+  let target = null;
+  if (action.selector) {
+    try {
+      target = document.querySelector(action.selector);
+    } catch {
+      target = null;
+    }
+  }
+
+  // Fallback to coordinates if selector was not resolved
+  if (!target && action.coordinates) {
+    target = document.elementFromPoint(action.coordinates.x, action.coordinates.y);
+  }
+
+  if (!target && action.type !== "scroll" && action.type !== "finish") {
+    return { ok: false, error: `Target element not found: ${action.selector || "coords"}` };
+  }
+
+  if (target) {
+    animateActionTarget(target, action.type);
+    target.scrollIntoView({ behavior: "smooth", block: "center" });
+  }
+
+  switch (action.type) {
+    case "click":
+      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
+      target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+      target.click();
+      return { ok: true, executed: "click", selector: action.selector };
+
+    case "type":
+      target.focus();
+      target.value = action.value || "";
+      target.dispatchEvent(new Event("input", { bubbles: true }));
+      target.dispatchEvent(new Event("change", { bubbles: true }));
+      return { ok: true, executed: "type", value: action.value };
+
+    case "scroll":
+      const scrollY = action.value === "up" ? -350 : 350;
+      window.scrollBy({ top: scrollY, behavior: "smooth" });
+      return { ok: true, executed: "scroll", direction: action.value };
+
+    case "submit":
+      if (target.form) {
+        target.form.submit();
+      } else {
+        target.click();
+      }
+      return { ok: true, executed: "submit" };
+
+    case "finish":
+      return { ok: true, executed: "finish", explanation: action.explanation };
+
+    default:
+      return { ok: false, error: `Unknown action type: ${action.type}` };
+  }
+}
+
+// Runtime Message Listener
+chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (message.type === "GET_DOM_PII_BOXES") {
+    const matches = scanPageForSensitiveElements();
+    const interactive = extractInteractiveElements();
+    sendResponse({
+      ok: true,
+      boxes: matches.map((m) => ({
+        x: m.x,
+        y: m.y,
+        width: m.width,
+        height: m.height,
+        category: m.category,
+        reason: m.reason,
+      })),
+      interactiveElements: interactive,
+      viewport: {
+        width: window.innerWidth,
+        height: window.innerHeight,
+        devicePixelRatio: window.devicePixelRatio || 1,
+      },
+    });
+    return true;
+  }
+
+  if (message.type === "EXECUTE_ACTION") {
+    executeAgentAction(message.action)
+      .then((res) => sendResponse(res))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "HIGHLIGHT_DOM") {
+    const matches = scanPageForSensitiveElements();
+    drawHighlightOverlay(matches);
+    sendResponse({ ok: true, count: matches.length });
+    return true;
+  }
+
+  if (message.type === "CLEAR_OVERLAYS") {
+    const layer = document.getElementById(OVERLAY_ID);
+    if (layer) layer.remove();
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  if (message.type === "SETTINGS_CHANGED") {
+    if (message.settings) {
+      isProtectionEnabled = Boolean(message.settings.enabled);
+      showPageBadge = Boolean(message.settings.showPageBadge);
+      scanPageForSensitiveElements();
+    }
+    sendResponse({ ok: true });
+    return true;
+  }
+
+  return true;
+});
+
+function drawHighlightOverlay(matches) {
+  const existing = document.getElementById(OVERLAY_ID);
+  if (existing) existing.remove();
 
   const layer = document.createElement("div");
   layer.id = OVERLAY_ID;
@@ -94,235 +433,52 @@ function drawOverlay(matches) {
     width: "100vw",
     height: "100vh",
     pointerEvents: "none",
-    zIndex: "2147483647", // max z-index, sit above everything
+    zIndex: "2147483647",
   });
 
-  matches.forEach(({ rect, reason }) => {
+  matches.forEach(({ x, y, width, height, reason }) => {
     const box = document.createElement("div");
     Object.assign(box.style, {
       position: "fixed",
-      top: `${rect.top}px`,
-      left: `${rect.left}px`,
-      width: `${rect.width}px`,
-      height: `${rect.height}px`,
-      background: "rgba(0, 0, 0, 0.75)", // black-box redaction look
-      border: "2px solid #ff3b3b",
-      borderRadius: "3px",
+      top: `${y}px`,
+      left: `${x}px`,
+      width: `${width}px`,
+      height: `${height}px`,
+      background: "rgba(239, 68, 68, 0.25)",
+      border: "2px solid #ef4444",
+      borderRadius: "4px",
       boxSizing: "border-box",
     });
 
-    const label = document.createElement("div");
-    label.textContent = "PII";
-    Object.assign(label.style, {
+    const lbl = document.createElement("div");
+    lbl.textContent = `🛡️ PII: ${reason}`;
+    Object.assign(lbl.style, {
       position: "absolute",
       top: "-18px",
       left: "0",
       fontSize: "10px",
-      fontFamily: "monospace",
-      color: "#ff3b3b",
-      background: "white",
-      padding: "1px 4px",
-      borderRadius: "2px",
+      fontWeight: "700",
+      background: "#ef4444",
+      color: "#fff",
+      padding: "1px 5px",
+      borderRadius: "3px",
+      whiteSpace: "nowrap",
     });
-    box.title = reason; // hover to see why it was flagged
-    box.appendChild(label);
+
+    box.appendChild(lbl);
     layer.appendChild(box);
   });
 
-  document.documentElement.appendChild(layer);
+  document.body.appendChild(layer);
 }
 
-function runScan() {
-  const matches = findSensitiveElements();
-  drawOverlay(matches);
-  console.log(`[PII Agent] found ${matches.length} sensitive field(s)`, matches);
-  return matches.length;
-}
-
-// Re-draw on scroll/resize so boxes track the fields (fixed positioning
-// means the coordinates go stale otherwise).
-window.addEventListener("scroll", () => runScan(), { passive: true });
-window.addEventListener("resize", () => runScan());
-
-// Listen for messages from popup or background/HUD.
-chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  if (message?.type === "SCAN") {
-    const count = runScan();
-    sendResponse({ count });
-    return true;
-  }
-  if (message?.type === "CLEAR") {
-    clearOverlay();
-    sendResponse({ ok: true });
-    return true;
-  }
-  if (message?.type === "GET_DOM_PII_BOXES") {
-    const matches = findSensitiveElements();
-    const boxes = matches.map(({ el, rect, reason }) => {
-      // Calculate CSS selector
-      let selector = el.tagName.toLowerCase();
-      if (el.id) {
-        selector += `#${el.id}`;
-      } else if (el.name) {
-        selector += `[name="${el.name}"]`;
-      }
-
-      return {
-        x: rect.left,
-        y: rect.top,
-        width: rect.width,
-        height: rect.height,
-        left: rect.left,
-        top: rect.top,
-        right: rect.right,
-        bottom: rect.bottom,
-        reason,
-        tag: el.tagName.toLowerCase(),
-        type: el.getAttribute("type") || "",
-        name: el.getAttribute("name") || "",
-        id: el.getAttribute("id") || "",
-        selector,
-      };
-    });
-
-    // Also extract non-sensitive interactive elements for server VLM reasoning
-    const interactive = getInteractiveElements();
-
-    sendResponse({
-      ok: true,
-      boxes,
-      count: boxes.length,
-      interactiveElements: interactive,
-      dpr: window.devicePixelRatio || 1,
-      viewport: {
-        width: window.innerWidth,
-        height: window.innerHeight,
-        scrollX: window.scrollX,
-        scrollY: window.scrollY,
-      },
-    });
-    return true;
-  }
-
-  // Day 4: Execute VLM Agent action returned from server
-  if (message?.type === "EXECUTE_ACTION") {
-    const { action } = message;
-    let target = null;
-
-    if (action?.selector) {
-      try {
-        target = document.querySelector(action.selector);
-      } catch (e) {
-        console.warn("[PII Agent] Invalid selector:", action.selector);
-      }
-    }
-
-    if (!target && action?.coordinates) {
-      target = document.elementFromPoint(action.coordinates.x, action.coordinates.y);
-    }
-
-    if (target) {
-      // Visual feedback: flash green ring around target
-      showActionPulse(target, action.type);
-
-      if (action.type === "click" || action.type === "submit") {
-        target.focus();
-        target.click();
-        console.log(`[PII Agent] Executed CLICK on`, target);
-      } else if (action.type === "type" && action.value) {
-        target.focus();
-        target.value = action.value;
-        target.dispatchEvent(new Event("input", { bubbles: true }));
-        target.dispatchEvent(new Event("change", { bubbles: true }));
-        console.log(`[PII Agent] Executed TYPE '${action.value}' on`, target);
-      } else if (action.type === "scroll" && action.coordinates) {
-        window.scrollBy({ top: action.coordinates.y, behavior: "smooth" });
-      }
-
-      sendResponse({ ok: true, executed: true, tag: target.tagName, selector: action.selector });
-    } else {
-      sendResponse({ ok: false, error: "Target element not found on page" });
-    }
-    return true;
-  }
-
-  return true;
-});
-
-function getInteractiveElements() {
-  const elements = document.querySelectorAll("button, a, input, select, textarea");
-  const list = [];
-
-  elements.forEach((el) => {
-    const rect = el.getBoundingClientRect();
-    if (rect.width === 0 || rect.height === 0) return;
-
-    let selector = el.tagName.toLowerCase();
-    if (el.id) selector = `#${el.id}`;
-    else if (el.name) selector = `[name="${el.name}"]`;
-
-    const text = (el.innerText || el.value || el.placeholder || el.getAttribute("aria-label") || "").trim();
-
-    list.push({
-      tag: el.tagName.toLowerCase(),
-      id: el.id || "",
-      name: el.name || "",
-      type: el.getAttribute("type") || "",
-      text: text.slice(0, 80),
-      selector,
-      rect: {
-        left: Math.round(rect.left),
-        top: Math.round(rect.top),
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
-      },
-    });
+// Initial Boot
+if (document.readyState === "loading") {
+  document.addEventListener("DOMContentLoaded", () => {
+    scanPageForSensitiveElements();
+    initDynamicObserver();
   });
-
-  return list;
+} else {
+  scanPageForSensitiveElements();
+  initDynamicObserver();
 }
-
-function showActionPulse(el, actionType) {
-  const rect = el.getBoundingClientRect();
-  const pulse = document.createElement("div");
-  Object.assign(pulse.style, {
-    position: "fixed",
-    top: `${rect.top - 4}px`,
-    left: `${rect.left - 4}px`,
-    width: `${rect.width + 8}px`,
-    height: `${rect.height + 8}px`,
-    border: "3px solid #10b981",
-    borderRadius: "8px",
-    boxShadow: "0 0 16px #10b981",
-    zIndex: "2147483647",
-    pointerEvents: "none",
-    transition: "all 0.6s ease-out",
-  });
-
-  const tag = document.createElement("div");
-  tag.textContent = `⚡ AGENT ${actionType.toUpperCase()}`;
-  Object.assign(tag.style, {
-    position: "absolute",
-    top: "-22px",
-    left: "0",
-    background: "#10b981",
-    color: "#ffffff",
-    fontSize: "11px",
-    fontWeight: "bold",
-    padding: "2px 6px",
-    borderRadius: "4px",
-    fontFamily: "monospace",
-  });
-
-  pulse.appendChild(tag);
-  document.documentElement.appendChild(pulse);
-
-  setTimeout(() => {
-    pulse.style.opacity = "0";
-    pulse.style.transform = "scale(1.05)";
-    setTimeout(() => pulse.remove(), 600);
-  }, 1200);
-}
-
-// Auto-run once on load so the demo works even without opening the popup.
-runScan();

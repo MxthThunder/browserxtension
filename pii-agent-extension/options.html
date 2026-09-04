@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Privacy Agent — Preferences & Configuration</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">🛡️</div>
+        <div class="brand-text">
+          <h2>Privacy Agent</h2>
+          <span>ISRO PS #26171</span>
+        </div>
+      </div>
+
+      <nav class="nav-links">
+        <a href="#section-general" class="nav-item active" data-target="section-general">
+          <span class="icon">⚙️</span> General & Protection
+        </a>
+        <a href="#section-engine" class="nav-item" data-target="section-engine">
+          <span class="icon">⚡</span> Engine & WebGPU
+        </a>
+        <a href="#section-categories" class="nav-item" data-target="section-categories">
+          <span class="icon">🎯</span> PII Categories
+        </a>
+        <a href="#section-server" class="nav-item" data-target="section-server">
+          <span class="icon">🤖</span> Backend & VLM Server
+        </a>
+        <a href="#section-whitelist" class="nav-item" data-target="section-whitelist">
+          <span class="icon">🌐</span> Domain Whitelist
+        </a>
+        <a href="#section-audit" class="nav-item" data-target="section-audit">
+          <span class="icon">📋</span> Audit & Compliance
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-indicator">
+          <span class="pulse-dot"></span>
+          <span id="hardwareStatusText">Probing WebGPU...</span>
+        </div>
+        <p class="version">v1.2.0 • Zero-Leakage Client</p>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <header class="content-header">
+        <div>
+          <h1 id="pageTitle">General & Protection Preferences</h1>
+          <p class="subtitle">Configure client-side visual perception and privacy enforcement policies.</p>
+        </div>
+        <div class="header-actions">
+          <button id="btnReset" class="btn btn-secondary">Reset to Defaults</button>
+          <button id="btnSave" class="btn btn-primary">Save Changes</button>
+        </div>
+      </header>
+
+      <!-- Alert Notification Banner -->
+      <div id="saveToast" class="toast hidden">✓ Settings saved successfully!</div>
+
+      <!-- SECTION 1: General & Protection -->
+      <section id="section-general" class="settings-section active">
+        <div class="card">
+          <div class="card-header">
+            <h3>🛡️ Master Protection Guard</h3>
+            <p>Control whether the visual privacy shield actively scans and sanitizes pages.</p>
+          </div>
+          <div class="form-group row">
+            <div class="label-col">
+              <strong>Enable Zero-Leakage Shield</strong>
+              <span>When enabled, sensitive DOM inputs and visual pixels are redacted before any network export.</span>
+            </div>
+            <div class="control-col">
+              <label class="switch">
+                <input type="checkbox" id="chkEnabled" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group row">
+            <div class="label-col">
+              <strong>Strict Fail-Closed Policy</strong>
+              <span>If local model or canvas redaction encounters an error, completely block agent execution rather than risking leakage.</span>
+            </div>
+            <div class="control-col">
+              <label class="switch">
+                <input type="checkbox" id="chkFailClosed" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group row">
+            <div class="label-col">
+              <strong>Show On-Page Privacy Badge</strong>
+              <span>Displays a discrete indicator at the top right of web pages indicating active visual protection.</span>
+            </div>
+            <div class="control-col">
+              <label class="switch">
+                <input type="checkbox" id="chkShowPageBadge" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>⚡ Keyboard Shortcuts</h3>
+            <p>Quick access keys configured in Chrome.</p>
+          </div>
+          <div class="shortcut-list">
+            <div class="shortcut-item">
+              <span>Toggle Privacy Protection</span>
+              <kbd>Ctrl + Shift + P</kbd>
+            </div>
+            <div class="shortcut-item">
+              <span>Capture & Redact Screen</span>
+              <kbd>Ctrl + Shift + S</kbd>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 2: Engine & WebGPU -->
+      <section id="section-engine" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>⚡ Hardware Acceleration & Vision Engine</h3>
+            <p>Choose runtime acceleration backend and tune visual detection sensitivity.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="selEngineMode"><strong>Inference Runtime Backend</strong></label>
+            <select id="selEngineMode" class="form-input">
+              <option value="auto">Auto-Detect (WebGPU Preferred $\rightarrow$ WASM SIMD Fallback)</option>
+              <option value="webgpu">Force WebGPU (Hardware GPU Shader Acceleration)</option>
+              <option value="wasm">Force ONNX WASM SIMD (Universal CPU Execution)</option>
+            </select>
+            <small class="field-hint">Auto-Detect provides ~460ms WebGPU latency with zero-crash CPU fallback.</small>
+          </div>
+
+          <div class="form-group">
+            <div class="slider-header">
+              <label for="numConfidence"><strong>Vision Confidence Threshold</strong></label>
+              <span id="lblConfidenceVal" class="badge-val">0.65</span>
+            </div>
+            <input type="range" id="numConfidence" min="0.30" max="0.95" step="0.05" value="0.65" class="range-slider" />
+            <small class="field-hint">Lower values increase recall (fewer missed objects); higher values increase precision.</small>
+          </div>
+
+          <div class="form-group">
+            <div class="slider-header">
+              <label for="numFaceProxy"><strong>Face Proxy Vertical Slice Ratio</strong></label>
+              <span id="lblFaceProxyVal" class="badge-val">30%</span>
+            </div>
+            <input type="range" id="numFaceProxy" min="0.15" max="0.50" step="0.05" value="0.30" class="range-slider" />
+            <small class="field-hint">Percentage of the upper bounding box of detected persons masked for biometric facial privacy.</small>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>🔍 Hardware Diagnostics</h3>
+            <p>Client device hardware capabilities probed in real time.</p>
+          </div>
+          <div class="diagnostics-grid">
+            <div class="diag-box">
+              <span class="d-label">WebGPU Supported</span>
+              <span id="diagWebgpu" class="d-val">Probing...</span>
+            </div>
+            <div class="diag-box">
+              <span class="d-label">Adapter / GPU</span>
+              <span id="diagGpuName" class="d-val">Detecting...</span>
+            </div>
+            <div class="diag-box">
+              <span class="d-label">WASM SIMD</span>
+              <span id="diagWasm" class="d-val">Supported</span>
+            </div>
+            <div class="diag-box">
+              <span class="d-label">Model Status</span>
+              <span id="diagModel" class="d-val">yolos-tiny (5.9MB)</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 3: PII Categories -->
+      <section id="section-categories" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>🎯 Redaction Target Categories</h3>
+            <p>Select which types of sensitive information the extension should detect and black out.</p>
+          </div>
+
+          <div class="category-grid">
+            <label class="category-card">
+              <input type="checkbox" id="catPasswords" checked />
+              <div class="cat-content">
+                <span class="cat-icon">🔑</span>
+                <strong>Passwords & PINs</strong>
+                <p>HTML password inputs, OTPs, secret credentials, and tokens.</p>
+              </div>
+            </label>
+
+            <label class="category-card">
+              <input type="checkbox" id="catCreditCards" checked />
+              <div class="cat-content">
+                <span class="cat-icon">💳</span>
+                <strong>Payment Cards</strong>
+                <p>Card numbers, CVV/CVC, expiration dates, banking fields.</p>
+              </div>
+            </label>
+
+            <label class="category-card">
+              <input type="checkbox" id="catGovIds" checked />
+              <div class="cat-content">
+                <span class="cat-icon">🪪</span>
+                <strong>Government & KYC IDs</strong>
+                <p>Aadhaar, SSN, PAN, Passport numbers, national ID fields.</p>
+              </div>
+            </label>
+
+            <label class="category-card">
+              <input type="checkbox" id="catFaces" checked />
+              <div class="cat-content">
+                <span class="cat-icon">👤</span>
+                <strong>Biometric Faces & People</strong>
+                <p>Webcam feeds, user profile photos, camera viewports.</p>
+              </div>
+            </label>
+
+            <label class="category-card">
+              <input type="checkbox" id="catContactInfo" checked />
+              <div class="cat-content">
+                <span class="cat-icon">📞</span>
+                <strong>Contact & Identity Info</strong>
+                <p>Phone numbers, personal email addresses, home addresses.</p>
+              </div>
+            </label>
+
+            <label class="category-card">
+              <input type="checkbox" id="catScreens" checked />
+              <div class="cat-content">
+                <span class="cat-icon">💻</span>
+                <strong>Physical Screens & Displays</strong>
+                <p>Monitors, mobile phone screens appearing in camera frames.</p>
+              </div>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 4: Backend & Server -->
+      <section id="section-server" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>🤖 Centralized VLM Reasoning Server</h3>
+            <p>Configure the backend server that plans browser actions based on sanitized screen data.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="txtServerUrl"><strong>Agent Action Endpoint URL</strong></label>
+            <input type="text" id="txtServerUrl" class="form-input" value="http://127.0.0.1:8001/api/act" />
+            <small class="field-hint">Endpoint accepting POST requests with sanitized visual frames.</small>
+          </div>
+
+          <div class="form-group">
+            <label for="txtHealthUrl"><strong>Server Health Check URL</strong></label>
+            <div class="input-with-button">
+              <input type="text" id="txtHealthUrl" class="form-input" value="http://127.0.0.1:8001/health" />
+              <button id="btnTestConnection" class="btn btn-secondary">Test Connection</button>
+            </div>
+            <div id="connectionStatus" class="connection-status">Click Test Connection to probe backend server.</div>
+          </div>
+
+          <div class="form-group">
+            <label for="txtApiKey"><strong>API Authentication Key (Optional)</strong></label>
+            <input type="password" id="txtApiKey" class="form-input" placeholder="Bearer token or custom secret..." />
+            <small class="field-hint">If required by your enterprise cloud proxy or centralized gateway.</small>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 5: Domain Whitelist -->
+      <section id="section-whitelist" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>🌐 Domain Allowlist / Exclusion List</h3>
+            <p>Domains listed here will bypass visual redaction (e.g. trusted internal test domains).</p>
+          </div>
+
+          <div class="whitelist-input-row">
+            <input type="text" id="txtNewDomain" class="form-input" placeholder="e.g. internal.corp or localhost:3000" />
+            <button id="btnAddDomain" class="btn btn-primary">Add Domain</button>
+          </div>
+
+          <div class="domain-list-container">
+            <ul id="domainList" class="domain-list">
+              <!-- Dynamically populated -->
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 6: Audit & Compliance -->
+      <section id="section-audit" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>📋 Compliance Logs & Audit Trail</h3>
+            <p>Review cryptographic logs of all redaction events for privacy verification.</p>
+          </div>
+
+          <div class="audit-controls">
+            <button id="btnExportJson" class="btn btn-secondary">⬇️ Export Audit JSON</button>
+            <button id="btnExportCsv" class="btn btn-secondary">⬇️ Export Audit CSV</button>
+            <button id="btnClearLogs" class="btn btn-danger">Clear All Logs</button>
+          </div>
+
+          <div class="table-responsive">
+            <table class="audit-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Domain / URL</th>
+                  <th>Redaction Count</th>
+                  <th>Backend</th>
+                  <th>Latency</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="auditTableBody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>

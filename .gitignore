@@ -25,3 +25,7 @@ Thumbs.db
 # Environment & Secrets
 .env
 .env.local
+
+# Build outputs
+dist/
+
