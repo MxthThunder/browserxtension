@@ -81,6 +81,7 @@
         "privacy_engine.js",
         "local_reasoner.js",
         "vault.js",
+        "semantic_redactor.js",
         "popup.html",
         "popup.js",
         "popup.css",
