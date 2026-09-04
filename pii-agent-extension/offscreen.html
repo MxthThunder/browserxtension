@@ -7,6 +7,8 @@
 <body>
   <canvas id="offscreenCanvas" style="display:none;"></canvas>
   <canvas id="rawCanvas" style="display:none;"></canvas>
+  <!-- Tesseract.js UMD: exposes global `Tesseract` used by offscreen.js OCR layer -->
+  <script src="lib/tesseract/tesseract.min.js"></script>
   <script type="module" src="offscreen.js"></script>
 </body>
 </html>

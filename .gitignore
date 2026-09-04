@@ -29,3 +29,41 @@ Thumbs.db
 # Build outputs
 dist/
 
+# ── Large Model Weights & Binaries (exceed GitHub 100MB limit / trigger secret scanning) ──
+
+# ONNX model weights
+*.onnx
+*.onnx_data
+
+# PyTorch / Safetensors weights
+*.bin
+*.pt
+*.pth
+*.safetensors
+
+# TFLite models
+*.tflite
+
+# WebAssembly binaries
+*.wasm
+
+# Transformers.js minified bundles (contain token-like strings that trigger GitHub secret scanning)
+pii-agent-extension/lib/transformers.min.js
+pii-agent-extension/lib/transformers.web.min.js
+
+# ORT (ONNX Runtime Web) WASM/ESM bundles
+pii-agent-extension/lib/ort-*.mjs
+
+# MediaPipe WASM bundles
+pii-agent-extension/lib/mediapipe/vision_bundle.mjs
+pii-agent-extension/lib/mediapipe/vision_wasm_internal.*
+pii-agent-extension/lib/mediapipe/vision_wasm_nosimd_internal.*
+
+# Tesseract WASM core bundles + worker
+pii-agent-extension/lib/tesseract/tesseract.min.js
+pii-agent-extension/lib/tesseract/worker.min.js
+pii-agent-extension/lib/tesseract/tesseract-core*.js
+pii-agent-extension/lib/tesseract/tesseract-core*.wasm.js
+
+# All model weight directories (download separately via setup script)
+pii-agent-extension/models/Xenova/

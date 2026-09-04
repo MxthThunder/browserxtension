@@ -60,7 +60,8 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true
     }
   ],
   "content_security_policy": {
@@ -69,8 +70,12 @@
   "web_accessible_resources": [
     {
       "resources": [
+        "models/*",
         "lib/*",
+        "lib/mediapipe/*",
+        "lib/tesseract/*",
         "icons/*",
+        "offscreen.html",
         "popup.html",
         "popup.js",
         "popup.css",

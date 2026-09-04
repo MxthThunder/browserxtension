@@ -122,10 +122,9 @@
   </div>
 
   <div class="container">
-    <!-- Form Card with DOM PII Fields -->
     <div class="card">
       <h2>👤 KYC Verification & Financial Profile</h2>
-      <form onsubmit="event.preventDefault(); alert('Form submitted locally.');">
+      <form id="kycForm">
         <div class="form-group">
           <label>Full Legal Name</label>
           <input type="text" name="full_name" autocomplete="name" value="Jane Doe" />

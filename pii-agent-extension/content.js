@@ -17,9 +17,10 @@ const SENSITIVE_AUTOCOMPLETE_TOKENS = [
   "new-password", "one-time-code", "username", "transaction-amount"
 ];
 
-// Regex for field names, labels, placeholders, and ARIA attributes
+// Regex for field names, labels, placeholders, and ARIA attributes (C3)
+// Fixed: pan[_\b] was matching literal backspace inside []; now uses \bpan\b
 const SENSITIVE_NAME_PATTERN =
-  /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|cvv|cvc|pin\b|otp|email|phone|mobile|cell|dob|birth|address|salary|account.?number|ifsc|pan[_\b]|kyc|tax.?id|identity/i;
+  /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|cvv|cvc|pin\b|otp|email|phone|mobile|cell|dob|birth|address|salary|account.?number|ifsc|\bpan\b|kyc|tax.?id|identity|\bname\b|full.?name|first.?name|last.?name|middle.?name|father|mother|guardian|nominee|gender|signature|photo|selfie|profile|picture/i;
 
 // Regex for scanning visible text nodes containing raw PII patterns
 const INLINE_PII_PATTERNS = {
@@ -44,8 +45,23 @@ let observer = null;
  */
 function classifyElement(el) {
   const type = (el.getAttribute("type") || "").toLowerCase();
+
   if (type === "password") {
     return { sensitive: true, category: "passwords", reason: "type=password" };
+  }
+
+  // C2: File upload inputs that accept images/documents are treated as sensitive
+  if (type === "file") {
+    const accept = (el.getAttribute("accept") || "").toLowerCase();
+    const fileHint = [el.getAttribute("name"), el.getAttribute("id"), el.getAttribute("aria-label")]
+      .filter(Boolean).join(" ");
+    if (/image|pdf|jpg|png|jpeg/i.test(accept) || SENSITIVE_NAME_PATTERN.test(fileHint)) {
+      return {
+        sensitive: true,
+        category: "govIds",
+        reason: `file upload: ${el.getAttribute("name") || el.getAttribute("id") || "photo/doc"}`,
+      };
+    }
   }
 
   const autocomplete = (el.getAttribute("autocomplete") || "").toLowerCase();
@@ -58,10 +74,26 @@ function classifyElement(el) {
     }
   }
 
-  // Check element attributes and associated label text
+  // C4: Resolve label text including via aria-labelledby / aria-describedby
   let labelText = "";
   if (el.labels && el.labels.length > 0) {
     labelText = Array.from(el.labels).map((l) => l.innerText).join(" ");
+  }
+  // Resolve aria-labelledby (space-separated list of element IDs)
+  const ariaLabelledBy = el.getAttribute("aria-labelledby");
+  if (ariaLabelledBy) {
+    ariaLabelledBy.trim().split(/\s+/).forEach((refId) => {
+      const refEl = document.getElementById(refId);
+      if (refEl) labelText += " " + (refEl.innerText || refEl.textContent || "");
+    });
+  }
+  // Resolve aria-describedby (additional context hints)
+  const ariaDescribedBy = el.getAttribute("aria-describedby");
+  if (ariaDescribedBy) {
+    ariaDescribedBy.trim().split(/\s+/).forEach((refId) => {
+      const refEl = document.getElementById(refId);
+      if (refEl) labelText += " " + (refEl.innerText || refEl.textContent || "");
+    });
   }
 
   const haystack = [
@@ -70,6 +102,8 @@ function classifyElement(el) {
     el.getAttribute("placeholder"),
     el.getAttribute("aria-label"),
     el.getAttribute("title"),
+    el.getAttribute("data-field"),
+    el.getAttribute("data-type"),
     labelText,
   ]
     .filter(Boolean)
@@ -79,11 +113,186 @@ function classifyElement(el) {
     let category = "contactInfo";
     if (/pass|pin|otp/i.test(haystack)) category = "passwords";
     else if (/credit|card|cvv|cvc/i.test(haystack)) category = "creditCards";
-    else if (/ssn|aadhar|aadhaar|passport|pan|kyc/i.test(haystack)) category = "govIds";
-    return { sensitive: true, category, reason: `label match: "${haystack.substring(0, 30)}"` };
+    else if (/ssn|aadhar|aadhaar|passport|\bpan\b|kyc/i.test(haystack)) category = "govIds";
+    return { sensitive: true, category, reason: `label match: "${haystack.substring(0, 40)}"` };
   }
 
   return { sensitive: false, category: null, reason: null };
+}
+
+// ── Block element lookup used by text-node scanner ───────────────────────────
+const BLOCK_TAGS = new Set([
+  "DIV", "P", "SECTION", "ARTICLE", "MAIN", "HEADER", "FOOTER", "NAV",
+  "ASIDE", "TR", "TD", "TH", "LI", "DL", "DD", "DT", "BLOCKQUOTE",
+  "PRE", "H1", "H2", "H3", "H4", "H5", "H6", "FORM", "FIELDSET", "FIGURE", "SPAN",
+]);
+
+function isBlockElement(el) {
+  return BLOCK_TAGS.has(el.tagName);
+}
+
+/**
+ * C1: Walks all visible text nodes and flags those matching INLINE_PII_PATTERNS.
+ * Activates the previously dead-code INLINE_PII_PATTERNS constant.
+ * Returns DOM box entries pointing at the text's nearest block-level ancestor.
+ */
+function scanVisibleTextNodes() {
+  const results = [];
+  const seenAncestors = new WeakSet();
+  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "IFRAME", "TEMPLATE", "CANVAS", "SVG"]);
+
+  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+    acceptNode(node) {
+      const parent = node.parentElement;
+      if (!parent) return NodeFilter.FILTER_REJECT;
+      if (SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
+      // Skip our own injected overlay elements
+      if (parent.closest && parent.closest(`#${OVERLAY_ID}, #${FLOATING_BADGE_ID}`)) {
+        return NodeFilter.FILTER_REJECT;
+      }
+      if (node.textContent.trim().length < 5) return NodeFilter.FILTER_SKIP;
+      return NodeFilter.FILTER_ACCEPT;
+    },
+  });
+
+  let node;
+  while ((node = walker.nextNode())) {
+    const text = node.textContent;
+    for (const [patternName, re] of Object.entries(INLINE_PII_PATTERNS)) {
+      if (!re.test(text)) continue;
+
+      // Walk up to find the nearest meaningful block ancestor for bounding box
+      let ancestor = node.parentElement;
+      let depth = 0;
+      while (ancestor && ancestor !== document.body && depth < 6) {
+        if (isBlockElement(ancestor) && depth >= 1) break;
+        ancestor = ancestor.parentElement;
+        depth++;
+      }
+      if (!ancestor || ancestor === document.body) ancestor = node.parentElement;
+      if (!ancestor || seenAncestors.has(ancestor)) break;
+      seenAncestors.add(ancestor);
+
+      const rect = ancestor.getBoundingClientRect();
+      if (rect.width <= 1 || rect.height <= 1) break;
+      if (rect.bottom < 0 || rect.top > window.innerHeight) break;
+      if (rect.right < 0 || rect.left > window.innerWidth) break;
+
+      let category = "contactInfo";
+      if (patternName === "CREDIT_CARD") category = "creditCards";
+      else if (patternName === "SSN" || patternName === "AADHAAR" || patternName === "PAN") category = "govIds";
+
+      results.push({
+        el: ancestor,
+        category,
+        reason: `visible text: ${patternName}`,
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+      break; // one match per text node
+    }
+  }
+  return results;
+}
+
+/**
+ * C6: Recursively collects inputs inside open Shadow DOM roots.
+ * Handles nested shadow roots up to depth 4.
+ */
+function collectShadowInputs(root, depth = 0) {
+  if (depth > 4) return [];
+  const inputs = [];
+  try {
+    root.querySelectorAll("*").forEach((el) => {
+      if (el.shadowRoot) {
+        el.shadowRoot
+          .querySelectorAll("input, textarea, select, [contenteditable='true']")
+          .forEach((input) => inputs.push(input));
+        inputs.push(...collectShadowInputs(el.shadowRoot, depth + 1));
+      }
+    });
+  } catch {
+    // Closed shadow roots are inaccessible by design — silently skip
+  }
+  return inputs;
+}
+
+/** C5: Regex to identify <img> tags that are likely displaying a government ID document. */
+const SENSITIVE_IMG_PATTERN =
+  /aadhaar|aadhar|pan[_-]?card|passport|id[_-]?card|kyc|selfie|voter|license|licence|identity.?proof/i;
+
+/**
+ * Scans a same-origin iframe for sensitive form elements.
+ * Adjusts element bounding boxes by the iframe's position in the parent viewport.
+ * Cross-origin iframes throw a SecurityError which is silently caught and skipped.
+ */
+function scanSameOriginIframe(iframeEl, matches) {
+  let iframeDoc;
+  try {
+    iframeDoc = iframeEl.contentDocument;
+  } catch {
+    return; // cross-origin security error
+  }
+  if (!iframeDoc || !iframeDoc.body) return;
+
+  const ifRect = iframeEl.getBoundingClientRect();
+  if (ifRect.width <= 0 || ifRect.height <= 0) return;
+  if (ifRect.bottom < 0 || ifRect.top > window.innerHeight) return;
+  if (ifRect.right < 0 || ifRect.left > window.innerWidth) return;
+
+  // Form inputs inside the iframe
+  iframeDoc.querySelectorAll("input, textarea, select, [contenteditable='true']").forEach((el) => {
+    const r = el.getBoundingClientRect(); // relative to iframe viewport
+    if (r.width <= 1 || r.height <= 1) return;
+    const { sensitive, category, reason } = classifyElement(el);
+    if (sensitive) {
+      matches.push({
+        el,
+        category,
+        reason: `iframe: ${reason}`,
+        x: Math.round(ifRect.left + r.left),
+        y: Math.round(ifRect.top  + r.top),
+        width:  Math.round(r.width),
+        height: Math.round(r.height),
+      });
+    }
+  });
+
+  // Webcam feeds inside the iframe
+  iframeDoc.querySelectorAll("video").forEach((vid) => {
+    const r = vid.getBoundingClientRect();
+    if (r.width > 20 && r.height > 20) {
+      matches.push({
+        el: vid,
+        category: "faces",
+        reason: "iframe: webcam <video> stream",
+        x: Math.round(ifRect.left + r.left),
+        y: Math.round(ifRect.top  + r.top),
+        width:  Math.round(r.width),
+        height: Math.round(r.height),
+      });
+    }
+  });
+
+  // File upload inputs inside the iframe
+  iframeDoc.querySelectorAll("input[type='file']").forEach((el) => {
+    const r = el.getBoundingClientRect();
+    if (r.width <= 1 || r.height <= 1) return;
+    const { sensitive, category, reason } = classifyElement(el);
+    if (sensitive) {
+      matches.push({
+        el,
+        category,
+        reason: `iframe: ${reason}`,
+        x: Math.round(ifRect.left + r.left),
+        y: Math.round(ifRect.top  + r.top),
+        width:  Math.round(r.width),
+        height: Math.round(r.height),
+      });
+    }
+  });
 }
 
 /**
@@ -97,7 +306,7 @@ function scanPageForSensitiveElements() {
     const rect = el.getBoundingClientRect();
     // Skip invisible/zero-size elements
     if (rect.width <= 1 || rect.height <= 1) return;
-    if (rect.bottom < 0 || rect.top > window.innerHeight) return; // Outside viewport
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return;
     if (rect.right < 0 || rect.left > window.innerWidth) return;
 
     const { sensitive, category, reason } = classifyElement(el);
@@ -114,9 +323,65 @@ function scanPageForSensitiveElements() {
     }
   });
 
-  // Also check for webcam <video> feeds or camera viewports (biometric visual capture)
-  const videos = document.querySelectorAll("video");
-  videos.forEach((vid) => {
+  // C6: Shadow DOM inputs (open shadow roots only)
+  collectShadowInputs(document.body).forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    if (rect.width <= 1 || rect.height <= 1) return;
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+    if (rect.right < 0 || rect.left > window.innerWidth) return;
+    const { sensitive, category, reason } = classifyElement(el);
+    if (sensitive) {
+      matches.push({
+        el,
+        category,
+        reason: `shadow-dom: ${reason}`,
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    }
+  });
+
+  // Same-origin iframe scanning (cross-origin iframes are silently skipped)
+  document.querySelectorAll("iframe").forEach((iframeEl) => {
+    scanSameOriginIframe(iframeEl, matches);
+  });
+
+  // C5: <img> elements displaying likely ID documents
+  document.querySelectorAll("img").forEach((imgEl) => {
+    const rect = imgEl.getBoundingClientRect();
+    if (rect.width < 100 || rect.height < 80) return; // too small to be a document image
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+    if (rect.right < 0 || rect.left > window.innerWidth) return;
+
+    const imgHaystack = [
+      imgEl.getAttribute("src"),
+      imgEl.getAttribute("alt"),
+      imgEl.getAttribute("id"),
+      imgEl.getAttribute("name"),
+      imgEl.getAttribute("class"),
+      imgEl.getAttribute("data-type"),
+    ].filter(Boolean).join(" ");
+
+    if (SENSITIVE_IMG_PATTERN.test(imgHaystack)) {
+      const srcHint = (imgEl.getAttribute("alt") ||
+        imgEl.getAttribute("src")?.split("/").pop()?.substring(0, 30) ||
+        "ID document");
+      matches.push({
+        el: imgEl,
+        category: "govIds",
+        reason: `img: ${srcHint}`,
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    }
+  });
+
+  // Webcam <video> feeds or camera viewports (biometric visual capture)
+  document.querySelectorAll("video").forEach((vid) => {
     const rect = vid.getBoundingClientRect();
     if (rect.width > 20 && rect.height > 20) {
       matches.push({
@@ -130,6 +395,9 @@ function scanPageForSensitiveElements() {
       });
     }
   });
+
+  // C1: Visible text nodes with raw PII patterns (activates INLINE_PII_PATTERNS)
+  scanVisibleTextNodes().forEach((m) => matches.push(m));
 
   cachedMatches = matches;
   updateFloatingBadge(matches.length);
