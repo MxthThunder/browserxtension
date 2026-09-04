@@ -83,6 +83,7 @@
         "vault.js",
         "semantic_redactor.js",
         "agent_client.js",
+        "action_engine.js",
         "popup.html",
         "popup.js",
         "popup.css",
