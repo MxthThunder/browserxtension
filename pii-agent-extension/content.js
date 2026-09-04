@@ -20,7 +20,7 @@ const SENSITIVE_AUTOCOMPLETE_TOKENS = [
 // Regex for field names, labels, placeholders, and ARIA attributes (C3)
 // Fixed: pan[_\b] was matching literal backspace inside []; now uses \bpan\b
 const SENSITIVE_NAME_PATTERN =
-  /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|cvv|cvc|pin\b|otp|email|phone|mobile|cell|dob|birth|address|salary|account.?number|ifsc|\bpan\b|kyc|tax.?id|identity|\bname\b|full.?name|first.?name|last.?name|middle.?name|father|mother|guardian|nominee|gender|signature|photo|selfie|profile|picture/i;
+  /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|card|cvv|cvc|security.?code|expir(y|ation)?|exp|pin\b|otp|email|phone|mobile|cell|tel|dob|birth|address|billing|salary|account.?number|ifsc|\bpan\b|kyc|tax.?id|identity|\bname\b|full.?name|first.?name|last.?name|middle.?name|father|mother|guardian|nominee|gender|signature|photo|selfie|profile|picture/i;
 
 // Regex for scanning visible text nodes containing raw PII patterns
 const INLINE_PII_PATTERNS = {
@@ -50,6 +50,10 @@ function classifyElement(el) {
     return { sensitive: true, category: "passwords", reason: "type=password" };
   }
 
+  if (type === "tel" || type === "email") {
+    return { sensitive: true, category: "contactInfo", reason: `type=${type}` };
+  }
+
   // C2: File upload inputs that accept images/documents are treated as sensitive
   if (type === "file") {
     const accept = (el.getAttribute("accept") || "").toLowerCase();
@@ -71,6 +75,19 @@ function classifyElement(el) {
       if (token.startsWith("cc-")) category = "creditCards";
       if (token.includes("password") || token === "one-time-code") category = "passwords";
       return { sensitive: true, category, reason: `autocomplete=${token}` };
+    }
+  }
+
+  // Check actual typed value if present
+  const val = (el.value || el.innerText || "").trim();
+  if (val.length >= 3) {
+    for (const [patternName, re] of Object.entries(INLINE_PII_PATTERNS)) {
+      if (re.test(val)) {
+        let category = "contactInfo";
+        if (patternName === "CREDIT_CARD") category = "creditCards";
+        else if (patternName === "SSN" || patternName === "AADHAAR" || patternName === "PAN") category = "govIds";
+        return { sensitive: true, category, reason: `value matches ${patternName}` };
+      }
     }
   }
 
@@ -96,6 +113,28 @@ function classifyElement(el) {
     });
   }
 
+  // Contextual DOM ancestor / sibling label search for SPAs (Discord, React modals, Tailwind)
+  let contextualText = "";
+  let curr = el.parentElement;
+  let depth = 0;
+  while (curr && curr !== document.body && depth < 3) {
+    const textNodes = curr.querySelectorAll("label, span, div, p, h1, h2, h3, h4, h5, h6, [class*='label'], [class*='title'], [class*='header']");
+    for (const tn of textNodes) {
+      if (tn !== el && !tn.contains(el)) {
+        const t = (tn.innerText || tn.textContent || "").trim();
+        if (t.length > 0 && t.length < 80) {
+          contextualText += " " + t;
+        }
+      }
+    }
+    // Also check preceding sibling element
+    if (el.previousElementSibling) {
+      contextualText += " " + (el.previousElementSibling.innerText || el.previousElementSibling.textContent || "");
+    }
+    curr = curr.parentElement;
+    depth++;
+  }
+
   const haystack = [
     el.getAttribute("name"),
     el.getAttribute("id"),
@@ -105,6 +144,7 @@ function classifyElement(el) {
     el.getAttribute("data-field"),
     el.getAttribute("data-type"),
     labelText,
+    contextualText,
   ]
     .filter(Boolean)
     .join(" ");
@@ -112,7 +152,7 @@ function classifyElement(el) {
   if (SENSITIVE_NAME_PATTERN.test(haystack)) {
     let category = "contactInfo";
     if (/pass|pin|otp/i.test(haystack)) category = "passwords";
-    else if (/credit|card|cvv|cvc/i.test(haystack)) category = "creditCards";
+    else if (/credit|card|cvv|cvc|expir|security.?code/i.test(haystack)) category = "creditCards";
     else if (/ssn|aadhar|aadhaar|passport|\bpan\b|kyc/i.test(haystack)) category = "govIds";
     return { sensitive: true, category, reason: `label match: "${haystack.substring(0, 40)}"` };
   }
@@ -224,26 +264,51 @@ const SENSITIVE_IMG_PATTERN =
   /aadhaar|aadhar|pan[_-]?card|passport|id[_-]?card|kyc|selfie|voter|license|licence|identity.?proof/i;
 
 /**
- * Scans a same-origin iframe for sensitive form elements.
+ * Scans an iframe (both same-origin and cross-origin payment gateways like Stripe/PayPal).
  * Adjusts element bounding boxes by the iframe's position in the parent viewport.
- * Cross-origin iframes throw a SecurityError which is silently caught and skipped.
  */
-function scanSameOriginIframe(iframeEl, matches) {
-  let iframeDoc;
-  try {
-    iframeDoc = iframeEl.contentDocument;
-  } catch {
-    return; // cross-origin security error
-  }
-  if (!iframeDoc || !iframeDoc.body) return;
-
+function scanIframeElement(iframeEl, matches) {
   const ifRect = iframeEl.getBoundingClientRect();
   if (ifRect.width <= 0 || ifRect.height <= 0) return;
   if (ifRect.bottom < 0 || ifRect.top > window.innerHeight) return;
   if (ifRect.right < 0 || ifRect.left > window.innerWidth) return;
 
-  // Form inputs inside the iframe
-  iframeDoc.querySelectorAll("input, textarea, select, [contenteditable='true']").forEach((el) => {
+  const iframeHaystack = [
+    iframeEl.getAttribute("src"),
+    iframeEl.getAttribute("name"),
+    iframeEl.getAttribute("title"),
+    iframeEl.getAttribute("id"),
+    iframeEl.getAttribute("aria-label"),
+    iframeEl.getAttribute("class"),
+  ].filter(Boolean).join(" ");
+
+  // Identify cross-origin payment iframes (Stripe, PayPal, Braintree, Adyen, card elements)
+  const isPaymentFrame =
+    /stripe|paypal|braintree|adyen|card|payment|checkout|wallet|token/i.test(iframeHaystack) ||
+    SENSITIVE_NAME_PATTERN.test(iframeHaystack);
+
+  if (isPaymentFrame) {
+    matches.push({
+      el: iframeEl,
+      category: "creditCards",
+      reason: `payment frame: ${iframeEl.getAttribute("name") || iframeEl.getAttribute("title") || "Stripe/Payment Gateway"}`,
+      x: Math.round(ifRect.left),
+      y: Math.round(ifRect.top),
+      width: Math.round(ifRect.width),
+      height: Math.round(ifRect.height),
+    });
+  }
+
+  let iframeDoc = null;
+  try {
+    iframeDoc = iframeEl.contentDocument;
+  } catch {
+    return; // cross-origin security error - already flagged as payment frame if matched
+  }
+  if (!iframeDoc || !iframeDoc.body) return;
+
+  // Form inputs inside same-origin iframe
+  iframeDoc.querySelectorAll("input, textarea, select, [contenteditable='true'], [role='textbox'], [role='combobox']").forEach((el) => {
     const r = el.getBoundingClientRect(); // relative to iframe viewport
     if (r.width <= 1 || r.height <= 1) return;
     const { sensitive, category, reason } = classifyElement(el);
@@ -299,7 +364,7 @@ function scanSameOriginIframe(iframeEl, matches) {
  * Scans the active document for sensitive inputs and visible KYC/PII cards.
  */
 function scanPageForSensitiveElements() {
-  const candidates = document.querySelectorAll("input, textarea, select, [contenteditable='true']");
+  const candidates = document.querySelectorAll("input, textarea, select, [contenteditable='true'], [role='textbox'], [role='combobox'], [role='searchbox']");
   const matches = [];
 
   candidates.forEach((el) => {
@@ -343,9 +408,9 @@ function scanPageForSensitiveElements() {
     }
   });
 
-  // Same-origin iframe scanning (cross-origin iframes are silently skipped)
+  // Iframe scanning (both same-origin inputs and cross-origin payment frames like Stripe/PayPal)
   document.querySelectorAll("iframe").forEach((iframeEl) => {
-    scanSameOriginIframe(iframeEl, matches);
+    scanIframeElement(iframeEl, matches);
   });
 
   // C5: <img> elements displaying likely ID documents
@@ -453,6 +518,9 @@ function extractInteractiveElements() {
  * Renders or updates the subtle on-page floating privacy badge.
  */
 function updateFloatingBadge(piiCount) {
+  // Only render floating badge in the top-level window (never inside sub-iframes/modals)
+  if (window.top !== window.self) return;
+
   if (!showPageBadge || !isProtectionEnabled) {
     const existing = document.getElementById(FLOATING_BADGE_ID);
     if (existing) existing.remove();
