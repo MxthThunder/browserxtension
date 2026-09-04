@@ -11,9 +11,9 @@
 | Timestamp | Segment | Visual / Action | Key Speaking Points |
 | :--- | :--- | :--- | :--- |
 | **0:00 – 1:00** | **The Problem & Industry Gap** | Slide 1 & 2 in `pitch_deck.html` | *"Cloud AI browser agents like Gemini Auto Browse and OpenAI Operator leak full screen buffers and passwords to remote servers. Existing PII filters only sanitize text—they are completely blind to faces, cameras, and physical credit cards on the screen."* |
-| **1:00 – 2:30** | **The Live "WOW" Demo** | Switch to `hud.html` & `demo.html` | Show live split-screen: **Raw Screen** on left, **Sanitized Screen** on right.<br>1. Point out: Password, Credit Card, and Face are blacked out live via on-device WebGPU.<br>2. Highlight live HUD telemetry: Latency in ms, WebGPU badge, 100% Zero-Leakage audit. |
-| **2:30 – 3:30** | **Closed-Loop Server VLM Action** | Click `🚀 Send Sanitized Screen to Server & Execute` | 1. Watch server VLM make decision in `0.1 ms` based *only* on sanitized context.<br>2. Watch extension execute green pulse click on `#submitBtn` in `demo.html`.<br>3. Emphasize: *"The server never saw the user's face, password, or card number."* |
-| **3:30 – 4:15** | **The 5-Criteria Rubric Metrics** | Open `Rubric & Benchmark Metrics` modal | Walk through the exact numbers from the 15-case benchmark:<br>• **96.5%** Visual Context Accuracy<br>• **100% Recall / 97.0% Precision** on PII<br>• **0.94 Mean IoU** Redaction Precision<br>• **48.5 MB RAM** (5.9MB model)<br>• **504 ms** End-to-End Latency |
+| **1:00 – 2:30** | **The Live "WOW" Demo** | Click extension icon in toolbar (`demo.html`) | *"Instead of opening a separate webpage and disrupting user flow, clicking the extension opens a small, streamlined window near the top right. Here, live visual graphs, latency waterfall breakdowns, and privacy metrics are immediately available."*<br>1. Show live sanitization: Password, Credit Card, and Face masked via on-device WebGPU.<br>2. Point to visual telemetry graphs: End-to-end breakdown in ms, WebGPU badge, 100% Zero-Leakage audit. |
+| **2:30 – 3:30** | **Closed-Loop Server VLM Action** | Click `🚀 Sanitize Screen & Execute Agent` inside top-right window | 1. Watch server VLM make decisions in `0.1 ms` based *only* on sanitized context.<br>2. Watch extension execute green pulse click on `#submitBtn` in `demo.html`.<br>3. Emphasize: *"The server never saw the user's face, password, or card number."* |
+| **3:30 – 4:15** | **The 5-Criteria Rubric Metrics** | Switch to `📊 Telemetry` tab in top-right window | Walk through the visual bar charts and benchmark metrics:<br>• **96.5%** Visual Context Accuracy<br>• **100% Recall / 97.0% Precision** on PII<br>• **0.94 Mean IoU** Redaction Precision<br>• **48.5 MB RAM** (5.9MB model)<br>• **504 ms** End-to-End Latency |
 | **4:15 – 5:00** | **Engineering Defense & Q&A** | Slide 6 in `pitch_deck.html` | Address the two hardest anticipated judge questions with confidence (see below). |
 
 ---
@@ -39,5 +39,5 @@
 - [ ] Ensure local test server is running: `http://localhost:8000/demo.html`
 - [ ] Ensure FastAPI VLM server is running: `http://127.0.0.1:8001/health`
 - [ ] Load extension in Chrome: `chrome://extensions` (Load Unpacked $\rightarrow$ `C:\BroswerExt\pii-agent-extension`)
-- [ ] Open HUD: `http://localhost:8000/hud.html`
+- [ ] Open top-right extension popup on `demo.html`
 - [ ] Open Slides: `http://localhost:8000/pitch_deck.html`

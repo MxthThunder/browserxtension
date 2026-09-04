@@ -25,3 +25,16 @@ Thumbs.db
 # Environment & Secrets
 .env
 .env.local
+
+# Build outputs
+dist/
+
+# Large Model Weights & Binaries (>100MB exceeds GitHub limit)
+*.onnx
+*.onnx_data
+*.bin
+*.pt
+*.pth
+*.safetensors
+**/models/Xenova/**
+!**/models/**/.gitkeep
