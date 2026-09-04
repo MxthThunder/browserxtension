@@ -10,6 +10,7 @@
  */
 
 import { getSettings, saveSettings, logAuditEntry, DEFAULT_SETTINGS } from "./storage.js";
+import { agentLoop } from "./agent_loop.js";
 
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
@@ -294,6 +295,25 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     captureAndRedactActiveTab(message.options)
       .then((data) => sendResponse(data))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "START_AGENT_LOOP") {
+    agentLoop.runLoop(message.task, message.options, (stepData) => {
+      // Broadcast step event to open popup or HUD
+      chrome.runtime.sendMessage({
+        type: "AGENT_LOOP_STEP_EVENT",
+        step: stepData
+      }).catch(() => {});
+    })
+      .then((res) => sendResponse({ ok: true, ...res }))
+      .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  if (message.type === "STOP_AGENT_LOOP") {
+    agentLoop.stop();
+    sendResponse({ ok: true });
     return true;
   }
 

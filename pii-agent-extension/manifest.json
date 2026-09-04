@@ -86,6 +86,7 @@
         "action_engine.js",
         "permission_engine.js",
         "prompt_guard.js",
+        "agent_loop.js",
         "popup.html",
         "popup.js",
         "popup.css",

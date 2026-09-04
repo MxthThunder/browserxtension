@@ -330,40 +330,45 @@ btnAutoSync.addEventListener("click", () => {
   }
 });
 
-// Action: Dispatch Task to VLM Agent
+// Action: Dispatch Multi-Step Autonomous Loop to VLM Agent
 btnDispatchTask.addEventListener("click", async () => {
   const task = taskInput.value.trim();
   if (!task) return;
 
   btnDispatchTask.disabled = true;
-  btnDispatchText.textContent = "Agent Executing...";
-  appendLog(`Dispatching prompt: "${task}"...`);
+  btnDispatchText.textContent = "Autonomous Loop Running...";
+  appendLog(`Initiating multi-step autonomous loop: "${task}"...`);
 
   try {
-    appendLog("Step 1/3: Capturing screen and applying on-device WebGPU redaction...");
     const res = await chrome.runtime.sendMessage({
-      type: "DISPATCH_TASK",
+      type: "START_AGENT_LOOP",
       task,
+      options: { maxSteps: 8 }
     });
 
     if (!res || !res.ok) {
-      throw new Error(res?.error || "Agent execution failed");
+      throw new Error(res?.error || "Agent loop execution failed");
     }
 
-    appendLog("Step 2/3: Transmitted sanitized visual buffer to centralized VLM server (0 raw pixels).", "success");
-    const act = res.action;
-    appendLog(`Step 3/3: VLM returned action -> [${act.type.toUpperCase()}] target: ${act.selector || 'coords'}. ${act.explanation}`, "success");
-
-    if (res.executionResult && res.executionResult.ok) {
-      appendLog(`✓ Synthesized native DOM event on target element successfully!`, "success");
-    }
-
-    updateWaterfallGraphs(res.clientTimings, res.totalCycleLatencyMs, 12);
+    appendLog(`✓ Autonomous loop completed: ${res.summary} (${res.stepsExecuted || 0} steps)`, "success");
   } catch (err) {
     appendLog(`Execution failed: ${err.message}`, "error");
   } finally {
     btnDispatchTask.disabled = false;
     btnDispatchText.textContent = "Sanitize Screen & Execute Agent";
+  }
+});
+
+// Real-time Agent Loop Step Event Listener
+chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "AGENT_LOOP_STEP_EVENT" && msg.step) {
+    const s = msg.step;
+    const act = s.action || {};
+    appendLog(`[Step ${s.step}] 🤖 Action: [${(act.type || "ACTION").toUpperCase()}] -> ${act.selector || act.value || "Viewport"}. ${act.explanation || ""}`, "success");
+    if (s.sanitizedImage) {
+      latestCapture = { sanitizedImageUrl: s.sanitizedImage, redactionList: [] };
+      updateSandboxDisplay();
+    }
   }
 });
 
