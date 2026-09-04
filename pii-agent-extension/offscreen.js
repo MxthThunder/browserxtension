@@ -451,11 +451,16 @@ async function processAndRedactFrame(payload) {
       }
     }
 
-    if (tessReady && ocrTargets.length > 0) {
+    // Only OCR ambiguous visual regions that lack high-confidence DOM tags (max 2 regions for sub-second speed)
+    const unclassifiedVisualTargets = allVisualBoxes.filter(
+      (vb) => !domRedactions.some((db) => Math.abs(db.x - vb.x) < 20 && Math.abs(db.y - vb.y) < 20)
+    );
+
+    if (tessReady && unclassifiedVisualTargets.length > 0) {
       const cropCanvas = new OffscreenCanvas(1, 1);
       const cropCtx    = cropCanvas.getContext("2d");
 
-      for (const region of ocrTargets.slice(0, 12)) { // max 12 regions (raised from 8 for DOM coverage)
+      for (const region of unclassifiedVisualTargets.slice(0, 2)) {
         const rx = Math.max(0, Math.min(region.x, width - 1));
         const ry = Math.max(0, Math.min(region.y, height - 1));
         const rw = Math.max(1, Math.min(region.w, width - rx));
@@ -464,8 +469,7 @@ async function processAndRedactFrame(payload) {
         cropCanvas.height = rh;
         cropCtx.drawImage(img, rx, ry, rw, rh, 0, 0, rw, rh);
 
-        // Convert OffscreenCanvas to data URL via Blob
-        const blob    = await cropCanvas.convertToBlob({ type: "image/png" });
+        const blob = await cropCanvas.convertToBlob({ type: "image/png" });
         const dataUrl = await new Promise((res) => {
           const reader = new FileReader();
           reader.onload = () => res(reader.result);

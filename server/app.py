@@ -120,11 +120,39 @@ def health_check():
     }
 
 
+# Cache Ollama availability state to prevent network timeout latency
+_ollama_checked = False
+_ollama_online = False
+_last_ollama_check_time = 0
+
+async def is_ollama_available(ollama_host: str) -> bool:
+    global _ollama_checked, _ollama_online, _last_ollama_check_time
+    now = time.time()
+    # Cache result for 30 seconds
+    if _ollama_checked and (now - _last_ollama_check_time < 30):
+        return _ollama_online
+
+    try:
+        async with httpx.AsyncClient(timeout=0.15) as client:
+            resp = await client.get(f"{ollama_host}/api/tags")
+            _ollama_online = (resp.status_code == 200)
+    except Exception:
+        _ollama_online = False
+
+    _ollama_checked = True
+    _last_ollama_check_time = now
+    return _ollama_online
+
+
 async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: Optional[str]) -> Optional[ActionOutput]:
     """
     Attempts reasoning using local Ollama (Qwen2.5-VL / Qwen2.5-Coder / Qwen3).
+    Only invoked if Ollama is actively running.
     """
     ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+    if not await is_ollama_available(ollama_host):
+        return None
+
     model = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:latest")
 
     elements_digest = [
@@ -139,13 +167,12 @@ async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: O
             "value": el.value or "",
             "is_interactive": el.is_interactive
         }
-        for el in elements[:40]
+        for el in elements[:30]
     ]
 
     system_prompt = (
         "You are an expert autonomous browser agent. You receive free-form user instructions and visible web elements. "
         "Select the next single concrete browser action to make progress towards the user's goal. "
-        "If multiple fields need to be filled, choose the first unfulfilled input field. "
         "Respond strictly with a JSON object: "
         '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
         '"selector": "CSS selector or element id", "value": "text to type or select", '
@@ -162,7 +189,7 @@ async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: O
     }
 
     try:
-        async with httpx.AsyncClient(timeout=4.0) as client:
+        async with httpx.AsyncClient(timeout=1.5) as client:
             resp = await client.post(f"{ollama_host}/api/generate", json=payload)
             if resp.status_code == 200:
                 data = resp.json()

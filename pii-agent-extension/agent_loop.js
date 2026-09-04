@@ -30,7 +30,7 @@ export const AGENT_LOOP_STATUS = {
 export class AutonomousAgentLoop {
   constructor(options = {}) {
     this.maxSteps = options.maxSteps || 10;
-    this.settleDelayMs = options.settleDelayMs || 1500;
+    this.settleDelayMs = options.settleDelayMs || 350;
     this.status = AGENT_LOOP_STATUS.IDLE;
     this._abortController = null;
     this.currentStep = 0;
