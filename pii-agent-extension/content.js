@@ -20,7 +20,7 @@ const SENSITIVE_AUTOCOMPLETE_TOKENS = [
 // Regex for field names, labels, placeholders, and ARIA attributes (C3)
 // Fixed: pan[_\b] was matching literal backspace inside []; now uses \bpan\b
 const SENSITIVE_NAME_PATTERN =
-  /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|card|cvv|cvc|security.?code|expir(y|ation)?|exp|pin\b|otp|email|phone|mobile|cell|tel|dob|birth|address|billing|salary|account.?number|ifsc|\bpan\b|kyc|tax.?id|identity|\bname\b|full.?name|first.?name|last.?name|middle.?name|father|mother|guardian|nominee|gender|signature|photo|selfie|profile|picture/i;
+  /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|card|cvv|cvc|security.?code|expir(y|ation)?|exp|pin\b|otp|email|phone|mobile|cell|tel|dob|birth|address|billing|zip|postal|postal.?code|pincode|zipcode|city|state|salary|account.?number|ifsc|\bpan\b|kyc|tax.?id|identity|\bname\b|full.?name|first.?name|last.?name|middle.?name|father|mother|guardian|nominee|gender|signature|photo|selfie|profile|picture/i;
 
 // Regex for scanning visible text nodes containing raw PII patterns
 const INLINE_PII_PATTERNS = {

@@ -289,6 +289,9 @@ async function executeTaskWithServer(task, options = {}) {
   };
 }
 
+// Initialize Agent Loop capture handler
+agentLoop.setCaptureHandler(captureAndRedactActiveTab);
+
 // Runtime Message Router
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "CAPTURE_AND_REDACT") {
@@ -299,13 +302,17 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   }
 
   if (message.type === "START_AGENT_LOOP") {
-    agentLoop.runLoop(message.task, message.options, (stepData) => {
-      // Broadcast step event to open popup or HUD
-      chrome.runtime.sendMessage({
-        type: "AGENT_LOOP_STEP_EVENT",
-        step: stepData
-      }).catch(() => {});
-    })
+    agentLoop.runLoop(
+      message.task,
+      { ...message.options, captureFn: captureAndRedactActiveTab },
+      (stepData) => {
+        // Broadcast step event to open popup or HUD
+        chrome.runtime.sendMessage({
+          type: "AGENT_LOOP_STEP_EVENT",
+          step: stepData
+        }).catch(() => {});
+      }
+    )
       .then((res) => sendResponse({ ok: true, ...res }))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;

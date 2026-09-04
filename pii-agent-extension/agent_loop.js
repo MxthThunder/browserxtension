@@ -242,6 +242,13 @@ export class AutonomousAgentLoop {
     };
   }
 
+  /**
+   * Allows registering a direct capture handler function (e.g. from background service worker).
+   */
+  setCaptureHandler(fn) {
+    this._customCaptureHandler = fn;
+  }
+
   // ── Private Helpers ─────────────────────────────────────────────────────────
 
   async _getActiveTab() {
@@ -253,6 +260,13 @@ export class AutonomousAgentLoop {
   }
 
   async _captureAndRedact(options = {}) {
+    if (options.captureFn) {
+      return await options.captureFn(options);
+    }
+    if (this._customCaptureHandler) {
+      return await this._customCaptureHandler(options);
+    }
+
     return new Promise((resolve) => {
       if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
         chrome.runtime.sendMessage({ type: "CAPTURE_AND_REDACT", options }, (response) => {
