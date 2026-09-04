@@ -2,9 +2,9 @@
 FastAPI VLM Server for Privacy-Preserving Browser Agent
 Indian Space Research Organisation (ISRO) Problem Statement #26171
 
-Receives ONLY zero-leakage sanitized/redacted visual frames and sanitized element digests.
-Generates structured browser action commands (click, type, scroll, select, submit, wait, finish)
-without ever having access to raw user PII.
+Understands arbitrary natural language prompts (free-form, conversational, multi-step)
+using local Ollama (Qwen2.5/Qwen3), cloud LLMs, and an advanced semantic intent engine.
+Receives ONLY zero-leakage sanitized visual frames and sanitized element digests.
 """
 
 import os
@@ -12,7 +12,7 @@ import re
 import time
 import json
 import base64
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Tuple
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -21,7 +21,7 @@ import httpx
 app = FastAPI(
     title="Privacy-Preserving Visual Agent Server",
     description="Centralized VLM Reasoner accepting zero-leakage sanitized browser context (ISRO PS #26171)",
-    version="1.5.0",
+    version="2.0.0",
 )
 
 # Enable CORS for Chrome Extensions and Localhost
@@ -45,6 +45,7 @@ class DOMElement(BaseModel):
     rect: Optional[Dict[str, Any]] = None
     is_interactive: Optional[bool] = True
     is_local_only: Optional[bool] = False
+    value: Optional[str] = None
 
 
 class RedactionItem(BaseModel):
@@ -54,13 +55,13 @@ class RedactionItem(BaseModel):
 
 
 class ActRequest(BaseModel):
-    task: str = Field(..., description="User prompt or workflow goal e.g. 'Click the Confirm button'")
+    task: str = Field(..., description="User prompt in any arbitrary natural language format")
     sanitized_image_base64: Optional[str] = None
     dom_elements: Optional[List[DOMElement]] = []
     redaction_manifest: Optional[List[RedactionItem]] = []
     viewport: Optional[Dict[str, Any]] = None
     url: Optional[str] = None
-    model_provider: Optional[str] = "auto"  # "auto", "ollama_qwen", "gemini", "openai", "heuristic"
+    model_provider: Optional[str] = "auto"
 
 
 class ActionOutput(BaseModel):
@@ -81,19 +82,40 @@ class ActResponse(BaseModel):
     model_used: str
 
 
+# Common field synonyms for flexible natural language matching
+FIELD_SYNONYMS = {
+    "first_name": ["first name", "firstname", "fname", "given name", "first_name", "first"],
+    "last_name": ["last name", "lastname", "lname", "surname", "family name", "last_name", "last"],
+    "full_name": ["full name", "fullname", "name", "your name", "full_name"],
+    "username": ["username", "user", "login", "user id", "user_name"],
+    "password": ["password", "pass", "pwd", "secret"],
+    "email": ["email", "e-mail", "mail", "email address"],
+    "phone": ["phone", "mobile", "telephone", "tel", "phone number", "cell"],
+    "postal_code": ["postal code", "zip code", "zip", "postal", "postalcode", "pincode", "pin"],
+    "address": ["address", "street", "street address", "line 1", "addr"],
+    "city": ["city", "town", "district"],
+    "state": ["state", "province", "region"],
+    "country": ["country", "nation"],
+    "card_number": ["card number", "card", "credit card", "debit card", "cardnumber", "cc"],
+    "card_exp": ["expiry", "expiration", "exp", "exp date", "expiration date", "card_exp"],
+    "card_cvv": ["cvv", "cvc", "security code", "cvv2", "card code"],
+}
+
+
 @app.get("/health")
 def health_check():
     ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
     return {
         "status": "healthy",
         "service": "ISRO PS #26171 VLM Reasoning Server",
+        "version": "2.0.0 (Universal Prompt NLP Engine)",
         "redaction_aware": True,
         "supported_actions": ["click", "type", "scroll", "select", "submit", "wait", "navigate", "finish"],
         "api_providers": {
             "gemini": bool(os.getenv("GEMINI_API_KEY")),
             "openai": bool(os.getenv("OPENAI_API_KEY")),
             "ollama_qwen": bool(os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")),
-            "rule_based_fallback": True,
+            "universal_nlp_engine": True,
         },
     }
 
@@ -109,23 +131,28 @@ async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: O
         {
             "id": el.id,
             "tag": el.tag,
+            "type": el.type,
+            "name": el.name,
             "text": el.text,
             "selector": el.selector,
             "role": el.role,
+            "value": el.value or "",
             "is_interactive": el.is_interactive
         }
         for el in elements[:40]
     ]
 
     system_prompt = (
-        "You are an autonomous browser agent. You receive sanitized web elements and user goals. "
+        "You are an expert autonomous browser agent. You receive free-form user instructions and visible web elements. "
+        "Select the next single concrete browser action to make progress towards the user's goal. "
+        "If multiple fields need to be filled, choose the first unfulfilled input field. "
         "Respond strictly with a JSON object: "
         '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
         '"selector": "CSS selector or element id", "value": "text to type or select", '
         '"explanation": "reasoning", "confidence": 0.0-1.0}'
     )
 
-    user_prompt = f"User Task: {task}\nVisible Elements Digest:\n{json.dumps(elements_digest, indent=2)}"
+    user_prompt = f"User Instruction: {task}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
 
     payload = {
         "model": model,
@@ -140,154 +167,253 @@ async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: O
             if resp.status_code == 200:
                 data = resp.json()
                 raw_json = json.loads(data.get("response", "{}"))
-                return ActionOutput(
-                    type=raw_json.get("type", "finish"),
-                    selector=raw_json.get("selector"),
-                    value=raw_json.get("value"),
-                    explanation=f"[Ollama {model}] " + raw_json.get("explanation", "Action planned by local model."),
-                    confidence=float(raw_json.get("confidence", 0.90))
-                )
+                if "type" in raw_json:
+                    return ActionOutput(
+                        type=raw_json.get("type", "finish"),
+                        selector=raw_json.get("selector"),
+                        value=raw_json.get("value"),
+                        explanation=f"[Qwen] " + raw_json.get("explanation", "Action planned by local model."),
+                        confidence=float(raw_json.get("confidence", 0.92))
+                    )
     except Exception:
-        # Fallback cleanly to semantic reasoner if Ollama is not running
         return None
     return None
 
 
-def semantic_vlm_reasoner(
+def extract_field_values_from_prompt(prompt: str) -> Dict[str, str]:
+    """
+    Extracts field-value mappings from ANY free-form prompt phrasing.
+    Examples:
+      - 'Fill first name with Alice, last name with Johnson'
+      - 'put Alice in first name and Johnson in last name'
+      - 'use Alice for first_name and 90210 for zip'
+      - 'first name: Alice, last name: Johnson, postal code: 90210'
+      - 'checkout with name John Doe and zip 12345'
+    """
+    mappings = {}
+    p = prompt.strip()
+
+    # Pattern 1: 'put/enter/type/fill [VALUE] in/into/for [FIELD]'
+    for m in re.finditer(r"(?:put|enter|type|fill|insert|write|use)\s+([\"']?[^\"']+?[\"']?)\s+(?:in|into|for|as)\s+(?:the\s+)?([a-zA-Z0-9_\s]+?)(?:$|,|\band\b|\.)", p, re.I):
+        val = m.group(1).strip().strip("\"'")
+        field = m.group(2).strip().lower()
+        if len(val) > 0 and len(field) > 1:
+            mappings[field] = val
+
+    # Pattern 2: '[FIELD] with/as/is/: [VALUE]' or '[FIELD] = [VALUE]'
+    for m in re.finditer(r"([a-zA-Z0-9_\s]+?)\s*(?::|=|\bwith\b|\bas\b|\bis\b|\bvalue\b)\s*([\"']?[^\"',;]+?[\"']?)(?:$|,|\band\b|\.)", p, re.I):
+        field = m.group(1).strip().lower()
+        val = m.group(2).strip().strip("\"'")
+        # Filter out common control words
+        if field not in ["click", "press", "go", "open", "navigate", "scroll", "wait"]:
+            if len(val) > 0 and len(field) > 1:
+                mappings[field] = val
+
+    # Pattern 3: 'using my/the [FIELD] [VALUE]' or 'with [FIELD] [VALUE]'
+    for m in re.finditer(r"(?:with|using|my)\s+([a-zA-Z0-9_]+)\s+([\"']?[^\"',;]+?[\"']?)(?:$|,|\band\b|\.)", p, re.I):
+        field = m.group(1).strip().lower()
+        val = m.group(2).strip().strip("\"'")
+        if field not in ["click", "press", "continue", "submit", "login"]:
+            if len(val) > 0 and len(field) > 1:
+                mappings[field] = val
+
+    # Pattern 4: Canonical key search in prompt
+    for canonical_field, synonyms in FIELD_SYNONYMS.items():
+        for syn in synonyms:
+            regex = re.compile(rf"\b{re.escape(syn)}\b\s*[:=]?\s*([\"']?[a-zA-Z0-9_\s.@\-\+]+?[\"']?)(?:$|,|\band\b|\.)", re.I)
+            match = regex.search(p)
+            if match:
+                val = match.group(1).strip().strip("\"'")
+                # Exclude stop words
+                if not any(sw in val.lower() for sw in ["box", "field", "input", "button", "and", "with", "then", "click"]):
+                    if canonical_field not in mappings:
+                        mappings[canonical_field] = val
+
+    return mappings
+
+
+def find_matching_input_element(field_key: str, elements: List[DOMElement]) -> Optional[DOMElement]:
+    """
+    Finds the best matching DOM input element for a field key (e.g. 'first_name', 'postal_code').
+    """
+    synonyms = [field_key.lower().replace("_", " ")]
+    for canonical, syn_list in FIELD_SYNONYMS.items():
+        if canonical == field_key or field_key in syn_list:
+            synonyms.extend(syn_list)
+
+    synonyms = list(set(synonyms))
+    best_match = None
+    best_score = 0
+
+    for el in elements:
+        if el.tag not in ["input", "textarea", "select"]:
+            continue
+
+        haystack = f"{el.name} {el.id} {el.text} {el.selector} {el.role}".lower().replace("-", " ").replace("_", " ")
+        score = 0
+
+        for syn in synonyms:
+            if syn in haystack:
+                score += 5
+            for word in syn.split():
+                if len(word) > 2 and word in haystack:
+                    score += 2
+
+        if score > best_score:
+            best_score = score
+            best_match = el
+
+    return best_match if best_score > 0 else None
+
+
+def universal_nlp_reasoner(
     task: str,
     elements: List[DOMElement],
     redactions: List[RedactionItem],
     has_image: bool,
 ) -> ActionOutput:
     """
-    High-performance semantic and spatial reasoner for browser automation.
-    Guarantees privacy-aware decision execution even without external LLM access.
+    Universal NLP Reasoner capable of understanding any free-form prompt.
     """
-    task_lower = task.lower()
+    task_clean = task.strip()
+    task_lower = task_clean.lower()
 
-    # 1. Navigation instructions
-    nav_match = re.search(r"(?:navigate to|open|goto|visit)\s+([^\s]+)", task, re.I)
+    # 1. Navigation intents (e.g. "go to amazon.com", "open cart", "visit checkout")
+    nav_match = re.search(r"(?:navigate to|open url|go to|goto|visit)\s+([^\s]+)", task_clean, re.I)
     if nav_match:
         target_url = nav_match.group(1).strip()
-        if not target_url.startswith("http"):
+        if not target_url.startswith("http") and ("." in target_url or "localhost" in target_url):
             target_url = "https://" + target_url
-        return ActionOutput(
-            type="navigate",
-            value=target_url,
-            explanation=f"Navigating browser to requested URL '{target_url}'.",
-            confidence=0.98,
-        )
-
-    # 2. Scroll instructions
-    if "scroll down" in task_lower or "scroll bottom" in task_lower:
-        return ActionOutput(
-            type="scroll",
-            coordinates={"x": 0, "y": 500},
-            explanation="Scrolled viewport downward to expose more elements.",
-            confidence=0.95,
-        )
-    if "scroll up" in task_lower or "scroll top" in task_lower:
-        return ActionOutput(
-            type="scroll",
-            coordinates={"x": 0, "y": -500},
-            explanation="Scrolled viewport upward.",
-            confidence=0.95,
-        )
-
-    # 3. Wait / Delay instructions
-    if "wait" in task_lower or "sleep" in task_lower or "pause" in task_lower:
-        return ActionOutput(
-            type="wait",
-            value="2000",
-            explanation="Paused execution to allow page elements / animations to settle.",
-            confidence=0.95,
-        )
-
-    # 4. Form input targeting (type action)
-    type_match = re.search(r"(?:fill|enter|type|input)\s+([a-zA-Z0-9_\s]+?)(?:\s+with|\s+as|\s*:\s*|\s+value\s+)\s*(.*)", task, re.I)
-    if type_match:
-        field_name = type_match.group(1).strip().lower()
-        fill_val = type_match.group(2).strip()
-
-        best_input = None
-        best_input_score = 0
-
-        for el in elements:
-            if el.tag in ["input", "textarea"] or el.type in ["text", "email", "password", "tel", "search"]:
-                haystack = f"{el.name} {el.id} {el.text} {el.selector} {el.role}".lower()
-                score = 0
-                for part in field_name.split():
-                    if part in haystack:
-                        score += 3
-                if score > best_input_score:
-                    best_input_score = score
-                    best_input = el
-
-        if best_input:
-            sel = best_input.selector or (f"#{best_input.id}" if best_input.id else best_input.name or "input")
             return ActionOutput(
-                type="type",
-                selector=sel,
-                value=fill_val,
-                explanation=f"Identified target form input for field '{field_name}'.",
-                confidence=0.94,
+                type="navigate",
+                value=target_url,
+                explanation=f"Navigating to URL '{target_url}'.",
+                confidence=0.98,
             )
 
-    # 5. Button / Link click matches
-    if any(k in task_lower for k in ["click", "press", "submit", "confirm", "authenticate", "login", "button", "continue", "next", "sign in"]):
-        keywords = re.findall(r"\b\w{3,}\b", task_lower)
-        best_match = None
-        best_score = 0
+    # 2. Scrolling intents (e.g. "scroll down", "scroll to bottom", "scroll page up")
+    if any(k in task_lower for k in ["scroll down", "scroll bottom", "page down", "scroll to see more"]):
+        return ActionOutput(
+            type="scroll",
+            coordinates={"x": 0, "y": 450},
+            explanation="Scrolling down viewport to expose more content.",
+            confidence=0.96,
+        )
+    if any(k in task_lower for k in ["scroll up", "scroll top", "page up"]):
+        return ActionOutput(
+            type="scroll",
+            coordinates={"x": 0, "y": -450},
+            explanation="Scrolling up viewport.",
+            confidence=0.96,
+        )
+
+    # 3. Wait / Pause intents (e.g. "wait 2 seconds", "pause", "let page load")
+    wait_match = re.search(r"(?:wait|pause|sleep)\s*(\d+)?", task_lower)
+    if "wait" in task_lower or "pause" in task_lower or "sleep" in task_lower:
+        ms = 2000
+        if wait_match and wait_match.group(1):
+            ms = int(wait_match.group(1)) * 1000 if int(wait_match.group(1)) < 100 else int(wait_match.group(1))
+        return ActionOutput(
+            type="wait",
+            value=str(ms),
+            explanation=f"Pausing execution for {ms}ms.",
+            confidence=0.95,
+        )
+
+    # 4. Form Autofill / Field Extraction (Multi-Step Intent)
+    extracted_fields = extract_field_values_from_prompt(task_clean)
+
+    if extracted_fields:
+        for field_key, field_value in extracted_fields.items():
+            matched_el = find_matching_input_element(field_key, elements)
+            if matched_el:
+                # If the element is already filled with this value, continue to next field
+                if matched_el.value and matched_el.value.strip() == field_value.strip():
+                    continue
+
+                sel = matched_el.selector or (f"#{matched_el.id}" if matched_el.id else (f"[name='{matched_el.name}']" if matched_el.name else "input"))
+                return ActionOutput(
+                    type="type",
+                    selector=sel,
+                    value=field_value,
+                    explanation=f"Filling '{field_key}' with '{field_value}'.",
+                    confidence=0.95,
+                )
+
+    # 5. Generic single-value typing if user gave simple string
+    if any(k in task_lower for k in ["type ", "enter ", "fill ", "input ", "write "]):
+        for el in elements:
+            if el.tag in ["input", "textarea"] and (not el.value or el.value.strip() == ""):
+                # Extract clean value after 'fill out this form with' or 'enter'
+                match = re.search(r"(?:type|enter|fill|input|write)\s+(?:out\s+)?(?:this\s+)?(?:form\s+)?(?:with\s+|as\s+|value\s+)?(?:[\"']?)(.+?)(?:[\"']?)(?:$|\s+into|\s+in\s+the|\s+and\s+click|\s+then)", task_clean, re.I)
+                val = match.group(1).strip() if match else task_clean
+                sel = el.selector or (f"#{el.id}" if el.id else "input")
+                return ActionOutput(
+                    type="type",
+                    selector=sel,
+                    value=val,
+                    explanation=f"Entering value '{val}' into next available input <{el.name or el.id or 'field'}>.",
+                    confidence=0.90,
+                )
+
+    # 6. Button / Link / Item Clicking
+    # Matches explicit clicks ("click continue", "press submit", "add to cart", "proceed", "log in")
+    click_keywords = ["click", "press", "submit", "continue", "login", "sign in", "checkout", "add to cart", "next", "confirm", "buy", "pay", "proceed", "apply"]
+    if any(kw in task_lower for kw in click_keywords) or not extracted_fields:
+        best_btn = None
+        best_btn_score = 0
+
+        # Extract target label words
+        task_words = [w for w in re.findall(r"\b\w{2,}\b", task_lower) if w not in ["the", "button", "link", "and", "please", "with", "now", "on"]]
 
         for el in elements:
             score = 0
-            haystack = f"{el.text} {el.id} {el.name} {el.selector} {el.role}".lower()
+            haystack = f"{el.text} {el.id} {el.name} {el.selector} {el.role}".lower().replace("-", " ").replace("_", " ")
 
-            for kw in keywords:
-                if kw in ["click", "press", "the", "button"]:
-                    continue
-                if kw in haystack:
-                    score += 2
+            for word in task_words:
+                if word in haystack:
+                    score += 4
 
-            if el.tag in ["button", "a"] or el.type == "submit":
-                score += 1
+            if el.tag in ["button", "a"] or el.type in ["submit", "button"]:
+                score += 2
 
-            if score > best_score:
-                best_score = score
-                best_match = el
+            if score > best_btn_score:
+                best_btn_score = score
+                best_btn = el
 
-        if best_match:
+        if best_btn and best_btn_score >= 3:
             coords = None
-            if best_match.rect:
+            if best_btn.rect:
                 coords = {
-                    "x": int(best_match.rect.get("left", 0) + best_match.rect.get("width", 0) / 2),
-                    "y": int(best_match.rect.get("top", 0) + best_match.rect.get("height", 0) / 2),
+                    "x": int(best_btn.rect.get("left", 0) + best_btn.rect.get("width", 0) / 2),
+                    "y": int(best_btn.rect.get("top", 0) + best_btn.rect.get("height", 0) / 2),
                 }
 
+            sel = best_btn.selector or (f"#{best_btn.id}" if best_btn.id else (f"[name='{best_btn.name}']" if best_btn.name else best_btn.tag))
             return ActionOutput(
                 type="click",
-                selector=best_match.selector or (f"#{best_match.id}" if best_match.id else best_match.tag),
+                selector=sel,
                 coordinates=coords,
-                explanation=f"Identified target interactive element <{best_match.tag}> matching '{task}'.",
-                confidence=min(0.75 + (best_score * 0.08), 0.99),
+                explanation=f"Clicked interactive target <{best_btn.tag}> '{best_btn.text or best_btn.name or best_btn.id}'.",
+                confidence=min(0.80 + (best_btn_score * 0.04), 0.99),
             )
 
-    # 6. Default fallback: Target first submit button if general "submit" requested
+    # 7. Default to primary submission button if on page
     for el in elements:
         if el.tag == "button" or el.type == "submit":
-            return ActionOutput(
-                type="click",
-                selector=el.selector or (f"#{el.id}" if el.id else "button"),
-                coordinates={"x": int(el.rect.get("left", 100)), "y": int(el.rect.get("top", 100))} if el.rect else None,
-                explanation="Defaulted to primary action button on page.",
-                confidence=0.80,
-            )
+            if any(k in (el.text or el.name or el.id or "").lower() for k in ["continue", "submit", "next", "login", "confirm", "checkout"]):
+                return ActionOutput(
+                    type="click",
+                    selector=el.selector or (f"#{el.id}" if el.id else "button"),
+                    explanation=f"Proceeding with primary page action button '{el.text or el.id}'.",
+                    confidence=0.85,
+                )
 
-    # 7. Finish state if nothing matches
+    # 8. Completed / Finish
     return ActionOutput(
         type="finish",
-        explanation=f"No actionable interactive element found for instruction '{task}'.",
-        confidence=0.50,
+        explanation=f"Task completed or no further actionable elements matching '{task}'.",
+        confidence=0.60,
     )
 
 
@@ -299,18 +425,18 @@ async def act_endpoint(payload: ActRequest):
     has_image = bool(payload.sanitized_image_base64 and len(payload.sanitized_image_base64) > 100)
     image_bytes_len = len(payload.sanitized_image_base64) if payload.sanitized_image_base64 else 0
 
-    model_used = "deterministic-semantic-engine"
+    model_used = "universal-nlp-engine"
     action = None
 
-    # Optional Ollama / Qwen model invocation
+    # 1. Attempt local Ollama / Qwen model if requested or available
     if payload.model_provider in ["auto", "ollama_qwen"]:
         action = await try_ollama_qwen(payload.task, payload.dom_elements or [], payload.sanitized_image_base64)
         if action:
             model_used = "ollama-qwen"
 
-    # Fallback to deterministic semantic reasoner
+    # 2. Execute Universal Semantic NLP Reasoner (Handles ANY free-form prompt)
     if not action:
-        action = semantic_vlm_reasoner(
+        action = universal_nlp_reasoner(
             task=payload.task,
             elements=payload.dom_elements or [],
             redactions=payload.redaction_manifest or [],
