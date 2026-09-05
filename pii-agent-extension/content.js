@@ -20,7 +20,7 @@ const SENSITIVE_AUTOCOMPLETE_TOKENS = [
 // Regex for field names, labels, placeholders, and ARIA attributes (C3)
 // Fixed: pan[_\b] was matching literal backspace inside []; now uses \bpan\b
 const SENSITIVE_NAME_PATTERN =
-  /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|card|cvv|cvc|security.?code|expir(y|ation)?|exp|pin\b|otp|email|phone|mobile|cell|tel|dob|birth|address|billing|zip|postal|postal.?code|pincode|zipcode|city|state|salary|account.?number|ifsc|\bpan\b|kyc|tax.?id|identity|\bname\b|full.?name|first.?name|last.?name|middle.?name|father|mother|guardian|nominee|gender|signature|photo|selfie|profile|picture/i;
+  /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|card|cvv|cvc|security.?code|expir(y|ation)?|exp|pin\b|otp|email|phone|mobile|cell|tel|dob|birth|address|billing|zip|postal|postal.?code|pincode|zipcode|city|state|salary|account.?number|ifsc|\bpan\b|kyc|tax.?id|identity|\bname\b|full.?name|first.?name|last.?name|middle.?name|father|mother|guardian|nominee|gender|signature|photo|selfie|profile|picture|telecommand|encryption|payload_target|secret_key|orbit_keplerian/i;
 
 // Regex for scanning visible text nodes containing raw PII patterns
 const INLINE_PII_PATTERNS = {
@@ -31,7 +31,11 @@ const INLINE_PII_PATTERNS = {
   PHONE: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/,
   PAN: /\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b/,
   DELIVERY_LOCATION: /\b(?:deliver(?:ing)?|ship(?:ping)?|dispatch|send)\s+to\s+[^,\n\r<]{2,50}/i,
-  PINCODE_LOCATION: /\b(?:[A-Za-z\s]+)\s+[1-9][0-9]{5}\b/i
+  PINCODE_LOCATION: /\b(?:[A-Za-z\s]+)\s+[1-9][0-9]{5}\b/i,
+  INTERNAL_IP: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/,
+  OPERATOR_ID: /\b(?:OP-[A-Z0-9]{4,10}|USRC\/[A-Z0-9\/-]+|Operator\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/,
+  CONSOLE_ID: /\b(?:MOX|ISTRAC|MCC)-CON-\d+\b/i,
+  GEO_COORDINATES: /\b\d{1,2}(?:\.\d+)?°?\s*[NS][,\s]+\d{1,3}(?:\.\d+)?°?\s*[EW]\b/i
 };
 
 const OVERLAY_ID = "__pii_agent_overlay_layer__";
@@ -41,6 +45,9 @@ let cachedMatches = [];
 let isProtectionEnabled = true;
 let showPageBadge = true;
 let observer = null;
+let debounceTimer = null;
+let lastSpaRoute = typeof window !== "undefined" ? window.location.href : "";
+let lastSpaMutationTime = Date.now();
 
 /**
  * Classifies an individual DOM element for sensitivity.
@@ -88,6 +95,7 @@ function classifyElement(el) {
         let category = "contactInfo";
         if (patternName === "CREDIT_CARD") category = "creditCards";
         else if (patternName === "SSN" || patternName === "AADHAAR" || patternName === "PAN") category = "govIds";
+        else if (patternName === "INTERNAL_IP" || patternName === "OPERATOR_ID" || patternName === "CONSOLE_ID" || patternName === "GEO_COORDINATES") category = "opsSecurity";
         return { sensitive: true, category, reason: `value matches ${patternName}` };
       }
     }
@@ -223,6 +231,7 @@ function scanVisibleTextNodes() {
       let category = "contactInfo";
       if (patternName === "CREDIT_CARD") category = "creditCards";
       else if (patternName === "SSN" || patternName === "AADHAAR" || patternName === "PAN") category = "govIds";
+      else if (patternName === "INTERNAL_IP" || patternName === "OPERATOR_ID" || patternName === "CONSOLE_ID" || patternName === "GEO_COORDINATES") category = "opsSecurity";
 
       results.push({
         el: ancestor,
@@ -491,12 +500,31 @@ function scanPageForSensitiveElements() {
 
 /**
  * Extracts interactive DOM element digest for the VLM agent.
+ * Recursively inspects both the primary document and accessible same-origin iframes.
  */
 function extractInteractiveElements() {
   const elements = [];
   const rawNodes = Array.from(document.querySelectorAll(
     "button, a, input, select, textarea, [role='button'], [role='textbox'], [role='link'], [contenteditable='true'], [onclick], [tabindex]"
   ));
+
+  // Support same-origin accessible iframes (e.g. embedded ops widgets, dashboards)
+  document.querySelectorAll("iframe").forEach((iframe) => {
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (doc) {
+        const iframeNodes = doc.querySelectorAll(
+          "button, a, input, select, textarea, [role='button'], [role='textbox'], [role='link'], [contenteditable='true'], [onclick], [tabindex]"
+        );
+        iframeNodes.forEach((node) => {
+          node._inIframe = iframe;
+          rawNodes.push(node);
+        });
+      }
+    } catch {
+      // Cross-origin iframes silently skipped per browser security boundary
+    }
+  });
 
   // Prioritize primary content / inputs & buttons over sidebars / headers
   rawNodes.sort((a, b) => {
@@ -510,7 +538,19 @@ function extractInteractiveElements() {
   });
 
   rawNodes.forEach((node, idx) => {
-    const rect = node.getBoundingClientRect();
+    let rect = node.getBoundingClientRect();
+    if (node._inIframe) {
+      const ifRect = node._inIframe.getBoundingClientRect();
+      rect = {
+        left: ifRect.left + rect.left,
+        top: ifRect.top + rect.top,
+        width: rect.width,
+        height: rect.height,
+        bottom: ifRect.top + rect.bottom,
+        right: ifRect.left + rect.right,
+      };
+    }
+
     if (rect.width === 0 || rect.height === 0) return;
     if (rect.bottom < -200 || rect.top > window.innerHeight + 200) return;
 
@@ -548,6 +588,7 @@ function extractInteractiveElements() {
         h: Math.round(rect.height),
       },
       is_interactive: true,
+      in_iframe: Boolean(node._inIframe),
     });
   });
 
@@ -616,23 +657,58 @@ function updateFloatingBadge(piiCount) {
 }
 
 /**
- * Initializes MutationObserver to detect dynamically inserted elements in SPAs.
+ * Initializes debounced MutationObserver and SPA navigation listeners.
+ * Detects in-place DOM updates and route switches without full page reloads.
  */
-function initDomObserver() {
+function initDynamicObserver() {
   const observer = new MutationObserver(() => {
+    lastSpaMutationTime = Date.now();
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       if (isProtectionEnabled) {
         scanPageForSensitiveElements();
       }
-    }, 400);
+    }, 300);
   });
 
-  observer.observe(document.body, {
-    childList: true,
-    subtree: true,
-    characterData: false,
-  });
+  if (document.body) {
+    observer.observe(document.body, {
+      childList: true,
+      subtree: true,
+      characterData: false,
+    });
+  }
+
+  // Intercept client-side SPA history navigation (pushState / replaceState / popstate)
+  try {
+    const notifySpaRoute = () => {
+      const currentUrl = window.location.href;
+      if (currentUrl !== lastSpaRoute) {
+        lastSpaRoute = currentUrl;
+        lastSpaMutationTime = Date.now();
+        if (isProtectionEnabled) {
+          scanPageForSensitiveElements();
+        }
+      }
+    };
+
+    const originalPushState = history.pushState;
+    history.pushState = function (...args) {
+      const res = originalPushState.apply(this, args);
+      notifySpaRoute();
+      return res;
+    };
+
+    const originalReplaceState = history.replaceState;
+    history.replaceState = function (...args) {
+      const res = originalReplaceState.apply(this, args);
+      notifySpaRoute();
+      return res;
+    };
+
+    window.addEventListener("popstate", notifySpaRoute);
+    window.addEventListener("hashchange", notifySpaRoute);
+  } catch {}
 }
 
 function animateActionTarget(target, actionType) {
@@ -659,19 +735,33 @@ function animateActionTarget(target, actionType) {
   }, 900);
 }
 
+function findElementAcrossFrames(selector) {
+  if (!selector) return null;
+  let el = null;
+  try {
+    el = document.querySelector(selector);
+  } catch {}
+  if (el) return el;
+
+  document.querySelectorAll("iframe").forEach((iframe) => {
+    if (el) return;
+    try {
+      const doc = iframe.contentDocument || iframe.contentWindow?.document;
+      if (doc) el = doc.querySelector(selector);
+    } catch {}
+  });
+  return el;
+}
+
 /**
  * Synthesizes and executes native browser actions requested by VLM.
  */
 async function executeAgentAction(action) {
   let target = null;
 
-  // 1. Direct CSS selector
+  // 1. Direct CSS selector across main document and accessible iframes
   if (action.selector) {
-    try {
-      target = document.querySelector(action.selector);
-    } catch {
-      target = null;
-    }
+    target = findElementAcrossFrames(action.selector);
   }
 
   // 2. Extract index if selector is nth-of-type or data-agent-id (e.g. button:nth-of-type(45) or [data-agent-id="45"])
@@ -679,7 +769,7 @@ async function executeAgentAction(action) {
     const numMatch = action.selector.match(/(?:nth-of-type|data-agent-id)[(=["']?(\d+)/i);
     if (numMatch) {
       const idx = parseInt(numMatch[1], 10);
-      target = document.querySelector(`[data-agent-id="${idx}"]`);
+      target = findElementAcrossFrames(`[data-agent-id="${idx}"]`);
       if (!target) {
         const allButtons = document.querySelectorAll("button, [role='button']");
         if (allButtons.length >= idx && idx > 0) {
@@ -812,6 +902,11 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_DOM_PII_BOXES") {
     const matches = scanPageForSensitiveElements();
     const interactive = extractInteractiveElements();
+    let structuredData = null;
+    try {
+      structuredData = window.__PRIVIBROWSE_TELEMETRY_ADAPTER__?.getTelemetryDigest() || null;
+    } catch {}
+
     sendResponse({
       ok: true,
       boxes: matches.map((m) => ({
@@ -823,6 +918,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         reason: m.reason,
       })),
       interactiveElements: interactive,
+      structuredData,
+      spaMetadata: {
+        currentRoute: window.location.href,
+        lastMutationTime: lastSpaMutationTime,
+        timestamp: new Date().toISOString(),
+      },
       viewport: {
         width: window.innerWidth,
         height: window.innerHeight,

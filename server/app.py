@@ -12,8 +12,11 @@ import re
 import time
 import json
 import base64
+import asyncio
+import random
 from typing import List, Optional, Dict, Any, Tuple
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.responses import HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import httpx
@@ -96,6 +99,7 @@ class ActRequest(BaseModel):
     step: Optional[int] = 1
     max_steps: Optional[int] = 8
     history: Optional[List[Dict[str, Any]]] = []
+    structured_data: Optional[Dict[str, Any]] = None
 
 
 class ActionOutput(BaseModel):
@@ -154,6 +158,44 @@ def health_check():
     }
 
 
+def generate_simulated_telemetry_frame() -> List[Dict[str, Any]]:
+    """Generates realistic 1 Hz telemetry frame matching ISRO ISTRAC specifications."""
+    dod = round(12.5 + 0.4 * random.random(), 1)
+    return [
+        {"mnemonic": "BAT1_DOD", "value": dod, "unit": "%", "status": "ALARM" if dod > 35 else "OK", "limit_state": "Soft: 35%, Hard: 40%", "subsystem": "POWER"},
+        {"mnemonic": "BAT1_SOC", "value": round(87.4 + random.uniform(-0.1, 0.1), 1), "unit": "%", "status": "OK", "subsystem": "POWER"},
+        {"mnemonic": "BUS_V28", "value": round(28.42 + random.uniform(-0.02, 0.02), 2), "unit": "V", "status": "OK", "subsystem": "POWER"},
+        {"mnemonic": "RWA3_RPM", "value": round(4388 + random.randint(-5, 5)), "unit": "rpm", "status": "WARN", "limit_state": "Saturation: 4500 rpm", "subsystem": "AOCS"},
+        {"mnemonic": "STR2_STAT", "value": "NO TRACK", "status": "ALARM", "subsystem": "AOCS"},
+        {"mnemonic": "CLASSIFIED_COORD", "value": "13.03N 77.51E", "status": "OK", "subsystem": "PAYLOAD"},
+    ]
+
+
+@app.get("/console", response_class=HTMLResponse)
+def get_mission_console():
+    """Serves the interactive Mission Operations Simulation Console SPA."""
+    console_path = os.path.join(os.path.dirname(__file__), "..", "pii-agent-extension", "mission_console.html")
+    if os.path.isfile(console_path):
+        with open(console_path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    raise HTTPException(status_code=404, detail="Mission console HTML not found")
+
+
+@app.websocket("/ws/telemetry")
+async def websocket_telemetry_endpoint(websocket: WebSocket):
+    """Streams 1 Hz simulated telemetry delta frames to the mission console."""
+    await websocket.accept()
+    try:
+        while True:
+            frame = generate_simulated_telemetry_frame()
+            await websocket.send_json(frame)
+            await asyncio.sleep(1.0)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+
+
 # Cache Ollama availability state to prevent network timeout latency
 _ollama_checked = False
 _ollama_online = False
@@ -185,6 +227,7 @@ async def try_ollama_qwen(
     history: Optional[List[Dict[str, Any]]] = None,
     step: int = 1,
     max_steps: int = 8,
+    structured_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[ActionOutput]:
     """
     Attempts reasoning using local Ollama (Qwen2.5-VL / Qwen2.5-Coder / Qwen3).
@@ -218,6 +261,10 @@ async def try_ollama_qwen(
             for i, h in enumerate(history)
         )
 
+    telemetry_text = ""
+    if structured_data:
+        telemetry_text = "\n\n=== REAL-TIME TELEMETRY & STRUCTURED DATA ===\n" + json.dumps(structured_data, indent=2) + "\n============================================\n"
+
     system_prompt = (
         "You are an expert autonomous browser agent. You receive a user goal, session history, and visible web elements.\n"
         f"Progress: Step {step} of {max_steps}.\n"
@@ -225,13 +272,14 @@ async def try_ollama_qwen(
         "1. DO NOT REPEAT ACTIONS: If search was already done, do NOT search again. Inspect products or scroll down!\n"
         "2. To explore more results, use type: 'scroll', value: 'down'.\n"
         "3. Once best product is found, use type: 'finish' with your recommendation summary in explanation.\n"
+        "4. If 'REAL-TIME TELEMETRY & STRUCTURED DATA' is provided below, treat those values as verified exact parameters.\n"
         "Respond strictly with JSON: "
         '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
         '"selector": "CSS selector or element id", "value": "text or scroll direction", '
         '"explanation": "reasoning and findings", "confidence": 0.0-1.0}'
     )
 
-    user_prompt = f"User Instruction: {task}{history_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
+    user_prompt = f"User Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
 
     payload = {
         "model": model,
@@ -266,6 +314,7 @@ async def try_gemini(
     history: Optional[List[Dict[str, Any]]] = None,
     step: int = 1,
     max_steps: int = 8,
+    structured_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[ActionOutput]:
     """
     Attempts reasoning using Google Gemini API (gemini-3.5-flash-lite / gemini-3.7-flash).
@@ -299,6 +348,15 @@ async def try_gemini(
         ]
         history_text = "\n\nPrevious Actions Executed in this Session:\n" + "\n".join(history_lines)
 
+    telemetry_text = ""
+    if structured_data:
+        telemetry_text = (
+            "\n\n=== REAL-TIME TELEMETRY & STRUCTURED APPLICATION DATA ===\n"
+            "[Direct binary/WebSocket stream - exact parameters received by browser. Do NOT guess or attempt visual OCR on strip charts for these values]\n"
+            f"{json.dumps(structured_data, indent=2)}\n"
+            "===========================================================\n"
+        )
+
     system_instruction = (
         "You are an expert autonomous browser agent. You receive a user goal, session history, and visible web elements.\n"
         f"Session Progress: Step {step} of {max_steps}.\n\n"
@@ -310,14 +368,15 @@ async def try_gemini(
         "   - If a product looks promising, you can click on its title link to view full specifications.\n"
         "   - Once you have found the best product that satisfies the user's constraints (e.g. under budget with high rating), FINISH the task with {\"type\": \"finish\", \"explanation\": \"Detailed summary of your top pick: product name, exact price, rating, and key features\"}.\n"
         "3. FORM SUBMISSION: To submit a search or form, click the submit/send button or use type: 'submit'.\n"
-        "4. Respond strictly with a JSON object: "
+        "4. STRUCTURED TELEMETRY & APP DATA: If 'REAL-TIME TELEMETRY & STRUCTURED APPLICATION DATA' is provided below, treat those numerical values, status states, and limits as ground-truth facts received directly from the application data stream. Do NOT guess or attempt visual OCR for those parameters.\n"
+        "5. Respond strictly with a JSON object: "
         '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
         '"selector": "CSS selector or element id", "value": "text to type, select, or scroll direction (down/up)", '
         '"explanation": "reasoning and findings", "confidence": 0.0-1.0}'
     )
 
     parts: List[Dict[str, Any]] = [
-        {"text": f"{system_instruction}\n\nUser Instruction: {task}{history_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"}
+        {"text": f"{system_instruction}\n\nUser Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"}
     ]
 
     if image_base64 and len(image_base64) > 100:
@@ -371,7 +430,15 @@ async def try_gemini(
 
 
 
-async def try_openai(task: str, elements: List[DOMElement], image_base64: Optional[str]) -> Optional[ActionOutput]:
+async def try_openai(
+    task: str,
+    elements: List[DOMElement],
+    image_base64: Optional[str],
+    history: Optional[List[Dict[str, Any]]] = None,
+    step: int = 1,
+    max_steps: int = 8,
+    structured_data: Optional[Dict[str, Any]] = None,
+) -> Optional[ActionOutput]:
     """
     Attempts reasoning using OpenAI API (gpt-4o-mini / gpt-4o).
     Only invoked if OPENAI_API_KEY is configured.
@@ -397,20 +464,38 @@ async def try_openai(task: str, elements: List[DOMElement], image_base64: Option
         for el in elements[:80]
     ]
 
+    history_text = ""
+    if history and len(history) > 0:
+        history_lines = [
+            f"  - Step {h.get('step', i+1)}: [{h.get('action', '').upper()}] selector='{h.get('selector', '') or 'page'}' value='{h.get('value', '')}': {h.get('explanation', '')}"
+            for i, h in enumerate(history)
+        ]
+        history_text = "\n\nPrevious Actions Executed in this Session:\n" + "\n".join(history_lines)
+
+    telemetry_text = ""
+    if structured_data:
+        telemetry_text = (
+            "\n\n=== REAL-TIME TELEMETRY & STRUCTURED APPLICATION DATA ===\n"
+            "[Direct binary/WebSocket stream - exact parameters received by browser. Do NOT guess or attempt visual OCR on strip charts for these values]\n"
+            f"{json.dumps(structured_data, indent=2)}\n"
+            "===========================================================\n"
+        )
+
     system_prompt = (
         "You are an expert autonomous browser agent. Select the next single concrete browser action. "
         "To submit a form or send a message in chat/search interfaces (e.g. ChatGPT, Google), click the submit/send button or use the 'submit' action type on the input field. "
+        "If 'REAL-TIME TELEMETRY & STRUCTURED APPLICATION DATA' is provided, use those exact numerical parameters directly. "
         "Respond strictly with a JSON object: "
         '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
         '"selector": "CSS selector or element id", "value": "text to type or select", '
         '"explanation": "reasoning", "confidence": 0.0-1.0}'
     )
 
-    user_content: Any = f"User Instruction: {task}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
+    user_content: Any = f"User Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
     if image_base64 and len(image_base64) > 100:
         clean_b64 = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
         user_content = [
-            {"type": "text", "text": f"User Instruction: {task}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"},
+            {"type": "text", "text": f"User Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"},
             {"type": "image_url", "image_url": {"url": clean_b64, "detail": "low"}}
         ]
 
@@ -707,7 +792,8 @@ async def act_endpoint(payload: ActRequest):
             payload.sanitized_image_base64,
             history=payload.history or [],
             step=payload.step or 1,
-            max_steps=payload.max_steps or 8
+            max_steps=payload.max_steps or 8,
+            structured_data=payload.structured_data,
         )
         if action:
             model_used = "gemini"
@@ -721,7 +807,8 @@ async def act_endpoint(payload: ActRequest):
             payload.sanitized_image_base64,
             history=payload.history or [],
             step=payload.step or 1,
-            max_steps=payload.max_steps or 8
+            max_steps=payload.max_steps or 8,
+            structured_data=payload.structured_data,
         )
         if action:
             model_used = "openai"
@@ -735,7 +822,8 @@ async def act_endpoint(payload: ActRequest):
             payload.sanitized_image_base64,
             history=payload.history or [],
             step=payload.step or 1,
-            max_steps=payload.max_steps or 8
+            max_steps=payload.max_steps or 8,
+            structured_data=payload.structured_data,
         )
         if action:
             model_used = "ollama-qwen"

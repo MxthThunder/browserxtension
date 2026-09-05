@@ -85,7 +85,8 @@ export class AgentClient {
       model_provider: params.modelProvider || "auto",
       step: params.step || 1,
       max_steps: params.maxSteps || 8,
-      history: params.history || []
+      history: params.history || [],
+      structured_data: params.structuredData || null
     };
 
     const startTime = performance.now();

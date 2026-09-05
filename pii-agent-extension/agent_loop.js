@@ -130,14 +130,16 @@ export class AutonomousAgentLoop {
           throw new Error(`Capture and local perception failed: ${captureResult?.error || "Unknown"}`);
         }
 
-        // ── Phase 2: Fetch & Sanitize DOM Interactive Elements ────────────────
+        // ── Phase 2: Fetch & Sanitize DOM Interactive Elements & Telemetry ──
         let domElements = [];
+        let structuredData = null;
         try {
           const tab = await this._getActiveTab();
           if (tab && tab.id) {
             const domResp = await chrome.tabs.sendMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
-            if (domResp && domResp.interactiveElements) {
-              domElements = domResp.interactiveElements;
+            if (domResp) {
+              if (domResp.interactiveElements) domElements = domResp.interactiveElements;
+              if (domResp.structuredData) structuredData = domResp.structuredData;
             }
           }
         } catch {
@@ -162,6 +164,7 @@ export class AutonomousAgentLoop {
           task: userTask,
           sanitizedImageBase64: captureResult.sanitizedImageUrl,
           interactiveElements: sanitizedElements,
+          structuredData: structuredData,
           redactionManifest: captureResult.redactionList || [],
           viewport: captureResult.resolution,
           url: captureResult.tabUrl,
