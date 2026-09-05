@@ -241,7 +241,7 @@ async def try_gemini(task: str, elements: List[DOMElement], image_base64: Option
     if not api_key:
         return None
 
-    model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     elements_digest = [
         {
             "id": el.id,
@@ -279,7 +279,7 @@ async def try_gemini(task: str, elements: List[DOMElement], image_base64: Option
             }
         })
 
-    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
@@ -303,9 +303,12 @@ async def try_gemini(task: str, elements: List[DOMElement], image_base64: Option
                         explanation=f"[Gemini] " + raw_json.get("explanation", "Action planned by Gemini."),
                         confidence=float(raw_json.get("confidence", 0.95)),
                     )
-    except Exception:
-        return None
+            else:
+                print(f"[Gemini] API error {resp.status_code}: {resp.text[:300]}")
+    except Exception as e:
+        print(f"[Gemini] Exception: {e}")
     return None
+
 
 
 async def try_openai(task: str, elements: List[DOMElement], image_base64: Optional[str]) -> Optional[ActionOutput]:
@@ -378,8 +381,10 @@ async def try_openai(task: str, elements: List[DOMElement], image_base64: Option
                         explanation=f"[OpenAI] " + raw_json.get("explanation", "Action planned by OpenAI."),
                         confidence=float(raw_json.get("confidence", 0.95)),
                     )
-    except Exception:
-        return None
+            else:
+                print(f"[OpenAI] API error {resp.status_code}: {resp.text[:300]}")
+    except Exception as e:
+        print(f"[OpenAI] Exception: {e}")
     return None
 
 
