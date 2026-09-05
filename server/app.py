@@ -198,7 +198,7 @@ async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: O
             "value": el.value or "",
             "is_interactive": el.is_interactive
         }
-        for el in elements[:30]
+        for el in elements[:80]
     ]
 
     system_prompt = (
@@ -261,12 +261,13 @@ async def try_gemini(task: str, elements: List[DOMElement], image_base64: Option
             "value": el.value or "",
             "is_interactive": el.is_interactive,
         }
-        for el in elements[:30]
+        for el in elements[:80]
     ]
 
     system_instruction = (
         "You are an expert autonomous browser agent. You receive a user goal and a list of visible web elements. "
         "Select the next single concrete browser action to make progress towards the user's goal. "
+        "To submit a form or send a message in chat/search interfaces (e.g. ChatGPT, Google), click the submit/send button or use the 'submit' action type on the input field. "
         "Respond strictly with a JSON object: "
         '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
         '"selector": "CSS selector or element id", "value": "text to type or select", '
@@ -286,7 +287,12 @@ async def try_gemini(task: str, elements: List[DOMElement], image_base64: Option
             }
         })
 
-    url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
+    primary_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    candidate_models = [primary_model]
+    for fallback in ["gemini-3.5-flash-lite", "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-3.6-flash"]:
+        if fallback not in candidate_models:
+            candidate_models.append(fallback)
+
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
@@ -295,25 +301,30 @@ async def try_gemini(task: str, elements: List[DOMElement], image_base64: Option
         }
     }
 
-    try:
-        async with httpx.AsyncClient(timeout=45.0) as client:
-            resp = await client.post(url, json=payload)
-            if resp.status_code == 200:
-                data = resp.json()
-                text_response = data["candidates"][0]["content"]["parts"][0]["text"]
-                raw_json = json.loads(text_response)
-                if "type" in raw_json:
-                    return ActionOutput(
-                        type=raw_json.get("type", "finish"),
-                        selector=raw_json.get("selector"),
-                        value=raw_json.get("value"),
-                        explanation=f"[Gemini] " + raw_json.get("explanation", "Action planned by Gemini."),
-                        confidence=float(raw_json.get("confidence", 0.95)),
-                    )
-            else:
-                print(f"[Gemini] API error {resp.status_code}: {resp.text[:300]}")
-    except Exception as e:
-        print(f"[Gemini] Exception: {e}")
+    async with httpx.AsyncClient(timeout=45.0) as client:
+        for model in candidate_models:
+            url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
+            try:
+                resp = await client.post(url, json=payload)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    text_response = data["candidates"][0]["content"]["parts"][0]["text"]
+                    raw_json = json.loads(text_response)
+                    if "type" in raw_json:
+                        return ActionOutput(
+                            type=raw_json.get("type", "finish"),
+                            selector=raw_json.get("selector"),
+                            value=raw_json.get("value"),
+                            explanation=f"[Gemini ({model})] " + raw_json.get("explanation", "Action planned by Gemini."),
+                            confidence=float(raw_json.get("confidence", 0.95)),
+                        )
+                elif resp.status_code == 429:
+                    print(f"[Gemini] {model} hit rate limit (429), trying fallback model...")
+                    continue
+                else:
+                    print(f"[Gemini] {model} API error {resp.status_code}: {resp.text[:200]}")
+            except Exception as e:
+                print(f"[Gemini] {model} Exception: {e}")
     return None
 
 
@@ -341,11 +352,12 @@ async def try_openai(task: str, elements: List[DOMElement], image_base64: Option
             "value": el.value or "",
             "is_interactive": el.is_interactive,
         }
-        for el in elements[:30]
+        for el in elements[:80]
     ]
 
     system_prompt = (
         "You are an expert autonomous browser agent. Select the next single concrete browser action. "
+        "To submit a form or send a message in chat/search interfaces (e.g. ChatGPT, Google), click the submit/send button or use the 'submit' action type on the input field. "
         "Respond strictly with a JSON object: "
         '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
         '"selector": "CSS selector or element id", "value": "text to type or select", '

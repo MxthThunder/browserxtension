@@ -474,32 +474,52 @@ function scanPageForSensitiveElements() {
  */
 function extractInteractiveElements() {
   const elements = [];
-  const nodes = document.querySelectorAll(
-    "button, a, input, select, textarea, [role='button'], [onclick], [tabindex]"
-  );
+  const rawNodes = Array.from(document.querySelectorAll(
+    "button, a, input, select, textarea, [role='button'], [role='textbox'], [role='link'], [contenteditable='true'], [onclick], [tabindex]"
+  ));
 
-  nodes.forEach((node, idx) => {
+  // Prioritize primary content / inputs & buttons over sidebars / headers
+  rawNodes.sort((a, b) => {
+    const aScore = (a.id === "prompt-textarea" || a.getAttribute("data-testid")?.includes("send") ? 100 : 0) +
+                   (a.tagName === "TEXTAREA" || a.tagName === "INPUT" || a.isContentEditable ? 50 : 0) +
+                   (a.tagName === "BUTTON" ? 20 : 0);
+    const bScore = (b.id === "prompt-textarea" || b.getAttribute("data-testid")?.includes("send") ? 100 : 0) +
+                   (b.tagName === "TEXTAREA" || b.tagName === "INPUT" || b.isContentEditable ? 50 : 0) +
+                   (b.tagName === "BUTTON" ? 20 : 0);
+    return bScore - aScore;
+  });
+
+  rawNodes.forEach((node, idx) => {
     const rect = node.getBoundingClientRect();
     if (rect.width === 0 || rect.height === 0) return;
-    if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+    if (rect.bottom < -200 || rect.top > window.innerHeight + 200) return;
+
+    const agentId = String(idx + 1);
+    node.setAttribute("data-agent-id", agentId);
 
     let selector = "";
     if (node.id) {
       selector = `#${CSS.escape(node.id)}`;
+    } else if (node.getAttribute("data-testid")) {
+      selector = `${node.tagName.toLowerCase()}[data-testid="${CSS.escape(node.getAttribute("data-testid"))}"]`;
+    } else if (node.getAttribute("aria-label")) {
+      selector = `${node.tagName.toLowerCase()}[aria-label="${CSS.escape(node.getAttribute("aria-label"))}"]`;
     } else if (node.name) {
-      selector = `[name="${CSS.escape(node.name)}"]`;
+      selector = `${node.tagName.toLowerCase()}[name="${CSS.escape(node.name)}"]`;
+    } else if (node.getAttribute("placeholder")) {
+      selector = `${node.tagName.toLowerCase()}[placeholder="${CSS.escape(node.getAttribute("placeholder"))}"]`;
     } else if (node.getAttribute("role")) {
-      selector = `[role="${CSS.escape(node.getAttribute("role"))}"]`;
+      selector = `[role="${CSS.escape(node.getAttribute("role"))}"][data-agent-id="${agentId}"]`;
     } else {
-      selector = `${node.tagName.toLowerCase()}:nth-of-type(${idx + 1})`;
+      selector = `[data-agent-id="${agentId}"]`;
     }
 
     elements.push({
       tag: node.tagName.toLowerCase(),
       id: node.id || "",
       name: node.name || "",
-      type: node.type || "",
-      text: (node.innerText || node.value || node.placeholder || "").trim().substring(0, 80),
+      type: node.type || (node.isContentEditable ? "contenteditable" : ""),
+      text: (node.innerText || node.value || node.getAttribute("aria-label") || node.placeholder || "").trim().substring(0, 80),
       selector,
       rect: {
         x: Math.round(rect.left),
@@ -578,59 +598,43 @@ function updateFloatingBadge(piiCount) {
 /**
  * Initializes MutationObserver to detect dynamically inserted elements in SPAs.
  */
-function initDynamicObserver() {
-  if (observer) observer.disconnect();
-
-  let debounceTimer = null;
-  observer = new MutationObserver(() => {
+function initDomObserver() {
+  const observer = new MutationObserver(() => {
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
-      scanPageForSensitiveElements();
-    }, 200);
+      if (isProtectionEnabled) {
+        scanPageForSensitiveElements();
+      }
+    }, 400);
   });
 
   observer.observe(document.body, {
     childList: true,
     subtree: true,
-    attributes: true,
-    attributeFilter: ["type", "autocomplete", "name", "style", "class"],
+    characterData: false,
   });
 }
 
-/**
- * Visual Ripple Animation for Agent Actions.
- */
-function animateActionTarget(targetElement, actionType) {
-  const rect = targetElement.getBoundingClientRect();
+function animateActionTarget(target, actionType) {
   const indicator = document.createElement("div");
-  
+  indicator.id = "privibrowse-action-indicator";
+  const rect = target.getBoundingClientRect();
   Object.assign(indicator.style, {
     position: "fixed",
     top: `${rect.top}px`,
     left: `${rect.left}px`,
     width: `${rect.width}px`,
     height: `${rect.height}px`,
-    border: "2px solid #10b981",
-    background: "rgba(16, 185, 129, 0.2)",
-    borderRadius: "4px",
-    zIndex: "2147483646",
+    border: "2px solid #3b82f6",
+    background: "rgba(59, 130, 246, 0.2)",
+    zIndex: "2147483647",
     pointerEvents: "none",
-    boxShadow: "0 0 15px #10b981",
-    transition: "all 0.6s cubic-bezier(0.16, 1, 0.3, 1)",
-    display: "flex",
-    alignItems: "center",
-    justifyContent: "center",
-    color: "#fff",
-    fontSize: "12px",
-    fontWeight: "700",
+    borderRadius: "4px",
+    transition: "all 0.3s ease",
   });
-
-  indicator.textContent = `🤖 Agent: ${actionType.toUpperCase()}`;
   document.body.appendChild(indicator);
-
   setTimeout(() => {
     indicator.style.opacity = "0";
-    indicator.style.transform = "scale(1.08)";
     setTimeout(() => indicator.remove(), 600);
   }, 900);
 }
@@ -640,6 +644,8 @@ function animateActionTarget(targetElement, actionType) {
  */
 async function executeAgentAction(action) {
   let target = null;
+
+  // 1. Direct CSS selector
   if (action.selector) {
     try {
       target = document.querySelector(action.selector);
@@ -648,9 +654,46 @@ async function executeAgentAction(action) {
     }
   }
 
-  // Fallback to coordinates if selector was not resolved
-  if (!target && action.coordinates) {
+  // 2. Extract index if selector is nth-of-type or data-agent-id (e.g. button:nth-of-type(45) or [data-agent-id="45"])
+  if (!target && action.selector) {
+    const numMatch = action.selector.match(/(?:nth-of-type|data-agent-id)[(=["']?(\d+)/i);
+    if (numMatch) {
+      const idx = parseInt(numMatch[1], 10);
+      target = document.querySelector(`[data-agent-id="${idx}"]`);
+      if (!target) {
+        const allButtons = document.querySelectorAll("button, [role='button']");
+        if (allButtons.length >= idx && idx > 0) {
+          target = allButtons[idx - 1];
+        }
+      }
+    }
+  }
+
+  // 3. Fallback for Submit / Send intent (ChatGPT, Claude, search engines, forms)
+  const isSubmitOrSend = (action.type === "submit" || action.type === "click") &&
+    (action.explanation || "").toLowerCase().match(/submit|send|prompt|enter|search|proceed/i);
+
+  if (!target && isSubmitOrSend) {
+    target = document.querySelector(
+      'button[data-testid*="send" i], button[data-testid*="submit" i], button[aria-label*="Send" i], button[aria-label*="Submit" i], button[type="submit"], form button, [role="button"][aria-label*="Send" i]'
+    );
+  }
+
+  // 4. Coordinates fallback
+  if (!target && action.coordinates && typeof action.coordinates.x === "number") {
     target = document.elementFromPoint(action.coordinates.x, action.coordinates.y);
+  }
+
+  // If still not found and the action was to submit / send, submit active input via Enter
+  if (!target && isSubmitOrSend) {
+    const activeInput = document.querySelector("#prompt-textarea, textarea, input:focus, [contenteditable='true']");
+    if (activeInput) {
+      activeInput.focus();
+      activeInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+      activeInput.dispatchEvent(new KeyboardEvent("keypress", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+      activeInput.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+      return { ok: true, executed: "submit_via_enter", note: "Submitted by dispatching Enter key on prompt input" };
+    }
   }
 
   if (!target && action.type !== "scroll" && action.type !== "finish") {
@@ -659,22 +702,64 @@ async function executeAgentAction(action) {
 
   if (target) {
     animateActionTarget(target, action.type);
-    target.scrollIntoView({ behavior: "smooth", block: "center" });
+    try {
+      target.scrollIntoView({ behavior: "smooth", block: "center" });
+    } catch {}
   }
 
   switch (action.type) {
     case "click":
-      target.dispatchEvent(new MouseEvent("mousedown", { bubbles: true, cancelable: true }));
-      target.dispatchEvent(new MouseEvent("mouseup", { bubbles: true, cancelable: true }));
+      // Enable if disabled
+      if (target.hasAttribute("disabled") || target.disabled) {
+        target.disabled = false;
+        target.removeAttribute("disabled");
+      }
+
+      target.focus();
+      const clickOpts = { bubbles: true, cancelable: true, view: window, buttons: 1 };
+      target.dispatchEvent(new PointerEvent("pointerdown", clickOpts));
+      target.dispatchEvent(new MouseEvent("mousedown", clickOpts));
+      target.dispatchEvent(new PointerEvent("pointerup", clickOpts));
+      target.dispatchEvent(new MouseEvent("mouseup", clickOpts));
       target.click();
+
+      // If clicking Send / Submit, also press Enter on prompt input as backup
+      if (isSubmitOrSend) {
+        const promptInput = document.querySelector("#prompt-textarea, textarea, [contenteditable='true']");
+        if (promptInput) {
+          promptInput.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+          promptInput.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+        }
+      }
       return { ok: true, executed: "click", selector: action.selector };
 
     case "type":
       target.focus();
-      target.value = action.value || "";
-      target.dispatchEvent(new Event("input", { bubbles: true }));
-      target.dispatchEvent(new Event("change", { bubbles: true }));
-      return { ok: true, executed: "type", value: action.value };
+      const val = action.value || "";
+
+      // 1. ContentEditable (ChatGPT, Claude, rich text editors)
+      if (target.isContentEditable || target.getAttribute("contenteditable") === "true") {
+        target.focus();
+        document.execCommand("selectAll", false, null);
+        document.execCommand("insertText", false, val);
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+      } else {
+        // 2. React 16+ input/textarea value tracker bypass
+        const proto = target instanceof HTMLTextAreaElement ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+        const setMethod = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+        if (setMethod) {
+          setMethod.call(target, val);
+        } else {
+          target.value = val;
+        }
+
+        target.dispatchEvent(new InputEvent("beforeinput", { bubbles: true, inputType: "insertText", data: val }));
+        target.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: val }));
+        target.dispatchEvent(new Event("input", { bubbles: true }));
+        target.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+      return { ok: true, executed: "type", value: val };
 
     case "scroll":
       const scrollY = action.value === "up" ? -350 : 350;
@@ -682,9 +767,14 @@ async function executeAgentAction(action) {
       return { ok: true, executed: "scroll", direction: action.value };
 
     case "submit":
-      if (target.form) {
+      if (target.form && target.form.requestSubmit) {
+        target.form.requestSubmit();
+      } else if (target.form) {
         target.form.submit();
       } else {
+        target.focus();
+        target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+        target.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
         target.click();
       }
       return { ok: true, executed: "submit" };
