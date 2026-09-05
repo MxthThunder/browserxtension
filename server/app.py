@@ -220,7 +220,7 @@ async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: O
     }
 
     try:
-        async with httpx.AsyncClient(timeout=1.5) as client:
+        async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(f"{ollama_host}/api/generate", json=payload)
             if resp.status_code == 200:
                 data = resp.json()
@@ -296,7 +296,7 @@ async def try_gemini(task: str, elements: List[DOMElement], image_base64: Option
     }
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=45.0) as client:
             resp = await client.post(url, json=payload)
             if resp.status_code == 200:
                 data = resp.json()
@@ -371,7 +371,7 @@ async def try_openai(task: str, elements: List[DOMElement], image_base64: Option
     }
 
     try:
-        async with httpx.AsyncClient(timeout=10.0) as client:
+        async with httpx.AsyncClient(timeout=45.0) as client:
             resp = await client.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers={"Authorization": f"Bearer {api_key}"},

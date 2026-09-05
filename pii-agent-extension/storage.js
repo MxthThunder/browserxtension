@@ -26,6 +26,7 @@ export const DEFAULT_SETTINGS = {
   // Server & VLM Backend
   serverUrl: "http://127.0.0.1:8001/api/act",
   serverHealthUrl: "http://127.0.0.1:8001/health",
+  requestTimeoutMs: 60000,
   apiKey: "",
 
   // User Interface & On-Page Preferences

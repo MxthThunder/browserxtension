@@ -14,7 +14,7 @@ export class AgentClient {
   constructor(config = {}) {
     this.serverUrl = config.serverUrl || "http://127.0.0.1:8001/api/act";
     this.healthUrl = config.healthUrl || "http://127.0.0.1:8001/health";
-    this.timeoutMs = config.timeoutMs || 10000;
+    this.timeoutMs = config.timeoutMs || 60000;
   }
 
   /**
@@ -23,7 +23,7 @@ export class AgentClient {
   async checkHealth() {
     try {
       const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), 3000);
+      const timeoutId = setTimeout(() => controller.abort(), 5000);
       const res = await fetch(this.healthUrl, { signal: controller.signal });
       clearTimeout(timeoutId);
       if (res.ok) {
@@ -51,6 +51,7 @@ export class AgentClient {
   async requestAction(params) {
     const settings = await getSettings();
     const targetUrl = settings.serverUrl || this.serverUrl;
+    const timeoutMs = settings.requestTimeoutMs || this.timeoutMs || 60000;
 
     // 1. Sanitize user task prompt if it contains inline raw PII
     const sanitizedTask = semanticRedactor.sanitizeText(params.task || "");
@@ -85,11 +86,12 @@ export class AgentClient {
     };
 
     const startTime = performance.now();
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => {
+      controller.abort(new DOMException(`Reasoning request timed out after ${Math.round(timeoutMs / 1000)}s`, "TimeoutError"));
+    }, timeoutMs);
 
     try {
-      const controller = new AbortController();
-      const timeoutId = setTimeout(() => controller.abort(), this.timeoutMs);
-
       const response = await fetch(targetUrl, {
         method: "POST",
         headers: {
@@ -99,8 +101,6 @@ export class AgentClient {
         body: JSON.stringify(payload),
         signal: controller.signal
       });
-
-      clearTimeout(timeoutId);
 
       if (!response.ok) {
         throw new Error(`Server returned HTTP ${response.status}: ${response.statusText}`);
@@ -135,6 +135,8 @@ export class AgentClient {
         error: err.message,
         latencyMs: Math.round(elapsedMs)
       };
+    } finally {
+      clearTimeout(timeoutId);
     }
   }
 }
