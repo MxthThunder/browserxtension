@@ -644,26 +644,30 @@ async def act_endpoint(payload: ActRequest):
     model_used = "universal-nlp-engine"
     action = None
 
-    # 1. Attempt local Ollama / Qwen model if requested or available
-    if payload.model_provider in ["auto", "ollama_qwen"]:
-        action = await try_ollama_qwen(payload.task, payload.dom_elements or [], payload.sanitized_image_base64)
-        if action:
-            model_used = "ollama-qwen"
-
-    # 2. Attempt Google Gemini if requested or auto with API key present
-    if not action and payload.model_provider in ["auto", "gemini"]:
+    # Priority 1: Google Gemini (Primary Cloud VLM for intelligent multi-step browser actions)
+    if payload.model_provider == "gemini" or (payload.model_provider == "auto" and os.getenv("GEMINI_API_KEY")):
+        print(f"[Reasoner] Delegating action planning to Gemini Cloud VLM ({os.getenv('GEMINI_MODEL', 'gemini-3.6-flash')})...")
         action = await try_gemini(payload.task, payload.dom_elements or [], payload.sanitized_image_base64)
         if action:
             model_used = "gemini"
 
-    # 3. Attempt OpenAI if requested or auto with API key present
-    if not action and payload.model_provider in ["auto", "openai"]:
+    # Priority 2: OpenAI Cloud VLM (if explicitly selected or auto fallback with key)
+    if not action and (payload.model_provider == "openai" or (payload.model_provider == "auto" and os.getenv("OPENAI_API_KEY"))):
+        print("[Reasoner] Delegating action planning to OpenAI Cloud VLM...")
         action = await try_openai(payload.task, payload.dom_elements or [], payload.sanitized_image_base64)
         if action:
             model_used = "openai"
 
-    # 4. Fallback: Universal Semantic NLP Reasoner (Handles ANY free-form prompt offline)
+    # Priority 3: Local Ollama / Qwen model (only if explicitly selected or offline fallback without cloud keys)
+    if not action and (payload.model_provider == "ollama_qwen" or payload.model_provider == "auto"):
+        print("[Reasoner] Delegating action planning to Local Ollama Qwen...")
+        action = await try_ollama_qwen(payload.task, payload.dom_elements or [], payload.sanitized_image_base64)
+        if action:
+            model_used = "ollama-qwen"
+
+    # Priority 4: Fallback Universal Semantic NLP Reasoner (Handles ANY free-form prompt offline)
     if not action:
+        print("[Reasoner] Using Universal Semantic NLP Reasoner fallback...")
         action = universal_nlp_reasoner(
             task=payload.task,
             elements=payload.dom_elements or [],

@@ -19,6 +19,7 @@ const lblServerStatus = document.getElementById("lblServerStatus");
 
 // Prompt & Agent
 const taskInput = document.getElementById("taskInput");
+const selModelProvider = document.getElementById("selModelProvider");
 const btnDispatchTask = document.getElementById("btnDispatchTask");
 const btnDispatchText = document.getElementById("btnDispatchText");
 const agentStatusLog = document.getElementById("agentStatusLog");
@@ -340,10 +341,11 @@ btnDispatchTask.addEventListener("click", async () => {
   appendLog(`Initiating multi-step autonomous loop: "${task}"...`);
 
   try {
+    const modelProvider = selModelProvider?.value || "auto";
     const res = await chrome.runtime.sendMessage({
       type: "START_AGENT_LOOP",
       task,
-      options: { maxSteps: 8 }
+      options: { maxSteps: 8, modelProvider }
     });
 
     if (!res || !res.ok) {
@@ -445,6 +447,15 @@ async function loadQuickSettings() {
   popChkBadge.checked = Boolean(settings.showPageBadge);
   popSelEngine.value = settings.engineMode || "auto";
   popTxtServerUrl.value = settings.serverUrl || "http://127.0.0.1:8001/api/act";
+  if (selModelProvider) {
+    selModelProvider.value = settings.modelProvider || "auto";
+  }
+}
+
+if (selModelProvider) {
+  selModelProvider.addEventListener("change", async () => {
+    await saveSettings({ modelProvider: selModelProvider.value });
+  });
 }
 
 popBtnSaveSettings.addEventListener("click", async () => {

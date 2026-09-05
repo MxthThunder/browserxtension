@@ -79,6 +79,19 @@
         </div>
       </div>
 
+      <!-- Model Provider Selection -->
+      <div style="display: flex; justify-content: space-between; align-items: center; margin: 8px 0 10px 0; background: rgba(15, 23, 42, 0.7); padding: 5px 9px; border-radius: 6px; border: 1px solid rgba(255, 255, 255, 0.08);">
+        <span style="font-size: 10px; color: #94a3b8; display: flex; align-items: center; gap: 5px;">
+          <span>🧠</span> <span>Reasoner Engine:</span>
+        </span>
+        <select id="selModelProvider" style="background: #090d16; border: 1px solid #334155; color: #38bdf8; border-radius: 4px; font-size: 10px; padding: 2px 6px; outline: none; cursor: pointer;">
+          <option value="auto">✨ Auto (Gemini Cloud VLM)</option>
+          <option value="gemini">⚡ Gemini 3.6 Flash (Cloud)</option>
+          <option value="ollama_qwen">💻 Local Ollama (Qwen)</option>
+          <option value="nlp">⚙️ Universal NLP (Offline)</option>
+        </select>
+      </div>
+
       <!-- Primary Action Button -->
       <button id="btnDispatchTask" class="btn-primary-action">
         <span>🚀</span>
