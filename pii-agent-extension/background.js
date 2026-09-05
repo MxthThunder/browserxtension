@@ -11,6 +11,8 @@
 
 import { getSettings, saveSettings, logAuditEntry, DEFAULT_SETTINGS } from "./storage.js";
 import { agentLoop } from "./agent_loop.js";
+import { vault } from "./vault.js";
+import { semanticRedactor } from "./semantic_redactor.js";
 
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
@@ -31,6 +33,14 @@ async function ensureOffscreenDocument() {
 chrome.runtime.onInstalled.addListener(async (details) => {
   console.log("[Background] Extension installed/updated:", details.reason);
   await ensureOffscreenDocument();
+
+  // Initialize the encrypted local vault (device-keyed AES-256-GCM)
+  try {
+    await vault.init();
+    console.log("[Background] Local sensitive vault ready.");
+  } catch (err) {
+    console.warn("[Background] Vault init failed (first install is normal):", err.message);
+  }
 
   // Initialize context menus
   chrome.contextMenus.removeAll(() => {
@@ -265,12 +275,27 @@ async function executeTaskWithServer(task, options = {}) {
   const serverResult = await resp.json();
 
   // 5. Execute returned action on active tab
+  // De-anonymize locally before DOM execution (vault tokens + session placeholders)
   let executionResult = null;
   if (serverResult.action && serverResult.action.type !== "finish") {
+    const action = serverResult.action;
+    let resolvedValue = action.value;
+    if (resolvedValue) {
+      // Vault tokens
+      if (vault.isUnlocked()) {
+        resolvedValue = resolvedValue.replace(
+          /\{\{VAULT:([a-z0-9_]+)\.([a-z0-9_]+)\}\}/gi,
+          (_m, cat, key) => { try { return vault.get(cat, key) ?? _m; } catch { return _m; } }
+        );
+      }
+      // Session placeholders
+      resolvedValue = semanticRedactor.deAnonymize(resolvedValue);
+    }
+    const execAction = { ...action, value: resolvedValue };
     const tab = await getActiveTab();
     executionResult = await chrome.tabs.sendMessage(tab.id, {
       type: "EXECUTE_ACTION",
-      action: serverResult.action,
+      action: execAction,
     });
   }
 
@@ -291,6 +316,11 @@ async function executeTaskWithServer(task, options = {}) {
 
 // Initialize Agent Loop capture handler
 agentLoop.setCaptureHandler(captureAndRedactActiveTab);
+
+// Initialize vault once at service-worker start (handles both fresh installs and SW restarts)
+vault.init().catch((err) =>
+  console.warn("[Background] Vault init at startup:", err?.message)
+);
 
 // Runtime Message Router
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {

@@ -30,6 +30,9 @@
         <a href="#section-server" class="nav-item" data-target="section-server">
           <span class="icon">🤖</span> Backend & VLM Server
         </a>
+        <a href="#section-vault" class="nav-item" data-target="section-vault">
+          <span class="icon">🔐</span> Secure Vault
+        </a>
         <a href="#section-whitelist" class="nav-item" data-target="section-whitelist">
           <span class="icon">🌐</span> Domain Whitelist
         </a>
@@ -305,6 +308,91 @@
             <ul id="domainList" class="domain-list">
               <!-- Dynamically populated -->
             </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 6: Secure Vault -->
+      <section id="section-vault" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>🔐 Local Sensitive-Data Vault</h3>
+            <p>Store personal details securely on-device (AES-256-GCM encrypted). The agent fills these fields locally — the VLM server <strong>only ever sees abstract tokens</strong>, never real values.</p>
+          </div>
+
+          <!-- Vault Status Bar -->
+          <div id="vaultStatusBar" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:#0d1322;border:1px solid #1f2937;margin-bottom:16px;">
+            <span id="vaultStatusDot" style="width:10px;height:10px;border-radius:50%;background:#f87171;flex-shrink:0;"></span>
+            <span id="vaultStatusText" style="font-size:12px;color:#94a3b8;">Vault is locked. Initializing...</span>
+            <span style="flex:1;"></span>
+            <button id="btnLockVault" class="btn btn-secondary" style="font-size:11px;padding:4px 10px;display:none;">🔒 Lock Vault</button>
+          </div>
+
+          <!-- Add New Entry Row -->
+          <div style="display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:8px;margin-bottom:16px;align-items:center;">
+            <select id="vaultCategory" class="form-input" style="font-size:12px;">
+              <option value="personal">👤 Personal</option>
+              <option value="contact">📞 Contact</option>
+              <option value="address">📍 Address</option>
+              <option value="credentials">🔑 Credentials</option>
+              <option value="financial">💳 Financial</option>
+              <option value="gov_id">🪪 Gov ID</option>
+              <option value="custom">🔧 Custom</option>
+            </select>
+            <input type="text" id="vaultKey" class="form-input" placeholder="Field key (e.g. email)" style="font-size:12px;" />
+            <input type="text" id="vaultValue" class="form-input" placeholder="Value (e.g. alice@example.com)" style="font-size:12px;" />
+            <button id="btnAddVaultEntry" class="btn btn-primary" style="white-space:nowrap;">+ Add</button>
+          </div>
+
+          <!-- Quick-Fill Presets -->
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
+            <span style="font-size:11px;color:#64748b;align-self:center;">Quick presets:</span>
+            <button class="vault-preset" data-cat="personal" data-key="first_name" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">First Name</button>
+            <button class="vault-preset" data-cat="personal" data-key="last_name" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Last Name</button>
+            <button class="vault-preset" data-cat="contact" data-key="email" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Email</button>
+            <button class="vault-preset" data-cat="contact" data-key="phone" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Phone</button>
+            <button class="vault-preset" data-cat="address" data-key="street" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Street</button>
+            <button class="vault-preset" data-cat="address" data-key="city" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">City</button>
+            <button class="vault-preset" data-cat="address" data-key="zip" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">ZIP / Pincode</button>
+            <button class="vault-preset" data-cat="credentials" data-key="username" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Username</button>
+            <button class="vault-preset" data-cat="credentials" data-key="password" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Password</button>
+            <button class="vault-preset" data-cat="gov_id" data-key="aadhaar" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Aadhaar</button>
+            <button class="vault-preset" data-cat="gov_id" data-key="pan" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">PAN</button>
+          </div>
+
+          <!-- Vault Entries Table -->
+          <div class="table-responsive">
+            <table class="audit-table" id="vaultTable">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>Key</th>
+                  <th>Value (masked)</th>
+                  <th>Token Handle</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="vaultTableBody">
+                <tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px;">Vault is initializing...</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Vault Footer Actions -->
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button id="btnExportVault" class="btn btn-secondary" style="font-size:11px;">⬇️ Export Encrypted Backup</button>
+            <button id="btnClearVault" class="btn btn-danger" style="font-size:11px;">🗑️ Clear All Entries</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div class="card-header">
+            <h3>🤖 How Vault Tokens Work</h3>
+          </div>
+          <div style="font-size:12px;color:#94a3b8;line-height:1.7;">
+            <p>When the agent needs to fill a sensitive field (e.g. your email), it requests <code style="background:#1e293b;padding:1px 5px;border-radius:3px;color:#38bdf8;">{{VAULT:contact.email}}</code> from the server.</p>
+            <p>The VLM server <strong>never sees your actual email</strong> — only the token. The extension resolves it to the real value on-device, at the last millisecond before DOM injection.</p>
+            <p style="color:#34d399;">✓ Zero-Leakage: Your data stays on-device. Always.</p>
           </div>
         </div>
       </section>

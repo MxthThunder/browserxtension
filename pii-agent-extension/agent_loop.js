@@ -17,6 +17,44 @@ import { agentClient } from "./agent_client.js";
 import { permissionEngine, PERMISSION_OUTCOMES } from "./permission_engine.js";
 import { promptGuard } from "./prompt_guard.js";
 import { semanticRedactor } from "./semantic_redactor.js";
+import { vault } from "./vault.js";
+
+/**
+ * De-anonymizes an action value locally before any DOM insertion.
+ * Resolves vault tokens ({{VAULT:category.key}}) then session placeholders ([PERSON_1], etc.).
+ * NEVER call this before sending to the external VLM — only call it right before DOM execution.
+ * @param {string|null} value
+ * @returns {string}
+ */
+function resolveLocalActionValue(value) {
+  if (!value || typeof value !== "string") return value || "";
+
+  // 1. Vault token syntax: {{VAULT:category.key}}
+  if (value.startsWith("{{VAULT:") && value.endsWith("}}")) {
+    try {
+      if (vault.isUnlocked()) {
+        const resolved = vault.resolveToken(value);
+        if (resolved !== null) return resolved;
+      }
+    } catch {
+      // Vault locked or error — fall through
+    }
+  }
+
+  // 2. Inline vault tokens anywhere in the string
+  const vaultTokenPattern = /\{\{VAULT:([a-z0-9_]+)\.([a-z0-9_]+)\}\}/gi;
+  if (vault.isUnlocked() && vaultTokenPattern.test(value)) {
+    value = value.replace(
+      /\{\{VAULT:([a-z0-9_]+)\.([a-z0-9_]+)\}\}/gi,
+      (_match, cat, key) => {
+        try { return vault.get(cat, key) ?? _match; } catch { return _match; }
+      }
+    );
+  }
+
+  // 3. Session-scoped semantic placeholders ([PERSON_1], [EMAIL_1], etc.)
+  return semanticRedactor.deAnonymize(value);
+}
 
 export const AGENT_LOOP_STATUS = {
   IDLE: "IDLE",
@@ -173,13 +211,24 @@ export class AutonomousAgentLoop {
         }
 
         // ── Phase 6: Execute Action in DOM with Local Token De-anonymization ──
+        // De-anonymize all values strictly on-device BEFORE sending to content script.
+        // The VLM only ever sees [PERSON_1] / {{VAULT:contact.email}} — never raw PII.
+        const execAction = {
+          ...action,
+          value: resolveLocalActionValue(action.value),
+        };
+        // Also de-anonymize selector if it contains a token (rare edge case)
+        if (execAction.selector && execAction.selector.includes("{{VAULT:")) {
+          execAction.selector = resolveLocalActionValue(execAction.selector);
+        }
+
         let executionReport = null;
         try {
           const tab = await this._getActiveTab();
           if (tab && tab.id) {
             executionReport = await chrome.tabs.sendMessage(tab.id, {
               type: "EXECUTE_ACTION",
-              action
+              action: execAction
             });
           }
         } catch (execErr) {

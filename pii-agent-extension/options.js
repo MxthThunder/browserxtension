@@ -6,6 +6,7 @@ import {
   clearAuditLogs,
   DEFAULT_SETTINGS,
 } from "./storage.js";
+import { vault } from "./vault.js";
 
 // DOM Elements
 const navItems = document.querySelectorAll(".nav-item");
@@ -63,6 +64,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   setupDiagnostics();
   await loadAndRenderSettings();
   await loadAndRenderAuditLogs();
+  await initVaultSection();
 });
 
 function setupNavigation() {
@@ -72,6 +74,7 @@ function setupNavigation() {
     "section-categories": "Redaction Target Categories",
     "section-server": "VLM Server & Agent Configuration",
     "section-whitelist": "Domain Allowlist Management",
+    "section-vault": "Local Sensitive-Data Vault",
     "section-audit": "Compliance Audit & Logs",
   };
 
@@ -344,4 +347,192 @@ function downloadFile(blob, filename) {
   a.download = filename;
   a.click();
   URL.revokeObjectURL(url);
+}
+
+// ── Vault Management Section ─────────────────────────────────────────────────
+
+const vaultStatusDot   = document.getElementById("vaultStatusDot");
+const vaultStatusText  = document.getElementById("vaultStatusText");
+const btnLockVault     = document.getElementById("btnLockVault");
+const vaultCategory    = document.getElementById("vaultCategory");
+const vaultKey         = document.getElementById("vaultKey");
+const vaultValue       = document.getElementById("vaultValue");
+const btnAddVaultEntry = document.getElementById("btnAddVaultEntry");
+const vaultTableBody   = document.getElementById("vaultTableBody");
+const btnExportVault   = document.getElementById("btnExportVault");
+const btnClearVault    = document.getElementById("btnClearVault");
+
+async function initVaultSection() {
+  try {
+    await vault.init();
+    setVaultStatus(true);
+    renderVaultTable();
+  } catch (err) {
+    setVaultStatus(false, `Vault error: ${err.message}`);
+  }
+}
+
+function setVaultStatus(unlocked, customMsg = null) {
+  if (vaultStatusDot) {
+    vaultStatusDot.style.background = unlocked ? "#34d399" : "#f87171";
+  }
+  if (vaultStatusText) {
+    vaultStatusText.textContent = customMsg ||
+      (unlocked ? "✓ Vault unlocked — AES-256-GCM (device-keyed, zero-leakage)" : "Vault locked");
+    vaultStatusText.style.color = unlocked ? "#34d399" : "#f87171";
+  }
+  if (btnLockVault) {
+    btnLockVault.style.display = unlocked ? "inline-block" : "none";
+  }
+}
+
+function renderVaultTable() {
+  if (!vaultTableBody) return;
+  try {
+    const summary = vault.listKeys();
+    vaultTableBody.innerHTML = "";
+
+    const allEntries = [];
+    for (const [cat, items] of Object.entries(summary)) {
+      for (const item of items) {
+        allEntries.push({ cat, ...item });
+      }
+    }
+
+    if (allEntries.length === 0) {
+      vaultTableBody.innerHTML = `
+        <tr>
+          <td colspan="5" style="text-align:center;color:#64748b;padding:20px;">
+            No entries stored. Add your Name, Email, Phone, etc. using the form above.
+          </td>
+        </tr>`;
+      return;
+    }
+
+    for (const entry of allEntries) {
+      const tr = document.createElement("tr");
+      const catEmoji = {
+        personal: "👤", contact: "📞", address: "📍",
+        credentials: "🔑", financial: "💳", gov_id: "🪪", custom: "🔧"
+      }[entry.cat] || "📦";
+
+      tr.innerHTML = `
+        <td><span style="font-size:11px;">${catEmoji} ${entry.cat}</span></td>
+        <td><code style="background:#1e293b;padding:1px 5px;border-radius:3px;color:#93c5fd;font-size:11px;">${entry.key}</code></td>
+        <td style="font-family:monospace;color:#64748b;font-size:11px;">${entry.maskedValue || "••••"}</td>
+        <td><code style="background:#0d1322;padding:1px 5px;border-radius:3px;color:#38bdf8;font-size:10px;">${entry.tokenHandle}</code></td>
+        <td>
+          <button class="btn btn-danger vault-delete-btn" data-cat="${entry.cat}" data-key="${entry.key}"
+            style="font-size:10px;padding:2px 8px;">Delete</button>
+        </td>`;
+      vaultTableBody.appendChild(tr);
+    }
+
+    // Bind delete buttons
+    vaultTableBody.querySelectorAll(".vault-delete-btn").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        const cat = btn.getAttribute("data-cat");
+        const key = btn.getAttribute("data-key");
+        if (confirm(`Delete vault entry: ${cat}.${key}?`)) {
+          await vault.delete(cat, key);
+          renderVaultTable();
+          showToast(`Deleted vault entry: ${cat}.${key}`);
+        }
+      });
+    });
+  } catch (err) {
+    if (vaultTableBody) {
+      vaultTableBody.innerHTML = `
+        <tr><td colspan="5" style="text-align:center;color:#f87171;padding:14px;">
+          ${err.message}
+        </td></tr>`;
+    }
+  }
+}
+
+// Add new vault entry
+if (btnAddVaultEntry) {
+  btnAddVaultEntry.addEventListener("click", async () => {
+    const cat = vaultCategory?.value?.trim();
+    const key = vaultKey?.value?.trim().toLowerCase().replace(/\s+/g, "_");
+    const val = vaultValue?.value?.trim();
+
+    if (!cat || !key || !val) {
+      showToast("⚠️ Please fill in Category, Key, and Value.");
+      return;
+    }
+
+    try {
+      await vault.set(cat, key, val);
+      if (vaultKey)   vaultKey.value = "";
+      if (vaultValue) vaultValue.value = "";
+      renderVaultTable();
+      showToast(`✓ Saved to vault: ${cat}.${key}`);
+    } catch (err) {
+      showToast(`Vault error: ${err.message}`);
+    }
+  });
+}
+
+// Quick preset buttons — pre-fill Category+Key so user only needs to type the value
+document.querySelectorAll(".vault-preset").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    const cat = btn.getAttribute("data-cat");
+    const key = btn.getAttribute("data-key");
+    if (vaultCategory) vaultCategory.value = cat;
+    if (vaultKey) {
+      vaultKey.value = key;
+      vaultKey.focus();
+    }
+    if (vaultValue) vaultValue.focus();
+  });
+});
+
+// Lock vault
+if (btnLockVault) {
+  btnLockVault.addEventListener("click", () => {
+    vault.lock();
+    setVaultStatus(false, "Vault locked manually.");
+    if (vaultTableBody) {
+      vaultTableBody.innerHTML = `
+        <tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px;">
+          Vault is locked.
+        </td></tr>`;
+    }
+    showToast("Vault locked.");
+  });
+}
+
+// Export encrypted backup
+if (btnExportVault) {
+  btnExportVault.addEventListener("click", async () => {
+    try {
+      const json = await vault.exportEncryptedBackup();
+      const blob = new Blob([json], { type: "application/json" });
+      downloadFile(blob, `vault_encrypted_backup_${Date.now()}.json`);
+      showToast("Encrypted vault backup downloaded.");
+    } catch (err) {
+      showToast(`Export error: ${err.message}`);
+    }
+  });
+}
+
+// Clear all vault entries
+if (btnClearVault) {
+  btnClearVault.addEventListener("click", async () => {
+    if (!confirm("⚠️ Delete ALL vault entries permanently? This cannot be undone.")) return;
+    try {
+      // Delete every entry from every category
+      const summary = vault.listKeys();
+      for (const [cat, items] of Object.entries(summary)) {
+        for (const item of items) {
+          await vault.delete(cat, item.key);
+        }
+      }
+      renderVaultTable();
+      showToast("All vault entries cleared.");
+    } catch (err) {
+      showToast(`Clear error: ${err.message}`);
+    }
+  });
 }
