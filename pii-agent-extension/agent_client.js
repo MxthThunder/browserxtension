@@ -82,7 +82,10 @@ export class AgentClient {
       })),
       viewport: params.viewport || null,
       url: params.url || null,
-      model_provider: params.modelProvider || "auto"
+      model_provider: params.modelProvider || "auto",
+      step: params.step || 1,
+      max_steps: params.maxSteps || 8,
+      history: params.history || []
     };
 
     const startTime = performance.now();

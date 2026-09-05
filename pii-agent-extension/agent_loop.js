@@ -148,6 +148,15 @@ export class AutonomousAgentLoop {
         const guardedElements = promptGuard.sanitizeElements(domElements);
         const sanitizedElements = semanticRedactor.sanitizePerceptionElements(guardedElements);
 
+        // Build concise action history of previous steps in this session
+        const historyDigest = this.stepHistory.map((s) => ({
+          step: s.step,
+          action: s.action?.type || "action",
+          selector: s.action?.selector || "",
+          value: s.action?.value || "",
+          explanation: s.action?.explanation || ""
+        }));
+
         // ── Phase 3: Query Main Agent LLM / VLM (Sanitized Context Only) ───────
         const actionResult = await agentClient.requestAction({
           task: userTask,
@@ -156,7 +165,10 @@ export class AutonomousAgentLoop {
           redactionManifest: captureResult.redactionList || [],
           viewport: captureResult.resolution,
           url: captureResult.tabUrl,
-          modelProvider: options.modelProvider || "auto"
+          modelProvider: options.modelProvider || "auto",
+          step: this.currentStep,
+          maxSteps: maxSteps,
+          history: historyDigest
         });
 
         if (!actionResult.ok || !actionResult.action) {

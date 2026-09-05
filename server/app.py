@@ -93,6 +93,9 @@ class ActRequest(BaseModel):
     viewport: Optional[Dict[str, Any]] = None
     url: Optional[str] = None
     model_provider: Optional[str] = "auto"
+    step: Optional[int] = 1
+    max_steps: Optional[int] = 8
+    history: Optional[List[Dict[str, Any]]] = []
 
 
 class ActionOutput(BaseModel):
@@ -175,7 +178,14 @@ async def is_ollama_available(ollama_host: str) -> bool:
     return _ollama_online
 
 
-async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: Optional[str]) -> Optional[ActionOutput]:
+async def try_ollama_qwen(
+    task: str,
+    elements: List[DOMElement],
+    image_base64: Optional[str],
+    history: Optional[List[Dict[str, Any]]] = None,
+    step: int = 1,
+    max_steps: int = 8,
+) -> Optional[ActionOutput]:
     """
     Attempts reasoning using local Ollama (Qwen2.5-VL / Qwen2.5-Coder / Qwen3).
     Only invoked if Ollama is actively running.
@@ -184,7 +194,7 @@ async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: O
     if not await is_ollama_available(ollama_host):
         return None
 
-    model = os.getenv("OLLAMA_MODEL", "qwen2.5-coder:latest")
+    model = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
 
     elements_digest = [
         {
@@ -201,16 +211,27 @@ async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: O
         for el in elements[:80]
     ]
 
+    history_text = ""
+    if history and len(history) > 0:
+        history_text = "\nPrevious Actions:\n" + "\n".join(
+            f"- Step {h.get('step', i+1)}: [{h.get('action', '').upper()}] {h.get('selector', '')}: {h.get('explanation', '')}"
+            for i, h in enumerate(history)
+        )
+
     system_prompt = (
-        "You are an expert autonomous browser agent. You receive free-form user instructions and visible web elements. "
-        "Select the next single concrete browser action to make progress towards the user's goal. "
-        "Respond strictly with a JSON object: "
+        "You are an expert autonomous browser agent. You receive a user goal, session history, and visible web elements.\n"
+        f"Progress: Step {step} of {max_steps}.\n"
+        "RULES:\n"
+        "1. DO NOT REPEAT ACTIONS: If search was already done, do NOT search again. Inspect products or scroll down!\n"
+        "2. To explore more results, use type: 'scroll', value: 'down'.\n"
+        "3. Once best product is found, use type: 'finish' with your recommendation summary in explanation.\n"
+        "Respond strictly with JSON: "
         '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
-        '"selector": "CSS selector or element id", "value": "text to type or select", '
-        '"explanation": "reasoning", "confidence": 0.0-1.0}'
+        '"selector": "CSS selector or element id", "value": "text or scroll direction", '
+        '"explanation": "reasoning and findings", "confidence": 0.0-1.0}'
     )
 
-    user_prompt = f"User Instruction: {task}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
+    user_prompt = f"User Instruction: {task}{history_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
 
     payload = {
         "model": model,
@@ -238,9 +259,16 @@ async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: O
     return None
 
 
-async def try_gemini(task: str, elements: List[DOMElement], image_base64: Optional[str]) -> Optional[ActionOutput]:
+async def try_gemini(
+    task: str,
+    elements: List[DOMElement],
+    image_base64: Optional[str],
+    history: Optional[List[Dict[str, Any]]] = None,
+    step: int = 1,
+    max_steps: int = 8,
+) -> Optional[ActionOutput]:
     """
-    Attempts reasoning using Google Gemini API (gemini-1.5-flash / gemini-2.0-flash).
+    Attempts reasoning using Google Gemini API (gemini-3.5-flash-lite / gemini-3.7-flash).
     Only invoked if GEMINI_API_KEY is configured.
     Receives ONLY sanitized visual frames (raw PII already masked locally).
     """
@@ -248,7 +276,6 @@ async def try_gemini(task: str, elements: List[DOMElement], image_base64: Option
     if not api_key:
         return None
 
-    model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     elements_digest = [
         {
             "id": el.id,
@@ -264,18 +291,33 @@ async def try_gemini(task: str, elements: List[DOMElement], image_base64: Option
         for el in elements[:80]
     ]
 
+    history_text = ""
+    if history and len(history) > 0:
+        history_lines = [
+            f"  - Step {h.get('step', i+1)}: [{h.get('action', '').upper()}] selector='{h.get('selector', '') or 'page'}' value='{h.get('value', '')}': {h.get('explanation', '')}"
+            for i, h in enumerate(history)
+        ]
+        history_text = "\n\nPrevious Actions Executed in this Session:\n" + "\n".join(history_lines)
+
     system_instruction = (
-        "You are an expert autonomous browser agent. You receive a user goal and a list of visible web elements. "
-        "Select the next single concrete browser action to make progress towards the user's goal. "
-        "To submit a form or send a message in chat/search interfaces (e.g. ChatGPT, Google), click the submit/send button or use the 'submit' action type on the input field. "
-        "Respond strictly with a JSON object: "
+        "You are an expert autonomous browser agent. You receive a user goal, session history, and visible web elements.\n"
+        f"Session Progress: Step {step} of {max_steps}.\n\n"
+        "CRITICAL RULES:\n"
+        "1. DO NOT REPEAT ACTIONS: Check 'Previous Actions Executed'. If a search has ALREADY been performed in Step 1 or 2, NEVER type in the search bar or click search again!\n"
+        "2. RESEARCH & COMPARISON TASKS (e.g. 'find me best headphones under 3000'):\n"
+        "   - Search results are already on screen! Examine visible products, prices, and star ratings.\n"
+        "   - To see more products and compare prices, use {\"type\": \"scroll\", \"value\": \"down\", \"explanation\": \"Scrolling down to inspect more products and compare prices\"}.\n"
+        "   - If a product looks promising, you can click on its title link to view full specifications.\n"
+        "   - Once you have found the best product that satisfies the user's constraints (e.g. under budget with high rating), FINISH the task with {\"type\": \"finish\", \"explanation\": \"Detailed summary of your top pick: product name, exact price, rating, and key features\"}.\n"
+        "3. FORM SUBMISSION: To submit a search or form, click the submit/send button or use type: 'submit'.\n"
+        "4. Respond strictly with a JSON object: "
         '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
-        '"selector": "CSS selector or element id", "value": "text to type or select", '
-        '"explanation": "reasoning", "confidence": 0.0-1.0}'
+        '"selector": "CSS selector or element id", "value": "text to type, select, or scroll direction (down/up)", '
+        '"explanation": "reasoning and findings", "confidence": 0.0-1.0}'
     )
 
     parts: List[Dict[str, Any]] = [
-        {"text": f"{system_instruction}\n\nUser Instruction: {task}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"}
+        {"text": f"{system_instruction}\n\nUser Instruction: {task}{history_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"}
     ]
 
     if image_base64 and len(image_base64) > 100:
@@ -658,22 +700,43 @@ async def act_endpoint(payload: ActRequest):
 
     # Priority 1: Google Gemini (Primary Cloud VLM for intelligent multi-step browser actions)
     if payload.model_provider == "gemini" or (payload.model_provider == "auto" and os.getenv("GEMINI_API_KEY")):
-        print(f"[Reasoner] Delegating action planning to Gemini Cloud VLM ({os.getenv('GEMINI_MODEL', 'gemini-3.6-flash')})...")
-        action = await try_gemini(payload.task, payload.dom_elements or [], payload.sanitized_image_base64)
+        print(f"[Reasoner] Delegating action planning to Gemini Cloud VLM (Step {payload.step or 1}/{payload.max_steps or 8})...")
+        action = await try_gemini(
+            payload.task,
+            payload.dom_elements or [],
+            payload.sanitized_image_base64,
+            history=payload.history or [],
+            step=payload.step or 1,
+            max_steps=payload.max_steps or 8
+        )
         if action:
             model_used = "gemini"
 
     # Priority 2: OpenAI Cloud VLM (if explicitly selected or auto fallback with key)
     if not action and (payload.model_provider == "openai" or (payload.model_provider == "auto" and os.getenv("OPENAI_API_KEY"))):
         print("[Reasoner] Delegating action planning to OpenAI Cloud VLM...")
-        action = await try_openai(payload.task, payload.dom_elements or [], payload.sanitized_image_base64)
+        action = await try_openai(
+            payload.task,
+            payload.dom_elements or [],
+            payload.sanitized_image_base64,
+            history=payload.history or [],
+            step=payload.step or 1,
+            max_steps=payload.max_steps or 8
+        )
         if action:
             model_used = "openai"
 
     # Priority 3: Local Ollama / Qwen model (only if explicitly selected or offline fallback without cloud keys)
     if not action and (payload.model_provider == "ollama_qwen" or payload.model_provider == "auto"):
         print("[Reasoner] Delegating action planning to Local Ollama Qwen...")
-        action = await try_ollama_qwen(payload.task, payload.dom_elements or [], payload.sanitized_image_base64)
+        action = await try_ollama_qwen(
+            payload.task,
+            payload.dom_elements or [],
+            payload.sanitized_image_base64,
+            history=payload.history or [],
+            step=payload.step or 1,
+            max_steps=payload.max_steps or 8
+        )
         if action:
             model_used = "ollama-qwen"
 

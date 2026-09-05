@@ -29,7 +29,9 @@ const INLINE_PII_PATTERNS = {
   AADHAAR: /\b\d{4}\s\d{4}\s\d{4}\b/,
   EMAIL: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/,
   PHONE: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/,
-  PAN: /\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b/
+  PAN: /\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b/,
+  DELIVERY_LOCATION: /\b(?:deliver(?:ing)?|ship(?:ping)?|dispatch|send)\s+to\s+[^,\n\r<]{2,50}/i,
+  PINCODE_LOCATION: /\b(?:[A-Za-z\s]+)\s+[1-9][0-9]{5}\b/i
 };
 
 const OVERLAY_ID = "__pii_agent_overlay_layer__";
@@ -453,6 +455,24 @@ function scanPageForSensitiveElements() {
         el: vid,
         category: "faces",
         reason: "webcam <video> stream",
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+    }
+  });
+
+  // Delivery location & user address widgets (e.g. Amazon 'Delivering to Chennai 600040', Flipkart, food apps)
+  document.querySelectorAll(
+    '#nav-global-location-slot, #glow-ingress-block, [id*="location-slot" i], [id*="delivery-location" i], [class*="delivery-location" i], [class*="user-location" i], [class*="user-address" i], [id*="user-address" i], [aria-label*="deliver to" i], [aria-label*="delivery location" i]'
+  ).forEach((el) => {
+    const rect = el.getBoundingClientRect();
+    if (rect.width > 2 && rect.height > 2) {
+      matches.push({
+        el,
+        category: "contactInfo",
+        reason: "delivery location / user address widget",
         x: Math.round(rect.left),
         y: Math.round(rect.top),
         width: Math.round(rect.width),
