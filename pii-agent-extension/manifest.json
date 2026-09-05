@@ -1,0 +1,106 @@
+{
+  "manifest_version": 3,
+  "name": "Visual Perception Privacy Agent (On-Device WebGPU)",
+  "version": "1.2.0",
+  "description": "Zero-Leakage On-Device Visual Perception Privacy Agent for Autonomous Browser Automation (ISRO PS #26171)",
+  "icons": {
+    "16": "icons/icon16.png",
+    "48": "icons/icon48.png",
+    "128": "icons/icon128.png"
+  },
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "offscreen",
+    "sidePanel",
+    "storage",
+    "contextMenus"
+  ],
+  "host_permissions": [
+    "<all_urls>"
+  ],
+  "background": {
+    "service_worker": "background.js",
+    "type": "module"
+  },
+  "action": {
+    "default_popup": "popup.html",
+    "default_title": "Visual Perception Privacy Agent",
+    "default_icon": {
+      "16": "icons/icon16.png",
+      "48": "icons/icon48.png",
+      "128": "icons/icon128.png"
+    }
+  },
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
+  "side_panel": {
+    "default_path": "popup.html"
+  },
+  "commands": {
+    "toggle-protection": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+P",
+        "mac": "Command+Shift+P"
+      },
+      "description": "Toggle Privacy Protection On/Off"
+    },
+    "capture-sanitize": {
+      "suggested_key": {
+        "default": "Ctrl+Shift+S",
+        "mac": "Command+Shift+S"
+      },
+      "description": "Capture and Redact Current Screen"
+    }
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+  },
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "models/*",
+        "models/**/*",
+        "lib/*",
+        "lib/mediapipe/*",
+        "lib/tesseract/*",
+        "icons/*",
+        "offscreen.html",
+        "perception.js",
+        "privacy_engine.js",
+        "local_reasoner.js",
+        "vault.js",
+        "semantic_redactor.js",
+        "agent_client.js",
+        "action_engine.js",
+        "permission_engine.js",
+        "prompt_guard.js",
+        "data_adapter.js",
+        "agent_loop.js",
+        "popup.html",
+        "popup.js",
+        "popup.css",
+        "options.html",
+        "options.js",
+        "options.css",
+        "demo.html",
+        "mission_console.html",
+        "openmct_telemetry_plugin.js",
+        "demo-photo.jpg",
+        "benchmark_results.json"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

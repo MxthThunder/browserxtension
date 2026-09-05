@@ -1,0 +1,184 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Mock Secure Banking Portal — Privacy Redaction Target</title>
+  <style>
+    :root {
+      --primary: #1e3a8a;
+      --bg: #f8fafc;
+      --card-bg: #ffffff;
+      --border: #e2e8f0;
+      --text: #0f172a;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      padding: 30px;
+    }
+    .header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      max-width: 960px;
+      margin: 0 auto 24px;
+      padding-bottom: 16px;
+      border-bottom: 2px solid #cbd5e1;
+    }
+    .bank-logo {
+      font-size: 20px;
+      font-weight: 800;
+      color: var(--primary);
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: 1.2fr 1fr;
+      gap: 24px;
+    }
+    .card {
+      background: var(--card-bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 24px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.05);
+    }
+    h2 { font-size: 16px; margin-bottom: 16px; color: var(--primary); }
+    .form-group {
+      margin-bottom: 14px;
+    }
+    label {
+      display: block;
+      font-size: 13px;
+      font-weight: 600;
+      margin-bottom: 4px;
+      color: #334155;
+    }
+    input {
+      width: 100%;
+      padding: 10px 12px;
+      border: 1px solid #cbd5e1;
+      border-radius: 6px;
+      font-size: 14px;
+    }
+    .row {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 12px;
+    }
+    .btn-submit {
+      width: 100%;
+      padding: 12px;
+      background: var(--primary);
+      color: white;
+      border: none;
+      border-radius: 6px;
+      font-weight: 700;
+      cursor: pointer;
+      margin-top: 10px;
+    }
+    .identity-box {
+      text-align: center;
+    }
+    .avatar-preview {
+      width: 100%;
+      max-height: 280px;
+      object-fit: cover;
+      border-radius: 8px;
+      border: 2px solid #94a3b8;
+      margin-bottom: 12px;
+    }
+    .live-badge {
+      display: inline-block;
+      padding: 4px 10px;
+      background: #fee2e2;
+      color: #991b1b;
+      font-size: 12px;
+      font-weight: 700;
+      border-radius: 9999px;
+      margin-bottom: 8px;
+    }
+    .callout {
+      background: #eff6ff;
+      border-left: 4px solid #3b82f6;
+      padding: 12px;
+      font-size: 13px;
+      color: #1e40af;
+      margin-top: 16px;
+      border-radius: 4px;
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="bank-logo">🏛️ Global Reserve Bank — Customer Portal</div>
+    <div style="font-size: 13px; color: #64748b;">Session: #GRB-89241 (Strict KYC Mode)</div>
+  </div>
+
+  <div class="container">
+    <div class="card">
+      <h2>👤 KYC Verification & Financial Profile</h2>
+      <form id="kycForm">
+        <div class="form-group">
+          <label>Full Legal Name</label>
+          <input type="text" name="full_name" autocomplete="name" value="Jane Doe" />
+        </div>
+
+        <div class="row">
+          <div class="form-group">
+            <label>National ID / Aadhaar / SSN</label>
+            <input type="text" name="national_id_ssn" placeholder="XXXX-XXXX-9182" value="9876-5432-1098" />
+          </div>
+          <div class="form-group">
+            <label>Date of Birth</label>
+            <input type="text" name="dob" autocomplete="bday" value="1995-08-14" />
+          </div>
+        </div>
+
+        <div class="form-group">
+          <label>Confidential Password</label>
+          <input type="password" id="acc_password" name="password" value="SuperSecretPassword123!" />
+        </div>
+
+        <div class="form-group">
+          <label>Credit Card Number</label>
+          <input type="text" name="card_number" autocomplete="cc-number" value="4532 8901 2345 6789" />
+        </div>
+
+        <div class="row">
+          <div class="form-group">
+            <label>Expiry Date</label>
+            <input type="text" name="card_exp" autocomplete="cc-exp" value="12/28" />
+          </div>
+          <div class="form-group">
+            <label>CVV / CVC Code</label>
+            <input type="password" name="cvv" placeholder="•••" value="892" />
+          </div>
+        </div>
+
+        <button type="submit" id="submitBtn" class="btn-submit">Confirm & Authenticate Identity</button>
+      </form>
+    </div>
+
+    <!-- Visual Identity Card with Real Photo (Target for Vision Model Face Proxy) -->
+    <div class="card identity-box">
+      <span class="live-badge">🔴 KYC Identity Verification Frame</span>
+      <h2>Visual Biometric Verification Feed</h2>
+      <img src="demo-photo.jpg" class="avatar-preview" alt="User Webcam Photo" />
+      <p style="font-size: 12px; color: #64748b;">Live biometric feed capturing subject face and desk workspace environment.</p>
+
+      <div class="callout">
+        <strong>Privacy Test Expectations:</strong>
+        <p>1. Form fields (Password, Card, SSN, Name) are sanitized via DOM inspection.</p>
+        <p>2. Subject's face is detected & blacked out via on-device Vision Model (~30% proxy) on WebGPU.</p>
+      </div>
+    </div>
+  </div>
+</body>
+</html>

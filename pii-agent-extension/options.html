@@ -1,0 +1,438 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>Privacy Agent — Preferences & Configuration</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <div class="app-layout">
+    <!-- Sidebar Navigation -->
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-icon">🛡️</div>
+        <div class="brand-text">
+          <h2>Privacy Agent</h2>
+          <span>ISRO PS #26171</span>
+        </div>
+      </div>
+
+      <nav class="nav-links">
+        <a href="#section-general" class="nav-item active" data-target="section-general">
+          <span class="icon">⚙️</span> General & Protection
+        </a>
+        <a href="#section-engine" class="nav-item" data-target="section-engine">
+          <span class="icon">⚡</span> Engine & WebGPU
+        </a>
+        <a href="#section-categories" class="nav-item" data-target="section-categories">
+          <span class="icon">🎯</span> PII Categories
+        </a>
+        <a href="#section-server" class="nav-item" data-target="section-server">
+          <span class="icon">🤖</span> Backend & VLM Server
+        </a>
+        <a href="#section-vault" class="nav-item" data-target="section-vault">
+          <span class="icon">🔐</span> Secure Vault
+        </a>
+        <a href="#section-whitelist" class="nav-item" data-target="section-whitelist">
+          <span class="icon">🌐</span> Domain Whitelist
+        </a>
+        <a href="#section-audit" class="nav-item" data-target="section-audit">
+          <span class="icon">📋</span> Audit & Compliance
+        </a>
+      </nav>
+
+      <div class="sidebar-footer">
+        <div class="status-indicator">
+          <span class="pulse-dot"></span>
+          <span id="hardwareStatusText">Probing WebGPU...</span>
+        </div>
+        <p class="version">v1.2.0 • Zero-Leakage Client</p>
+      </div>
+    </aside>
+
+    <!-- Main Content Area -->
+    <main class="main-content">
+      <header class="content-header">
+        <div>
+          <h1 id="pageTitle">General & Protection Preferences</h1>
+          <p class="subtitle">Configure client-side visual perception and privacy enforcement policies.</p>
+        </div>
+        <div class="header-actions">
+          <button id="btnReset" class="btn btn-secondary">Reset to Defaults</button>
+          <button id="btnSave" class="btn btn-primary">Save Changes</button>
+        </div>
+      </header>
+
+      <!-- Alert Notification Banner -->
+      <div id="saveToast" class="toast hidden">✓ Settings saved successfully!</div>
+
+      <!-- SECTION 1: General & Protection -->
+      <section id="section-general" class="settings-section active">
+        <div class="card">
+          <div class="card-header">
+            <h3>🛡️ Master Protection Guard</h3>
+            <p>Control whether the visual privacy shield actively scans and sanitizes pages.</p>
+          </div>
+          <div class="form-group row">
+            <div class="label-col">
+              <strong>Enable Zero-Leakage Shield</strong>
+              <span>When enabled, sensitive DOM inputs and visual pixels are redacted before any network export.</span>
+            </div>
+            <div class="control-col">
+              <label class="switch">
+                <input type="checkbox" id="chkEnabled" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group row">
+            <div class="label-col">
+              <strong>Strict Fail-Closed Policy</strong>
+              <span>If local model or canvas redaction encounters an error, completely block agent execution rather than risking leakage.</span>
+            </div>
+            <div class="control-col">
+              <label class="switch">
+                <input type="checkbox" id="chkFailClosed" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+
+          <div class="form-group row">
+            <div class="label-col">
+              <strong>Show On-Page Privacy Badge</strong>
+              <span>Displays a discrete indicator at the top right of web pages indicating active visual protection.</span>
+            </div>
+            <div class="control-col">
+              <label class="switch">
+                <input type="checkbox" id="chkShowPageBadge" checked />
+                <span class="slider"></span>
+              </label>
+            </div>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>⚡ Keyboard Shortcuts</h3>
+            <p>Quick access keys configured in Chrome.</p>
+          </div>
+          <div class="shortcut-list">
+            <div class="shortcut-item">
+              <span>Toggle Privacy Protection</span>
+              <kbd>Ctrl + Shift + P</kbd>
+            </div>
+            <div class="shortcut-item">
+              <span>Capture & Redact Screen</span>
+              <kbd>Ctrl + Shift + S</kbd>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 2: Engine & WebGPU -->
+      <section id="section-engine" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>⚡ Hardware Acceleration & Vision Engine</h3>
+            <p>Choose runtime acceleration backend and tune visual detection sensitivity.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="selEngineMode"><strong>Inference Runtime Backend</strong></label>
+            <select id="selEngineMode" class="form-input">
+              <option value="auto">Auto-Detect (WebGPU Preferred $\rightarrow$ WASM SIMD Fallback)</option>
+              <option value="webgpu">Force WebGPU (Hardware GPU Shader Acceleration)</option>
+              <option value="wasm">Force ONNX WASM SIMD (Universal CPU Execution)</option>
+            </select>
+            <small class="field-hint">Auto-Detect provides ~460ms WebGPU latency with zero-crash CPU fallback.</small>
+          </div>
+
+          <div class="form-group">
+            <div class="slider-header">
+              <label for="numConfidence"><strong>Vision Confidence Threshold</strong></label>
+              <span id="lblConfidenceVal" class="badge-val">0.65</span>
+            </div>
+            <input type="range" id="numConfidence" min="0.30" max="0.95" step="0.05" value="0.65" class="range-slider" />
+            <small class="field-hint">Lower values increase recall (fewer missed objects); higher values increase precision.</small>
+          </div>
+
+          <div class="form-group">
+            <div class="slider-header">
+              <label for="numFaceProxy"><strong>Face Proxy Vertical Slice Ratio</strong></label>
+              <span id="lblFaceProxyVal" class="badge-val">30%</span>
+            </div>
+            <input type="range" id="numFaceProxy" min="0.15" max="0.50" step="0.05" value="0.30" class="range-slider" />
+            <small class="field-hint">Percentage of the upper bounding box of detected persons masked for biometric facial privacy.</small>
+          </div>
+        </div>
+
+        <div class="card">
+          <div class="card-header">
+            <h3>🔍 Hardware Diagnostics</h3>
+            <p>Client device hardware capabilities probed in real time.</p>
+          </div>
+          <div class="diagnostics-grid">
+            <div class="diag-box">
+              <span class="d-label">WebGPU Supported</span>
+              <span id="diagWebgpu" class="d-val">Probing...</span>
+            </div>
+            <div class="diag-box">
+              <span class="d-label">Adapter / GPU</span>
+              <span id="diagGpuName" class="d-val">Detecting...</span>
+            </div>
+            <div class="diag-box">
+              <span class="d-label">WASM SIMD</span>
+              <span id="diagWasm" class="d-val">Supported</span>
+            </div>
+            <div class="diag-box">
+              <span class="d-label">Model Status</span>
+              <span id="diagModel" class="d-val">OWL-ViT (Zero-Shot)</span>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 3: PII Categories -->
+      <section id="section-categories" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>🎯 Redaction Target Categories</h3>
+            <p>Select which types of sensitive information the extension should detect and black out.</p>
+          </div>
+
+          <div class="category-grid">
+            <label class="category-card">
+              <input type="checkbox" id="catPasswords" checked />
+              <div class="cat-content">
+                <span class="cat-icon">🔑</span>
+                <strong>Passwords & PINs</strong>
+                <p>HTML password inputs, OTPs, secret credentials, and tokens.</p>
+              </div>
+            </label>
+
+            <label class="category-card">
+              <input type="checkbox" id="catCreditCards" checked />
+              <div class="cat-content">
+                <span class="cat-icon">💳</span>
+                <strong>Payment Cards</strong>
+                <p>Card numbers, CVV/CVC, expiration dates, banking fields.</p>
+              </div>
+            </label>
+
+            <label class="category-card">
+              <input type="checkbox" id="catGovIds" checked />
+              <div class="cat-content">
+                <span class="cat-icon">🪪</span>
+                <strong>Government & KYC IDs</strong>
+                <p>Aadhaar, SSN, PAN, Passport numbers, national ID fields.</p>
+              </div>
+            </label>
+
+            <label class="category-card">
+              <input type="checkbox" id="catFaces" checked />
+              <div class="cat-content">
+                <span class="cat-icon">👤</span>
+                <strong>Biometric Faces & People</strong>
+                <p>Webcam feeds, user profile photos, camera viewports.</p>
+              </div>
+            </label>
+
+            <label class="category-card">
+              <input type="checkbox" id="catContactInfo" checked />
+              <div class="cat-content">
+                <span class="cat-icon">📞</span>
+                <strong>Contact & Identity Info</strong>
+                <p>Phone numbers, personal email addresses, home addresses.</p>
+              </div>
+            </label>
+
+            <label class="category-card">
+              <input type="checkbox" id="catScreens" checked />
+              <div class="cat-content">
+                <span class="cat-icon">💻</span>
+                <strong>Physical Screens & Displays</strong>
+                <p>Monitors, mobile phone screens appearing in camera frames.</p>
+              </div>
+            </label>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 4: Backend & Server -->
+      <section id="section-server" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>🤖 Centralized VLM Reasoning Server</h3>
+            <p>Configure the backend server that plans browser actions based on sanitized screen data.</p>
+          </div>
+
+          <div class="form-group">
+            <label for="txtServerUrl"><strong>Agent Action Endpoint URL</strong></label>
+            <input type="text" id="txtServerUrl" class="form-input" value="http://127.0.0.1:8001/api/act" />
+            <small class="field-hint">Endpoint accepting POST requests with sanitized visual frames.</small>
+          </div>
+
+          <div class="form-group">
+            <label for="txtHealthUrl"><strong>Server Health Check URL</strong></label>
+            <div class="input-with-button">
+              <input type="text" id="txtHealthUrl" class="form-input" value="http://127.0.0.1:8001/health" />
+              <button id="btnTestConnection" class="btn btn-secondary">Test Connection</button>
+            </div>
+            <div id="connectionStatus" class="connection-status">Click Test Connection to probe backend server.</div>
+          </div>
+
+          <div class="form-group">
+            <label for="txtApiKey"><strong>API Authentication Key (Optional)</strong></label>
+            <input type="password" id="txtApiKey" class="form-input" placeholder="Bearer token or custom secret..." />
+            <small class="field-hint">If required by your enterprise cloud proxy or centralized gateway.</small>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 5: Domain Whitelist -->
+      <section id="section-whitelist" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>🌐 Domain Allowlist / Exclusion List</h3>
+            <p>Domains listed here will bypass visual redaction (e.g. trusted internal test domains).</p>
+          </div>
+
+          <div class="whitelist-input-row">
+            <input type="text" id="txtNewDomain" class="form-input" placeholder="e.g. internal.corp or localhost:3000" />
+            <button id="btnAddDomain" class="btn btn-primary">Add Domain</button>
+          </div>
+
+          <div class="domain-list-container">
+            <ul id="domainList" class="domain-list">
+              <!-- Dynamically populated -->
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 6: Secure Vault -->
+      <section id="section-vault" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>🔐 Local Sensitive-Data Vault</h3>
+            <p>Store personal details securely on-device (AES-256-GCM encrypted). The agent fills these fields locally — the VLM server <strong>only ever sees abstract tokens</strong>, never real values.</p>
+          </div>
+
+          <!-- Vault Status Bar -->
+          <div id="vaultStatusBar" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:#0d1322;border:1px solid #1f2937;margin-bottom:16px;">
+            <span id="vaultStatusDot" style="width:10px;height:10px;border-radius:50%;background:#f87171;flex-shrink:0;"></span>
+            <span id="vaultStatusText" style="font-size:12px;color:#94a3b8;">Vault is locked. Initializing...</span>
+            <span style="flex:1;"></span>
+            <button id="btnLockVault" class="btn btn-secondary" style="font-size:11px;padding:4px 10px;display:none;">🔒 Lock Vault</button>
+          </div>
+
+          <!-- Add New Entry Row -->
+          <div style="display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:8px;margin-bottom:16px;align-items:center;">
+            <select id="vaultCategory" class="form-input" style="font-size:12px;">
+              <option value="personal">👤 Personal</option>
+              <option value="contact">📞 Contact</option>
+              <option value="address">📍 Address</option>
+              <option value="credentials">🔑 Credentials</option>
+              <option value="financial">💳 Financial</option>
+              <option value="gov_id">🪪 Gov ID</option>
+              <option value="custom">🔧 Custom</option>
+            </select>
+            <input type="text" id="vaultKey" class="form-input" placeholder="Field key (e.g. email)" style="font-size:12px;" />
+            <input type="text" id="vaultValue" class="form-input" placeholder="Value (e.g. alice@example.com)" style="font-size:12px;" />
+            <button id="btnAddVaultEntry" class="btn btn-primary" style="white-space:nowrap;">+ Add</button>
+          </div>
+
+          <!-- Quick-Fill Presets -->
+          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
+            <span style="font-size:11px;color:#64748b;align-self:center;">Quick presets:</span>
+            <button class="vault-preset" data-cat="personal" data-key="first_name" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">First Name</button>
+            <button class="vault-preset" data-cat="personal" data-key="last_name" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Last Name</button>
+            <button class="vault-preset" data-cat="contact" data-key="email" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Email</button>
+            <button class="vault-preset" data-cat="contact" data-key="phone" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Phone</button>
+            <button class="vault-preset" data-cat="address" data-key="street" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Street</button>
+            <button class="vault-preset" data-cat="address" data-key="city" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">City</button>
+            <button class="vault-preset" data-cat="address" data-key="zip" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">ZIP / Pincode</button>
+            <button class="vault-preset" data-cat="credentials" data-key="username" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Username</button>
+            <button class="vault-preset" data-cat="credentials" data-key="password" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Password</button>
+            <button class="vault-preset" data-cat="gov_id" data-key="aadhaar" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Aadhaar</button>
+            <button class="vault-preset" data-cat="gov_id" data-key="pan" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">PAN</button>
+          </div>
+
+          <!-- Vault Entries Table -->
+          <div class="table-responsive">
+            <table class="audit-table" id="vaultTable">
+              <thead>
+                <tr>
+                  <th>Category</th>
+                  <th>Key</th>
+                  <th>Value (masked)</th>
+                  <th>Token Handle</th>
+                  <th>Action</th>
+                </tr>
+              </thead>
+              <tbody id="vaultTableBody">
+                <tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px;">Vault is initializing...</td></tr>
+              </tbody>
+            </table>
+          </div>
+
+          <!-- Vault Footer Actions -->
+          <div style="display:flex;gap:8px;margin-top:12px;">
+            <button id="btnExportVault" class="btn btn-secondary" style="font-size:11px;">⬇️ Export Encrypted Backup</button>
+            <button id="btnClearVault" class="btn btn-danger" style="font-size:11px;">🗑️ Clear All Entries</button>
+          </div>
+        </div>
+
+        <div class="card" style="margin-top:12px;">
+          <div class="card-header">
+            <h3>🤖 How Vault Tokens Work</h3>
+          </div>
+          <div style="font-size:12px;color:#94a3b8;line-height:1.7;">
+            <p>When the agent needs to fill a sensitive field (e.g. your email), it requests <code style="background:#1e293b;padding:1px 5px;border-radius:3px;color:#38bdf8;">{{VAULT:contact.email}}</code> from the server.</p>
+            <p>The VLM server <strong>never sees your actual email</strong> — only the token. The extension resolves it to the real value on-device, at the last millisecond before DOM injection.</p>
+            <p style="color:#34d399;">✓ Zero-Leakage: Your data stays on-device. Always.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- SECTION 6: Audit & Compliance -->
+      <section id="section-audit" class="settings-section">
+        <div class="card">
+          <div class="card-header">
+            <h3>📋 Compliance Logs & Audit Trail</h3>
+            <p>Review cryptographic logs of all redaction events for privacy verification.</p>
+          </div>
+
+          <div class="audit-controls">
+            <button id="btnExportJson" class="btn btn-secondary">⬇️ Export Audit JSON</button>
+            <button id="btnExportCsv" class="btn btn-secondary">⬇️ Export Audit CSV</button>
+            <button id="btnClearLogs" class="btn btn-danger">Clear All Logs</button>
+          </div>
+
+          <div class="table-responsive">
+            <table class="audit-table">
+              <thead>
+                <tr>
+                  <th>Timestamp</th>
+                  <th>Domain / URL</th>
+                  <th>Redaction Count</th>
+                  <th>Backend</th>
+                  <th>Latency</th>
+                  <th>Status</th>
+                </tr>
+              </thead>
+              <tbody id="auditTableBody">
+                <!-- Dynamically populated -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <script type="module" src="options.js"></script>
+</body>
+</html>
