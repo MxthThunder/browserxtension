@@ -42,10 +42,17 @@ def _load_env_file():
 
 _load_env_file()
 
+from contextlib import asynccontextmanager
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    yield
+
 app = FastAPI(
     title="Privacy-Preserving Visual Agent Server",
     description="Centralized VLM Reasoner accepting zero-leakage sanitized browser context (ISRO PS #26171)",
     version="2.0.0",
+    lifespan=lifespan,
 )
 
 # Enable CORS for Chrome Extensions and Localhost
