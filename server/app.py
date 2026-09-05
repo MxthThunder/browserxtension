@@ -18,6 +18,30 @@ from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 import httpx
 
+# Automatically load environment variables from .env if present
+def _load_env_file():
+    candidates = [
+        os.path.join(os.path.dirname(__file__), ".env"),
+        os.path.join(os.path.dirname(__file__), "..", ".env"),
+        os.path.join(os.getcwd(), ".env"),
+    ]
+    for env_path in candidates:
+        if os.path.isfile(env_path):
+            try:
+                with open(env_path, "r", encoding="utf-8") as f:
+                    for line in f:
+                        line = line.strip()
+                        if line and not line.startswith("#") and "=" in line:
+                            k, v = line.split("=", 1)
+                            k = k.strip()
+                            v = v.strip().strip("'\"")
+                            if k and k not in os.environ:
+                                os.environ[k] = v
+            except Exception:
+                pass
+
+_load_env_file()
+
 app = FastAPI(
     title="Privacy-Preserving Visual Agent Server",
     description="Centralized VLM Reasoner accepting zero-leakage sanitized browser context (ISRO PS #26171)",
@@ -205,6 +229,159 @@ async def try_ollama_qwen(task: str, elements: List[DOMElement], image_base64: O
     except Exception:
         return None
     return None
+
+
+async def try_gemini(task: str, elements: List[DOMElement], image_base64: Optional[str]) -> Optional[ActionOutput]:
+    """
+    Attempts reasoning using Google Gemini API (gemini-1.5-flash / gemini-2.0-flash).
+    Only invoked if GEMINI_API_KEY is configured.
+    Receives ONLY sanitized visual frames (raw PII already masked locally).
+    """
+    api_key = os.getenv("GEMINI_API_KEY")
+    if not api_key:
+        return None
+
+    model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    elements_digest = [
+        {
+            "id": el.id,
+            "tag": el.tag,
+            "type": el.type,
+            "name": el.name,
+            "text": el.text,
+            "selector": el.selector,
+            "role": el.role,
+            "value": el.value or "",
+            "is_interactive": el.is_interactive,
+        }
+        for el in elements[:30]
+    ]
+
+    system_instruction = (
+        "You are an expert autonomous browser agent. You receive a user goal and a list of visible web elements. "
+        "Select the next single concrete browser action to make progress towards the user's goal. "
+        "Respond strictly with a JSON object: "
+        '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
+        '"selector": "CSS selector or element id", "value": "text to type or select", '
+        '"explanation": "reasoning", "confidence": 0.0-1.0}'
+    )
+
+    parts: List[Dict[str, Any]] = [
+        {"text": f"{system_instruction}\n\nUser Instruction: {task}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"}
+    ]
+
+    if image_base64 and len(image_base64) > 100:
+        clean_b64 = image_base64.split(",", 1)[-1]
+        parts.append({
+            "inline_data": {
+                "mime_type": "image/jpeg",
+                "data": clean_b64
+            }
+        })
+
+    url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
+    payload = {
+        "contents": [{"parts": parts}],
+        "generationConfig": {
+            "response_mime_type": "application/json",
+            "temperature": 0.2
+        }
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                text_response = data["candidates"][0]["content"]["parts"][0]["text"]
+                raw_json = json.loads(text_response)
+                if "type" in raw_json:
+                    return ActionOutput(
+                        type=raw_json.get("type", "finish"),
+                        selector=raw_json.get("selector"),
+                        value=raw_json.get("value"),
+                        explanation=f"[Gemini] " + raw_json.get("explanation", "Action planned by Gemini."),
+                        confidence=float(raw_json.get("confidence", 0.95)),
+                    )
+    except Exception:
+        return None
+    return None
+
+
+async def try_openai(task: str, elements: List[DOMElement], image_base64: Optional[str]) -> Optional[ActionOutput]:
+    """
+    Attempts reasoning using OpenAI API (gpt-4o-mini / gpt-4o).
+    Only invoked if OPENAI_API_KEY is configured.
+    Receives ONLY sanitized visual frames (raw PII already masked locally).
+    """
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        return None
+
+    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    elements_digest = [
+        {
+            "id": el.id,
+            "tag": el.tag,
+            "type": el.type,
+            "name": el.name,
+            "text": el.text,
+            "selector": el.selector,
+            "role": el.role,
+            "value": el.value or "",
+            "is_interactive": el.is_interactive,
+        }
+        for el in elements[:30]
+    ]
+
+    system_prompt = (
+        "You are an expert autonomous browser agent. Select the next single concrete browser action. "
+        "Respond strictly with a JSON object: "
+        '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
+        '"selector": "CSS selector or element id", "value": "text to type or select", '
+        '"explanation": "reasoning", "confidence": 0.0-1.0}'
+    )
+
+    user_content: Any = f"User Instruction: {task}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
+    if image_base64 and len(image_base64) > 100:
+        clean_b64 = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
+        user_content = [
+            {"type": "text", "text": f"User Instruction: {task}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"},
+            {"type": "image_url", "image_url": {"url": clean_b64, "detail": "low"}}
+        ]
+
+    payload = {
+        "model": model,
+        "response_format": {"type": "json_object"},
+        "messages": [
+            {"role": "system", "content": system_prompt},
+            {"role": "user", "content": user_content}
+        ],
+        "temperature": 0.2
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=10.0) as client:
+            resp = await client.post(
+                "https://api.openai.com/v1/chat/completions",
+                headers={"Authorization": f"Bearer {api_key}"},
+                json=payload
+            )
+            if resp.status_code == 200:
+                data = resp.json()
+                raw_json = json.loads(data["choices"][0]["message"]["content"])
+                if "type" in raw_json:
+                    return ActionOutput(
+                        type=raw_json.get("type", "finish"),
+                        selector=raw_json.get("selector"),
+                        value=raw_json.get("value"),
+                        explanation=f"[OpenAI] " + raw_json.get("explanation", "Action planned by OpenAI."),
+                        confidence=float(raw_json.get("confidence", 0.95)),
+                    )
+    except Exception:
+        return None
+    return None
+
 
 
 def extract_field_values_from_prompt(prompt: str) -> Dict[str, str]:
@@ -461,7 +638,19 @@ async def act_endpoint(payload: ActRequest):
         if action:
             model_used = "ollama-qwen"
 
-    # 2. Execute Universal Semantic NLP Reasoner (Handles ANY free-form prompt)
+    # 2. Attempt Google Gemini if requested or auto with API key present
+    if not action and payload.model_provider in ["auto", "gemini"]:
+        action = await try_gemini(payload.task, payload.dom_elements or [], payload.sanitized_image_base64)
+        if action:
+            model_used = "gemini"
+
+    # 3. Attempt OpenAI if requested or auto with API key present
+    if not action and payload.model_provider in ["auto", "openai"]:
+        action = await try_openai(payload.task, payload.dom_elements or [], payload.sanitized_image_base64)
+        if action:
+            model_used = "openai"
+
+    # 4. Fallback: Universal Semantic NLP Reasoner (Handles ANY free-form prompt offline)
     if not action:
         action = universal_nlp_reasoner(
             task=payload.task,
