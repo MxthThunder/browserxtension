@@ -249,6 +249,11 @@ export class LocalPrivacyEngine {
         }
       }
 
+      // Only evaluate ambiguity for form input fields, not actionable buttons or links
+      const isInputLike = element.role === SEMANTIC_ROLES.GENERIC_INPUT ||
+                          element.tag === "input" || element.tag === "textarea" ||
+                          element.tag === "select" || Boolean(element.isContentEditable);
+
       // Check if context has ambiguous keywords requiring local reasoning
       const haystack = [
         element.label,
@@ -258,8 +263,8 @@ export class LocalPrivacyEngine {
         element.attributes?.id,
       ].filter(Boolean).join(" ").toLowerCase();
 
-      const isAmbiguous = rule.decision === PRIVACY_DECISIONS.ALLOW &&
-        /medical|diagnosis|prescription|salary|income|recovery|seed|confidential|secret|memo|beneficiary|nominee|notes|token|auth/i.test(haystack);
+      const isAmbiguous = isInputLike && rule.decision === PRIVACY_DECISIONS.ALLOW &&
+        /medical|diagnosis|prescription|salary|income|recovery|seed|confidential|secret|memo|beneficiary|nominee|notes/i.test(haystack);
 
       return {
         elementId: element.id,
@@ -294,6 +299,10 @@ export class LocalPrivacyEngine {
     }
 
     // 4. Default: Safe interactive element
+    const isInputLike = element.role === SEMANTIC_ROLES.GENERIC_INPUT ||
+                        element.tag === "input" || element.tag === "textarea" ||
+                        element.tag === "select" || Boolean(element.isContentEditable);
+
     const haystack = [
       element.label,
       element.placeholder,
@@ -302,7 +311,8 @@ export class LocalPrivacyEngine {
       element.attributes?.id,
     ].filter(Boolean).join(" ").toLowerCase();
 
-    const isAmbiguous = /medical|diagnosis|prescription|salary|income|recovery|seed|confidential|secret|memo|beneficiary|nominee|notes|token|auth/i.test(haystack);
+    const isAmbiguous = isInputLike &&
+      /medical|diagnosis|prescription|salary|income|recovery|seed|confidential|secret|memo|beneficiary|nominee|notes/i.test(haystack);
 
     return {
       elementId: element.id,

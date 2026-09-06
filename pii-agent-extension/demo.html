@@ -162,6 +162,16 @@
           </div>
         </div>
 
+        <div class="form-group">
+          <label>Account Recovery Phrase / Master Seed Token</label>
+          <input type="text" id="recovery_token" name="recovery_phrase" placeholder="12-word seed or recovery key" value="alpha bravo charlie delta echo foxtrot" />
+        </div>
+
+        <div class="form-group">
+          <label>Primary Emergency Contact & Relationship</label>
+          <input type="text" id="emergency_contact" name="emergency_contact" placeholder="Name and relation" value="Dr. Robert Smith (Spouse)" />
+        </div>
+
         <button type="submit" id="submitBtn" class="btn-submit">Confirm & Authenticate Identity</button>
       </form>
     </div>
@@ -175,10 +185,13 @@
 
       <div class="callout">
         <strong>Privacy Test Expectations:</strong>
-        <p>1. Form fields (Password, Card, SSN, Name) are sanitized via DOM inspection.</p>
-        <p>2. Subject's face is detected & blacked out via on-device Vision Model (~30% proxy) on WebGPU.</p>
+        <p>1. Form fields (Password, Card, SSN, Name, Recovery Token) are sanitized via DOM inspection & Qwen local reasoning.</p>
+        <p>2. Subject's face is detected & blacked out via on-device BlazeFace & OWL-ViT zero-shot detector.</p>
+        <p>3. Ambiguous fields (Recovery Seed, Medical/Emergency) classified on-device by Qwen (Ollama).</p>
       </div>
     </div>
   </div>
+  <!-- Embedded Content Script ensures inspection works on both http:// and chrome-extension:// origins -->
+  <script src="content.js"></script>
 </body>
 </html>

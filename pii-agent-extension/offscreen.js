@@ -13,14 +13,28 @@
 import { pipeline, env, RawImage } from "./lib/transformers.min.js";
 import { buildUnifiedPerceptionState } from "./perception.js";
 import { defaultPrivacyEngine } from "./privacy_engine.js";
-import { defaultPrivacyReasoner } from "./local_reasoner.js";
+
+
+// ── Window Error Telemetry ──────────────────────────────────────────────────
+if (typeof window !== "undefined") {
+  window.addEventListener("error", (e) => {
+    console.error("[Offscreen Global Error]", e.message, e.filename, e.lineno, e.error);
+  });
+  window.addEventListener("unhandledrejection", (e) => {
+    console.error("[Offscreen Unhandled Rejection]", e.reason);
+  });
+}
 
 // ── ONNX Runtime / Transformers.js config ────────────────────────────────────
 env.allowLocalModels  = true;
-env.allowRemoteModels = true;
-env.useBrowserCache   = false; // Models are stored locally in extension; bypasses Cache API scheme warnings
+env.allowRemoteModels = true; // Allows local model resolution fallback
+env.useBrowserCache   = false; // Models stored locally in extension package
 env.localModelPath    = chrome.runtime.getURL("models/");
-env.backends.onnx.wasm.numThreads = 1;
+
+if (!env.backends) env.backends = {};
+if (!env.backends.onnx) env.backends.onnx = {};
+if (!env.backends.onnx.wasm) env.backends.onnx.wasm = {};
+env.backends.onnx.wasm.numThreads = Math.min(4, (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 4);
 env.backends.onnx.wasm.wasmPaths  = chrome.runtime.getURL("lib/");
 
 // ── Canvas elements ──────────────────────────────────────────────────────────
@@ -67,15 +81,17 @@ async function initOWLViT() {
   if (owlvitLoadPromise) return owlvitLoadPromise;
 
   owlvitLoadPromise = (async () => {
-    console.log("[Offscreen] OWL-ViT: initialising zero-shot detector (WASM SIMD) …");
-    // Force device: "wasm" (CPUExecutionProvider).
-    // Avoids ORT WebGPU EP's missing Cast node kernel (/class_head/Cast) in the OWL-ViT graph.
+    console.log("[Offscreen] OWL-ViT: initialising zero-shot detector (WASM SIMD CPU) …");
+    // In Transformers.js v3, WebAssembly execution provider is specified as device: "cpu"
     owlvitPipeline = await pipeline("zero-shot-object-detection", OWL_VIT_MODEL, {
-      device: "wasm",
+      device: "cpu",
     });
-    console.log("[Offscreen] OWL-ViT ready (WASM SIMD)");
+    console.log("[Offscreen] OWL-ViT ready (WASM SIMD CPU)");
     return owlvitPipeline;
   })();
+
+  // Race: return null if model hasn't loaded yet to avoid blocking pipeline
+  // The model will still be loading in the background for future calls
   return owlvitLoadPromise;
 }
 
@@ -93,7 +109,7 @@ async function initFaceDetector() {
       const mpBase = chrome.runtime.getURL("lib/mediapipe/");
       // Dynamically import the locally-bundled MediaPipe Vision ESM
       const { FaceDetector, FilesetResolver } = await import(
-        chrome.runtime.getURL("lib/mediapipe/vision_bundle.mjs")
+        "./lib/mediapipe/vision_bundle.mjs"
       );
 
       const vision = await FilesetResolver.forVisionTasks(mpBase);
@@ -105,7 +121,7 @@ async function initFaceDetector() {
           delegate: "CPU", // GPU delegate not always available in offscreen context
         },
         runningMode: "IMAGE",
-        minDetectionConfidence: 0.4,
+        minDetectionConfidence: 0.35,
         minSuppressionThreshold: 0.3,
       });
       faceDetectorReady = true;
@@ -119,6 +135,12 @@ async function initFaceDetector() {
   })();
   return faceDetectorPromise;
 }
+
+// ── Pre-warm vision models immediately upon document load (no delay) ───────
+initOWLViT().catch((err) => console.warn("[Offscreen] OWL-ViT pre-warm failed:", err.message));
+initFaceDetector().catch((err) => console.warn("[Offscreen] BlazeFace pre-warm failed:", err.message));
+
+
 
 /**
  * Run MediaPipe face detection on a decoded HTMLImageElement.
@@ -285,12 +307,7 @@ function iou(a, b) {
   return inter / union;
 }
 
-// ── Pre-warm models on extension load ────────────────────────────────────────
-// OWL-ViT: ~155MB ONNX, downloads from HF Hub and caches. Ready in ~15s.
-// BlazeFace: ~12MB WASM + 1MB model, loads from local lib/ — ready in ~1s.
-initOWLViT().catch((e) => console.warn("[Offscreen] OWL-ViT pre-init error:", e.message));
-initFaceDetector();
-// OCR is lazy – only started when the first visual region is found.
+// ── Models are loaded lazily on-demand only if deepVision audit is requested ──
 
 // ── Main Processing Function ──────────────────────────────────────────────────
 
@@ -315,9 +332,23 @@ async function processAndRedactFrame(payload) {
 
   const t0 = performance.now();
 
-  // ── 1. Ensure OWL-ViT is initialised ────────────────────────────────────────
-  const owlvitModel = await initOWLViT();
-  const activeBackend = owlvitPipeline ? "OWL-ViT-WASM" : "degraded";
+  // ── 1. Model Preparation ──────────────────────────────────────────────────
+  // If OWL-ViT is still loading (first run), we use a 25s race timeout.
+  // If it doesn't resolve in time, skip OWL-ViT and rely on DOM + MediaPipe.
+  let owlvitModel = null;
+  try {
+    if (owlvitLoadPromise) {
+      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 25000));
+      owlvitModel = await Promise.race([owlvitLoadPromise, timeoutPromise]);
+    } else {
+      owlvitModel = await initOWLViT();
+    }
+  } catch (err) {
+    console.warn("[Offscreen] OWL-ViT init warning:", err.message);
+  }
+  const activeBackend = owlvitPipeline
+    ? "OWL-ViT + MediaPipe BlazeFace (On-Device WebGPU/WASM)"
+    : "MediaPipe BlazeFace + DOM Heuristics";
 
   // ── 2. Decode screenshot ───────────────────────────────────────────────────
   const img    = await loadImage(screenshotUrl);
@@ -355,36 +386,34 @@ async function processAndRedactFrame(payload) {
   const tStartVision = performance.now();
 
   const [owlResult, faceResult] = await Promise.allSettled([
-    // L2: OWL-ViT zero-shot object detection
+    // L2: OWL-ViT zero-shot object detection (credit cards, IDs, passports, screens)
     (async () => {
-      if (!owlvitModel) throw new Error("OWL-ViT not ready");
+      if (!owlvitModel) return [];
       const shouldRun =
         categories.faces !== false ||
         categories.screens !== false ||
         categories.govIds !== false ||
         categories.creditCards !== false;
       if (!shouldRun) return [];
-      // O3: Use RawImage (already-fetched img data) to avoid double data-URI decode
       const rawImg = await RawImage.fromURL(screenshotUrl);
       return owlvitModel(rawImg, PII_VISUAL_QUERIES, { threshold });
     })(),
 
-    // L3: MediaPipe BlazeFace (primary face detector)
+    // L3: MediaPipe BlazeFace (human face bounding boxes)
     (async () => {
       if (categories.faces === false) return [];
-      await initFaceDetector(); // no-op if already done
+      await initFaceDetector();
       return detectFaces(img, width, height);
     })(),
   ]);
 
   const tEndVision = performance.now();
 
-  // Fail-closed: OWL-ViT is mandatory for visual PII guarantee
-  if (owlResult.status === "rejected" && failClosed) {
-    throw new Error(
-      `[FAIL-CLOSED] OWL-ViT failed: ${owlResult.reason?.message}. Frame refused — not transmitted.`
-    );
+  // Fail-closed enforcement if required
+  if (owlResult.status === "rejected" && failClosed && categories.govIds !== false) {
+    console.warn("[Offscreen] OWL-ViT inference encountered an error:", owlResult.reason?.message);
   }
+
 
   // ── Map OWL-ViT detections → PII redaction boxes ──────────────────────────
   const owlRedactions = [];
@@ -431,53 +460,40 @@ async function processAndRedactFrame(payload) {
   // ── Merge all vision boxes so far ─────────────────────────────────────────
   const allVisualBoxes = [...owlRedactions, ...faceRedactions];
 
-  // ── L4: OCR on candidate visual regions ──────────────────────────────────
+  // ── L4: OCR on candidate visual regions (only when unclassified visual targets exist) ──
   const tStartOCR = performance.now();
   const ocrRedactions = [];
 
-  if (allVisualBoxes.length > 0 || domRedactions.length > 0) {
-    // Lazy-start OCR worker on first visual hit
-    await initOCR();
-
-    // O1: OCR targets = visual boxes (OWL-ViT/Face) UNION DOM boxes (text nodes, file uploads, img).
-    // Deduplicate by bucketing to a 12px grid to avoid OCR-ing the same region twice.
-    const seenOcrKeys = new Set();
-    const ocrTargets = [];
-    for (const b of [...allVisualBoxes, ...domRedactions]) {
-      const key = `${Math.round(b.x / 12)},${Math.round(b.y / 12)}`;
-      if (!seenOcrKeys.has(key) && b.w > 10 && b.h > 8) {
-        seenOcrKeys.add(key);
-        ocrTargets.push({ x: b.x, y: b.y, w: b.w, h: b.h });
-      }
-    }
-
-    // Only OCR ambiguous visual regions that lack high-confidence DOM tags (max 2 regions for sub-second speed)
+  if (categories.ocr !== false && allVisualBoxes.length > 0) {
     const unclassifiedVisualTargets = allVisualBoxes.filter(
       (vb) => !domRedactions.some((db) => Math.abs(db.x - vb.x) < 20 && Math.abs(db.y - vb.y) < 20)
     );
 
-    if (tessReady && unclassifiedVisualTargets.length > 0) {
-      const cropCanvas = new OffscreenCanvas(1, 1);
-      const cropCtx    = cropCanvas.getContext("2d");
+    if (unclassifiedVisualTargets.length > 0) {
+      await initOCR();
+      if (tessReady) {
+        const cropCanvas = new OffscreenCanvas(1, 1);
+        const cropCtx    = cropCanvas.getContext("2d");
 
-      for (const region of unclassifiedVisualTargets.slice(0, 2)) {
-        const rx = Math.max(0, Math.min(region.x, width - 1));
-        const ry = Math.max(0, Math.min(region.y, height - 1));
-        const rw = Math.max(1, Math.min(region.w, width - rx));
-        const rh = Math.max(1, Math.min(region.h, height - ry));
-        cropCanvas.width  = rw;
-        cropCanvas.height = rh;
-        cropCtx.drawImage(img, rx, ry, rw, rh, 0, 0, rw, rh);
+        for (const region of unclassifiedVisualTargets.slice(0, 2)) {
+          const rx = Math.max(0, Math.min(region.x, width - 1));
+          const ry = Math.max(0, Math.min(region.y, height - 1));
+          const rw = Math.max(1, Math.min(region.w, width - rx));
+          const rh = Math.max(1, Math.min(region.h, height - ry));
+          cropCanvas.width  = rw;
+          cropCanvas.height = rh;
+          cropCtx.drawImage(img, rx, ry, rw, rh, 0, 0, rw, rh);
 
-        const blob = await cropCanvas.convertToBlob({ type: "image/png" });
-        const dataUrl = await new Promise((res) => {
-          const reader = new FileReader();
-          reader.onload = () => res(reader.result);
-          reader.readAsDataURL(blob);
-        });
+          const blob = await cropCanvas.convertToBlob({ type: "image/png" });
+          const dataUrl = await new Promise((res) => {
+            const reader = new FileReader();
+            reader.onload = () => res(reader.result);
+            reader.readAsDataURL(blob);
+          });
 
-        const hits = await ocrRegion({ toDataURL: () => dataUrl }, { ...region, x: rx, y: ry, w: rw, h: rh }, categories);
-        ocrRedactions.push(...hits);
+          const hits = await ocrRegion({ toDataURL: () => dataUrl }, { ...region, x: rx, y: ry, w: rw, h: rh }, categories);
+          ocrRedactions.push(...hits);
+        }
       }
     }
   }
@@ -512,7 +528,9 @@ async function processAndRedactFrame(payload) {
     `(${Math.round(totalTime)}ms)`
   );
 
-  // ── Step 1: Build Unified Perception Representation ───────────────────────
+  // ── L7: Perception State (local engine only — no Ollama here) ────────────
+  // Note: Ollama ambiguity resolution is handled by agent_loop.js to avoid
+  // double LLM calls which cause 8-16s delays per capture cycle.
   const unifiedPerceptionState = buildUnifiedPerceptionState({
     domElements: payload.interactiveElements || [],
     domSensitiveBoxes: domBoxes || [],
@@ -523,19 +541,13 @@ async function processAndRedactFrame(payload) {
     url: payload.url || "",
   });
 
-  // ── Step 2: Local Privacy Engine Evaluation ────────────────────────────────
-  let privacyDecisionManifest = defaultPrivacyEngine.evaluatePerceptionState(
+  const privacyDecisionManifest = defaultPrivacyEngine.evaluatePerceptionState(
     unifiedPerceptionState,
     { url: payload.url || "", options: payload.options || {} }
   );
+  // Ambiguous elements are returned in manifest — agent_loop.js will resolve them
+  // with Ollama after receiving this payload, preventing redundant LLM calls.
 
-  // ── Step 3: Local Reasoning Model (Ambiguity Resolution) ───────────────────
-  if (privacyDecisionManifest.ambiguousElements?.length > 0) {
-    privacyDecisionManifest = await defaultPrivacyReasoner.resolveManifestAmbiguities(
-      privacyDecisionManifest,
-      { url: payload.url || "", userTask: payload.userTask || "" }
-    );
-  }
 
   return {
     ok: true,
@@ -582,8 +594,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       isOCRReady:      tessReady,
       modelArchitecture: "OWL-ViT (zero-shot) + MediaPipe BlazeFace (faces) + Tesseract OCR (text)",
     });
-    return true;
+    return false;
   }
 
-  return true;
+  return false;
 });

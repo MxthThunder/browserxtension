@@ -60,8 +60,7 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "run_at": "document_idle",
-      "all_frames": true
+      "run_at": "document_idle"
     }
   ],
   "content_security_policy": {
@@ -95,6 +94,9 @@
         "options.js",
         "options.css",
         "demo.html",
+        "dashboard.html",
+        "dashboard.js",
+        "dashboard.css",
         "mission_console.html",
         "openmct_telemetry_plugin.js",
         "demo-photo.jpg",

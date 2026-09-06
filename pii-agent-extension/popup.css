@@ -67,13 +67,41 @@ body {
 }
 
 /* Topbar */
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding-bottom: 6px;
+}
+
 .topbar h1 {
   font-size: 13px;
   font-weight: 600;
   letter-spacing: -0.01em;
   color: var(--text-secondary);
-  text-align: center;
-  padding-bottom: 6px;
+}
+
+.icon-btn {
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  color: var(--text-muted);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 4px 6px;
+  transition: all 150ms ease;
+}
+
+.icon-btn:hover {
+  background: rgba(255, 255, 255, 0.07);
+  border-color: var(--border);
+  color: var(--text);
+}
+
+.icon-btn:active {
+  transform: scale(0.94);
 }
 
 /* Hero — the entire "basic" experience */
@@ -564,3 +592,8 @@ body {
 }
 
 .link:hover { color: var(--text); }
+
+.footer-dot {
+  margin: 0 8px;
+  color: var(--border-strong);
+}

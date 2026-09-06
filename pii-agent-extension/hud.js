@@ -37,7 +37,7 @@ async function runCapture() {
       try {
         result = await chrome.runtime.sendMessage({
           type: "CAPTURE_AND_REDACT",
-          options: { faceProxyPct: 0.30, threshold: 0.5 },
+          options: { quickCapture: true, faceProxyPct: 0.30, threshold: 0.5 },
         });
       } catch (extErr) {
         console.warn("[HUD] Extension runtime failed, falling back to standalone test engine:", extErr);

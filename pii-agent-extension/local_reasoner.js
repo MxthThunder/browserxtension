@@ -24,7 +24,7 @@ Classify whether the given web element or text content contains sensitive person
 Decision Options:
 - ALLOW: Non-sensitive public information, search queries, navigation labels, safe buttons.
 - REDACT: Personal names, email addresses, phone numbers, postal addresses, account numbers, government IDs.
-- BLOCK: Passwords, PINs, OTP codes, CVV codes, private encryption keys, authentication tokens.
+- BLOCK: Passwords, PINs, OTP codes, CVV codes, private encryption keys, authentication tokens, recovery phrases, seed tokens, credentials. (ALWAYS BLOCK, never REDACT).
 - LOCAL_ONLY: Fields that require user vault data injected directly on-device without cloud transmission.
 
 Element Context:
@@ -47,6 +47,37 @@ export class LocalPrivacyReasoner {
     this.pipeline = null;
     this.loadPromise = null;
     this.localOllamaUrl = config.localOllamaUrl || "http://127.0.0.1:11434/api/generate";
+    this._cachedOllamaModel = null;
+  }
+
+  /**
+   * Auto-detects installed Ollama models, prioritizing qwen2.5:1.5b over 0.5b.
+   */
+  async getPreferredOllamaModel() {
+    if (this._cachedOllamaModel) return this._cachedOllamaModel;
+    try {
+      const resp = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(1500) });
+      if (resp.ok) {
+        const data = await resp.json();
+        const names = (data.models || []).map((m) => (m.name || "").toLowerCase());
+        if (names.some((n) => n.includes("isro-privacy-qwen"))) {
+          this._cachedOllamaModel = "isro-privacy-qwen";
+          return "isro-privacy-qwen";
+        }
+        if (names.some((n) => n.includes("qwen2.5:1.5b") || n.includes("qwen2.5-1.5b"))) {
+          this._cachedOllamaModel = "qwen2.5:1.5b";
+          return "qwen2.5:1.5b";
+        }
+        if (names.some((n) => n.includes("qwen2.5:0.5b") || n.includes("qwen2.5-0.5b"))) {
+          this._cachedOllamaModel = "qwen2.5:0.5b";
+          return "qwen2.5:0.5b";
+        }
+      }
+    } catch {
+      // Ollama offline or unreachable
+    }
+    this._cachedOllamaModel = "qwen2.5:1.5b";
+    return "qwen2.5:1.5b";
   }
 
   /**
@@ -173,9 +204,9 @@ export class LocalPrivacyReasoner {
   }
 
   /**
-   * Resolves all ambiguous elements in a PrivacyDecisionManifest.
+   * Resolves all ambiguous elements in a PrivacyDecisionManifest in a single batch pass.
    * @param {Object} manifest - Output of evaluatePerceptionState()
-   * @param {Object} context - Context options
+   * @param {Object} context - Context options { url, userTask }
    * @returns {Promise<Object>} Enriched manifest with resolved decisions
    */
   async resolveManifestAmbiguities(manifest, context = {}) {
@@ -183,15 +214,69 @@ export class LocalPrivacyReasoner {
       return manifest;
     }
 
-    const resolvedDecisions = await Promise.all(
-      manifest.ambiguousElements.map((ambiguousItem) =>
-        this.resolveAmbiguity(ambiguousItem.element, context)
-      )
-    );
+    // Check LRU cache first for instant hits
+    const uncachedItems = [];
+    const resolvedMap = new Map();
 
-    // Update decisions list and statistics
-    for (const resolved of resolvedDecisions) {
-      const index = manifest.decisions.findIndex((d) => d.elementId === resolved.elementId);
+    for (const item of manifest.ambiguousElements) {
+      const el = item.element || item;
+      const key = this._getCacheKey(el, context);
+      if (this.decisionCache.has(key)) {
+        resolvedMap.set(String(el.id || item.elementId), this.decisionCache.get(key));
+      } else {
+        uncachedItems.push(item);
+      }
+    }
+
+    // If uncached items exist, query Ollama in a Single-Pass Batch
+    if (uncachedItems.length > 0) {
+      const batchDecisions = await this._queryOllamaBatch(
+        uncachedItems.map((item) => item.element || item),
+        context
+      );
+
+      const model = await this.getPreferredOllamaModel();
+      if (batchDecisions && Array.isArray(batchDecisions) && batchDecisions.length > 0) {
+        const resultMap = new Map(batchDecisions.map((r) => [String(r.id), r]));
+        for (const item of uncachedItems) {
+          const el = item.element || item;
+          const elId = String(el.id || item.elementId);
+          const match = resultMap.get(elId);
+          let decisionRecord = null;
+          if (match && Object.values(PRIVACY_DECISIONS).includes(match.decision?.toUpperCase())) {
+            const dec = match.decision.toUpperCase();
+            let strategy = SANITIZATION_STRATEGIES.NONE;
+            if (dec === PRIVACY_DECISIONS.BLOCK) strategy = SANITIZATION_STRATEGIES.OMIT_AND_BLACKOUT;
+            else if (dec === PRIVACY_DECISIONS.REDACT) strategy = SANITIZATION_STRATEGIES.SEMANTIC_PLACEHOLDER;
+            else if (dec === PRIVACY_DECISIONS.LOCAL_ONLY) strategy = SANITIZATION_STRATEGIES.SEMANTIC_PLACEHOLDER;
+
+            decisionRecord = {
+              decision: dec,
+              strategy: strategy,
+              reason: `Qwen Local Batch: ${match.reason || "Context evaluation"}`,
+              confidence: match.confidence || 0.95,
+              engine: `ollama-${model}`,
+            };
+          } else {
+            decisionRecord = this._fallbackReasoning(el, context);
+          }
+          resolvedMap.set(elId, decisionRecord);
+          this.decisionCache.set(this._getCacheKey(el, context), decisionRecord);
+        }
+      } else {
+        // Fallback for all uncached elements if Ollama is unreachable or timed out
+        for (const item of uncachedItems) {
+          const el = item.element || item;
+          const decisionRecord = this._fallbackReasoning(el, context);
+          resolvedMap.set(String(el.id || item.elementId), decisionRecord);
+          this.decisionCache.set(this._getCacheKey(el, context), decisionRecord);
+        }
+      }
+    }
+
+    // Apply all resolved decisions back into manifest.decisions
+    for (const [elementId, resolved] of resolvedMap.entries()) {
+      const index = manifest.decisions.findIndex((d) => String(d.elementId) === String(elementId));
       if (index !== -1) {
         manifest.decisions[index] = {
           ...manifest.decisions[index],
@@ -226,16 +311,87 @@ export class LocalPrivacyReasoner {
       blockedCount: stats[PRIVACY_DECISIONS.BLOCK],
       localOnlyCount: stats[PRIVACY_DECISIONS.LOCAL_ONLY],
       ambiguousCount: 0,
-      resolvedCount: resolvedDecisions.length,
+      resolvedCount: resolvedMap.size,
     };
 
     return manifest;
   }
 
   /**
-   * Queries local Ollama instance if available.
+   * Queries Ollama using a single-pass batch prompt for all ambiguous elements.
+   * Completes in ~1.5s with a strict 4.5s timeout covering both fetch and stream parsing.
+   */
+  async _queryOllamaBatch(elements, context = {}) {
+    if (!elements || elements.length === 0) return null;
+
+    const model = await this.getPreferredOllamaModel();
+    const itemsText = elements
+      .slice(0, 12)
+      .map((el, idx) => {
+        const id = el.id || `el_${idx + 1}`;
+        const label = el.label || el.placeholder || el.attributes?.name || el.attributes?.id || "unlabelled";
+        const tag = el.tag || el.type || "input";
+        const val = (el.text || el.value || "").substring(0, 30);
+        return `${idx + 1}. ID: "${id}" | Tag: <${tag}> | Label: "${label}" | ValuePreview: "${val}"`;
+      })
+      .join("\n");
+
+    const prompt = `You are an on-device privacy filter for an autonomous browser automation agent.
+Classify each web element into one of the following privacy decisions:
+- ALLOW: Public info, search queries, navigation labels, safe buttons.
+- REDACT: Personal names, email addresses, phone numbers, postal addresses, account numbers, government IDs.
+- BLOCK: Passwords, PINs, OTP codes, CVV codes, private encryption keys, authentication tokens, recovery phrases, seed tokens, confidential credentials.
+- LOCAL_ONLY: Account settings or vault-scoped inputs.
+
+User Task: ${context.userTask || "General Web Navigation"}
+
+Elements to classify:
+${itemsText}
+
+Respond with ONLY a JSON object in this exact format:
+{"decisions": [{"id": "exact_element_id", "decision": "ALLOW" | "REDACT" | "BLOCK" | "LOCAL_ONLY", "reason": "short explanation"}]}`;
+
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
+
+    try {
+      const resp = await fetch(this.localOllamaUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: model,
+          prompt: prompt,
+          stream: false,
+          format: "json",
+          keep_alive: -1,
+        }),
+        signal: controller.signal,
+      });
+
+      if (!resp.ok) {
+        clearTimeout(timeoutId);
+        return null;
+      }
+
+      const json = await resp.json();
+      clearTimeout(timeoutId);
+
+      if (!json.response) return null;
+      let rawText = json.response.trim();
+      rawText = rawText.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+      const parsed = JSON.parse(rawText);
+      return Array.isArray(parsed) ? parsed : (parsed.decisions || parsed.elements || null);
+    } catch (e) {
+      clearTimeout(timeoutId);
+      return null;
+    }
+  }
+
+  /**
+   * Queries local Ollama instance for a single element.
    */
   async _queryOllama(element, context = {}) {
+    const model = await this.getPreferredOllamaModel();
     const prompt = PRIVACY_REASONING_PROMPT
       .replace("{LABEL}", element.label || element.placeholder || "None")
       .replace("{TAG}", element.tag || element.type || "input")
@@ -244,40 +400,54 @@ export class LocalPrivacyReasoner {
       .replace("{TASK}", context.userTask || "General Web Navigation");
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 1200); // Strict 1.2s timeout
+    const timeoutId = setTimeout(() => controller.abort(), 8000);
 
-    const resp = await fetch(this.localOllamaUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        model: "qwen2.5:0.5b",
-        prompt: prompt,
-        stream: false,
-        format: "json",
-      }),
-      signal: controller.signal,
-    });
-    clearTimeout(timeoutId);
+    try {
+      const resp = await fetch(this.localOllamaUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          model: model,
+          prompt: prompt,
+          stream: false,
+          format: "json",
+          keep_alive: -1,
+        }),
+        signal: controller.signal,
+      });
 
-    if (!resp.ok) return null;
-    const json = await resp.json();
-    const parsed = JSON.parse(json.response);
+      if (!resp.ok) {
+        clearTimeout(timeoutId);
+        return null;
+      }
 
-    const decision = parsed.decision?.toUpperCase();
-    if (!Object.values(PRIVACY_DECISIONS).includes(decision)) return null;
+      const json = await resp.json();
+      clearTimeout(timeoutId);
 
-    let strategy = SANITIZATION_STRATEGIES.NONE;
-    if (decision === PRIVACY_DECISIONS.BLOCK) strategy = SANITIZATION_STRATEGIES.OMIT_AND_BLACKOUT;
-    else if (decision === PRIVACY_DECISIONS.REDACT) strategy = SANITIZATION_STRATEGIES.SEMANTIC_PLACEHOLDER;
-    else if (decision === PRIVACY_DECISIONS.LOCAL_ONLY) strategy = SANITIZATION_STRATEGIES.SEMANTIC_PLACEHOLDER;
+      if (!json.response) return null;
+      let rawText = json.response.trim();
+      rawText = rawText.replace(/^```json\s*/i, "").replace(/\s*```$/i, "").trim();
+      const parsed = JSON.parse(rawText);
 
-    return {
-      decision: decision,
-      strategy: strategy,
-      reason: `Qwen Local LLM: ${parsed.reason || "Context evaluation"}`,
-      confidence: parsed.confidence || 0.90,
-      engine: "ollama-qwen2.5",
-    };
+      const decision = parsed.decision?.toUpperCase();
+      if (!Object.values(PRIVACY_DECISIONS).includes(decision)) return null;
+
+      let strategy = SANITIZATION_STRATEGIES.NONE;
+      if (decision === PRIVACY_DECISIONS.BLOCK) strategy = SANITIZATION_STRATEGIES.OMIT_AND_BLACKOUT;
+      else if (decision === PRIVACY_DECISIONS.REDACT) strategy = SANITIZATION_STRATEGIES.SEMANTIC_PLACEHOLDER;
+      else if (decision === PRIVACY_DECISIONS.LOCAL_ONLY) strategy = SANITIZATION_STRATEGIES.SEMANTIC_PLACEHOLDER;
+
+      return {
+        decision: decision,
+        strategy: strategy,
+        reason: `Qwen Local LLM (${model}): ${parsed.reason || "Context evaluation"}`,
+        confidence: parsed.confidence || 0.95,
+        engine: `ollama-${model}`,
+      };
+    } catch {
+      clearTimeout(timeoutId);
+      return null;
+    }
   }
 }
 

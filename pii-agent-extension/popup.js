@@ -34,6 +34,8 @@ const visualRedactionList = document.getElementById("visualRedactionList");
 const agentStatusLog = document.getElementById("agentStatusLog");
 const linkOpenOptions = document.getElementById("linkOpenOptions");
 const linkOpenDemo = document.getElementById("linkOpenDemo");
+const btnOpenSidePanel = document.getElementById("btnOpenSidePanel");
+const linkOpenDashboard = document.getElementById("linkOpenDashboard");
 
 let latestCapture = null;
 let activeViewMode = "sanitized";
@@ -49,14 +51,116 @@ document.addEventListener("DOMContentLoaded", async () => {
 
   await probeServerHealth();
   await loadBasicCount();
+
+  // Rehydrate state from background session if popup was reopened
+  try {
+    const sessionResp = await chrome.runtime.sendMessage({ type: "GET_AGENT_SESSION_STATE" });
+    if (sessionResp?.ok && sessionResp.session) {
+      restoreSessionState(sessionResp.session);
+    }
+  } catch (err) {
+    console.warn("[Popup] Could not fetch session state:", err);
+  }
 });
+
+function restoreSessionState(session) {
+  if (!session) return;
+
+  if (session.taskPrompt && !taskInput.value) {
+    taskInput.value = session.taskPrompt;
+  }
+
+  if (session.stepsHistory && session.stepsHistory.length > 0) {
+    stepFeed.innerHTML = "";
+    session.stepsHistory.forEach((s) => {
+      const act = s.action || {};
+      const privacyPhrase = describePrivacy(s.redactionCount);
+      const actionPhrase = describeAction(act);
+      const text = privacyPhrase
+        ? `${privacyPhrase}, then ${actionPhrase.charAt(0).toLowerCase()}${actionPhrase.slice(1)}`
+        : actionPhrase;
+      addStepRow(text, s.error ? "error" : "success");
+    });
+  }
+
+  if (session.latestCapture) {
+    latestCapture = session.latestCapture;
+    updateSandboxDisplay();
+    updateDetectedList(latestCapture.redactionList || []);
+  }
+
+  if (session.activityLogs && session.activityLogs.length > 0) {
+    agentStatusLog.innerHTML = "";
+    session.activityLogs.forEach((log) => {
+      const entry = document.createElement("div");
+      entry.className = "log-entry";
+      entry.textContent = log;
+      agentStatusLog.appendChild(entry);
+    });
+    agentStatusLog.scrollTop = agentStatusLog.scrollHeight;
+  }
+
+  if (session.status === "RUNNING") {
+    btnDispatchTask.disabled = true;
+    btnDispatchTask.textContent = "…";
+    taskInput.disabled = true;
+    clearPendingRow();
+    setPendingRow("Deciding the next step…");
+  } else if (session.status === "COMPLETED") {
+    clearPendingRow();
+    btnDispatchTask.disabled = false;
+    btnDispatchTask.textContent = "Go";
+    taskInput.disabled = false;
+  } else if (session.status === "STOPPED" || session.status === "ERROR") {
+    clearPendingRow();
+    btnDispatchTask.disabled = false;
+    btnDispatchTask.textContent = "Go";
+    taskInput.disabled = false;
+  }
+}
+
+async function getActiveWebTab() {
+  let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab || !tab.id || !tab.url || tab.url.startsWith("chrome://")) {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    tab = tabs[0];
+  }
+  if (!tab || !tab.url || tab.url.startsWith("chrome://")) {
+    const allTabs = await chrome.tabs.query({});
+    tab = allTabs.find((t) => t.url && (t.url.startsWith("http://") || t.url.startsWith("https://") || t.url.includes("demo.html"))) || tab;
+  }
+  return tab;
+}
+
+async function sendTabMessage(tabId, message) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (err) {
+    if (
+      err.message?.includes("Receiving end does not exist") ||
+      err.message?.includes("Could not establish connection")
+    ) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files: ["content.js"],
+        });
+        await new Promise((r) => setTimeout(r, 120));
+        return await chrome.tabs.sendMessage(tabId, message);
+      } catch (injectErr) {
+        console.warn("[Popup] Could not re-inject content script:", injectErr.message);
+      }
+    }
+    throw err;
+  }
+}
 
 // Basic view: plain-language count of what's protected on the current page
 async function loadBasicCount() {
   try {
-    const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tab = await getActiveWebTab();
     if (!tab || !tab.id) throw new Error("no active tab");
-    const resp = await chrome.tabs.sendMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
+    const resp = await sendTabMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
     const n = resp && resp.ok ? (resp.boxes || []).length : 0;
     basicCount.textContent =
       n === 0 ? "Nothing sensitive found on this page." : `${n} sensitive field${n === 1 ? "" : "s"} protected on this page.`;
@@ -215,8 +319,31 @@ btnCapture.addEventListener("click", async () => {
   btnCapture.textContent = "…";
   appendLog("Capturing and redacting viewport…");
 
+  // Show a hint after 5s so the user knows model loading is normal
+  const loadHintTimer = setTimeout(() => {
+    appendLog("Loading vision models (first run may take 30-60s)…", "info");
+    btnCapture.textContent = "Loading…";
+  }, 5000);
+
   try {
-    const result = await chrome.runtime.sendMessage({ type: "CAPTURE_AND_REDACT" });
+    // Use a promise wrapper with timeout so button never stays disabled forever
+    const result = await new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        resolve({ ok: false, error: "Capture timed out — please try again" });
+      }, 90000);
+
+      chrome.runtime.sendMessage({ type: "CAPTURE_AND_REDACT", options: {} }, (response) => {
+        clearTimeout(timer);
+        if (chrome.runtime.lastError) {
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response || { ok: false, error: "Empty response" });
+        }
+      });
+    });
+
+    clearTimeout(loadHintTimer);
+
     if (!result || !result.ok) {
       throw new Error(result?.error || "Capture failed");
     }
@@ -231,6 +358,7 @@ btnCapture.addEventListener("click", async () => {
       "success"
     );
   } catch (err) {
+    clearTimeout(loadHintTimer);
     appendLog(`Capture error: ${err.message}`, "error");
   } finally {
     btnCapture.disabled = false;
@@ -238,21 +366,35 @@ btnCapture.addEventListener("click", async () => {
   }
 });
 
+
 // Highlight DOM
 btnHighlightDOM.addEventListener("click", async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab && tab.id) {
-    chrome.tabs.sendMessage(tab.id, { type: "HIGHLIGHT_DOM" }, (resp) => {
-      if (resp && resp.ok) appendLog(`Highlighted ${resp.count} field(s) on the page.`, "success");
-    });
+  try {
+    const tab = await getActiveWebTab();
+    if (!tab || !tab.id) {
+      appendLog("No active web tab found.", "error");
+      return;
+    }
+    const resp = await sendTabMessage(tab.id, { type: "HIGHLIGHT_DOM" });
+    if (resp && resp.ok) {
+      appendLog(`Highlighted ${resp.count} field(s) on the page.`, "success");
+    } else {
+      appendLog(`Highlight error: ${resp?.error || "Failed"}`, "error");
+    }
+  } catch (err) {
+    appendLog(`Highlight error: ${err.message}`, "error");
   }
 });
 
 // Clear overlays
 btnClearOverlays.addEventListener("click", async () => {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-  if (tab && tab.id) {
-    chrome.tabs.sendMessage(tab.id, { type: "CLEAR_OVERLAYS" }, () => appendLog("Cleared overlays."));
+  try {
+    const tab = await getActiveWebTab();
+    if (!tab || !tab.id) return;
+    await sendTabMessage(tab.id, { type: "CLEAR_OVERLAYS" });
+    appendLog("Cleared overlays.", "success");
+  } catch (err) {
+    appendLog(`Clear error: ${err.message}`, "error");
   }
 });
 
@@ -339,7 +481,27 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
+if (btnOpenSidePanel) {
+  btnOpenSidePanel.addEventListener("click", () => {
+    chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" });
+    window.close();
+  });
+}
+
+if (linkOpenDashboard) {
+  linkOpenDashboard.addEventListener("click", () => {
+    chrome.tabs.create({ url: chrome.runtime.getURL("dashboard.html") });
+  });
+}
+
 linkOpenOptions.addEventListener("click", () => chrome.runtime.openOptionsPage());
-linkOpenDemo.addEventListener("click", () => {
+linkOpenDemo.addEventListener("click", async () => {
+  try {
+    const probe = await fetch("http://localhost:8000/demo.html", { method: "HEAD", signal: AbortSignal.timeout(600) });
+    if (probe.ok) {
+      chrome.tabs.create({ url: "http://localhost:8000/demo.html" });
+      return;
+    }
+  } catch {}
   chrome.tabs.create({ url: chrome.runtime.getURL("demo.html") });
 });

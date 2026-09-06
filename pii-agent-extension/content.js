@@ -31,7 +31,7 @@ const INLINE_PII_PATTERNS = {
   PHONE: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/,
   PAN: /\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b/,
   DELIVERY_LOCATION: /\b(?:deliver(?:ing)?|ship(?:ping)?|dispatch|send)\s+to\s+[^,\n\r<]{2,50}/i,
-  PINCODE_LOCATION: /\b(?:[A-Za-z\s]+)\s+[1-9][0-9]{5}\b/i,
+  PINCODE_LOCATION: /\b[A-Za-z]{2,25}\s+[1-9][0-9]{5}\b/i,
   INTERNAL_IP: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|172\.(?:1[6-9]|2\d|3[0-1])\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/,
   OPERATOR_ID: /\b(?:OP-[A-Z0-9]{4,10}|USRC\/[A-Z0-9\/-]+|Operator\s+[A-Z][a-z]+(?:\s+[A-Z][a-z]+)?)\b/,
   CONSOLE_ID: /\b(?:MOX|ISTRAC|MCC)-CON-\d+\b/i,
@@ -206,7 +206,9 @@ function scanVisibleTextNodes() {
   });
 
   let node;
-  while ((node = walker.nextNode())) {
+  let textNodeCount = 0;
+  while ((node = walker.nextNode()) && textNodeCount < 100) {
+    textNodeCount++;
     const text = node.textContent;
     for (const [patternName, re] of Object.entries(INLINE_PII_PATTERNS)) {
       if (!re.test(text)) continue;
@@ -459,11 +461,37 @@ function scanPageForSensitiveElements() {
   // Webcam <video> feeds or camera viewports (biometric visual capture)
   document.querySelectorAll("video").forEach((vid) => {
     const rect = vid.getBoundingClientRect();
-    if (rect.width > 20 && rect.height > 20) {
+    if (rect.width <= 20 || rect.height <= 20) return;
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+    if (rect.right < 0 || rect.left > window.innerWidth) return;
+
+    // Detect if this is a genuine webcam/camera stream
+    const hasMediaStream = Boolean(
+      vid.srcObject &&
+      typeof vid.srcObject.getVideoTracks === "function" &&
+      vid.srcObject.getVideoTracks().length > 0
+    );
+
+    const vidHaystack = [
+      vid.getAttribute("class"),
+      vid.getAttribute("id"),
+      vid.getAttribute("aria-label"),
+      vid.getAttribute("data-purpose"),
+      vid.getAttribute("title"),
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    const isCameraNamed = /webcam|selfie|camera|facetrack|biometric|user-stream|live-feed/i.test(vidHaystack);
+
+    // Ignore promotional, decorative, or looping background videos (e.g. HackerRank globe animation)
+    const isBackgroundLoop = vid.hasAttribute("loop") && vid.hasAttribute("muted") && !hasMediaStream;
+    const src = (vid.currentSrc || vid.src || "").toLowerCase();
+    const isStaticVideoFile = /\.(mp4|webm|ogv|mov)(\?.*)?$/i.test(src);
+
+    if ((hasMediaStream || isCameraNamed) && !(isBackgroundLoop && isStaticVideoFile)) {
       matches.push({
         el: vid,
         category: "faces",
-        reason: "webcam <video> stream",
+        reason: hasMediaStream ? "live webcam <video> stream" : `camera viewport: ${vidHaystack.substring(0, 30)}`,
         x: Math.round(rect.left),
         y: Math.round(rect.top),
         width: Math.round(rect.width),
@@ -649,6 +677,11 @@ function updateFloatingBadge(piiCount) {
     document.body.appendChild(badge);
   }
 
+  // Prevent redundant DOM updates that re-trigger the MutationObserver
+  const stateKey = `${piiCount}_${isProtectionEnabled}`;
+  if (badge.dataset.lastState === stateKey) return;
+  badge.dataset.lastState = stateKey;
+
   badge.innerHTML = `
     <span style="font-size: 13px;">🛡️</span>
     <span>Zero-Leakage</span>
@@ -661,14 +694,21 @@ function updateFloatingBadge(piiCount) {
  * Detects in-place DOM updates and route switches without full page reloads.
  */
 function initDynamicObserver() {
-  const observer = new MutationObserver(() => {
+  observer = new MutationObserver((mutations) => {
+    // Ignore mutations originating from our own overlays, badges, or action indicators
+    const isOurOwn = mutations.every((m) => {
+      const t = m.target;
+      return t && t.closest && t.closest(`#${OVERLAY_ID}, #${FLOATING_BADGE_ID}, #privibrowse-action-indicator`);
+    });
+    if (isOurOwn) return;
+
     lastSpaMutationTime = Date.now();
     clearTimeout(debounceTimer);
     debounceTimer = setTimeout(() => {
       if (isProtectionEnabled) {
         scanPageForSensitiveElements();
       }
-    }, 300);
+    }, 400);
   });
 
   if (document.body) {
@@ -899,6 +939,9 @@ async function executeAgentAction(action) {
 
 // Runtime Message Listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  // Only the top-level document handles extension commands to prevent iframe race conditions
+  if (window.top !== window.self) return;
+
   if (message.type === "GET_DOM_PII_BOXES") {
     const matches = scanPageForSensitiveElements();
     const interactive = extractInteractiveElements();
@@ -930,7 +973,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         devicePixelRatio: window.devicePixelRatio || 1,
       },
     });
-    return true;
+    return false;
   }
 
   if (message.type === "EXECUTE_ACTION") {
@@ -944,14 +987,14 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     const matches = scanPageForSensitiveElements();
     drawHighlightOverlay(matches);
     sendResponse({ ok: true, count: matches.length });
-    return true;
+    return false;
   }
 
   if (message.type === "CLEAR_OVERLAYS") {
     const layer = document.getElementById(OVERLAY_ID);
     if (layer) layer.remove();
     sendResponse({ ok: true });
-    return true;
+    return false;
   }
 
   if (message.type === "SETTINGS_CHANGED") {
@@ -961,10 +1004,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       scanPageForSensitiveElements();
     }
     sendResponse({ ok: true });
-    return true;
+    return false;
   }
 
-  return true;
+  return false;
 });
 
 function drawHighlightOverlay(matches) {
@@ -1021,6 +1064,8 @@ function drawHighlightOverlay(matches) {
 
 // Initial Boot — load persisted protection state before the first scan
 function bootWithSettings() {
+  if (window.top !== window.self) return;
+
   const start = () => {
     scanPageForSensitiveElements();
     initDynamicObserver();

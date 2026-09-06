@@ -16,6 +16,32 @@ import { semanticRedactor } from "./semantic_redactor.js";
 
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
+// ── Persistent In-Memory Session State (Survives Popup Close/Reopen) ─────────
+let agentSessionState = {
+  status: "IDLE", // "IDLE" | "RUNNING" | "COMPLETED" | "STOPPED" | "ERROR"
+  taskPrompt: "",
+  currentStep: 0,
+  maxSteps: 8,
+  stepsHistory: [],
+  latestCapture: null,
+  activityLogs: [],
+  summary: ""
+};
+
+if (chrome.storage?.session) {
+  chrome.storage.session.get(["agentSessionState"], (res) => {
+    if (res?.agentSessionState) {
+      agentSessionState = { ...agentSessionState, ...res.agentSessionState };
+    }
+  }).catch(() => {});
+}
+
+function syncSessionState() {
+  if (chrome.storage?.session) {
+    chrome.storage.session.set({ agentSessionState }).catch(() => {});
+  }
+}
+
 // Ensure offscreen document exists for WebGPU inference and canvas redaction
 async function ensureOffscreenDocument() {
   if (await chrome.offscreen.hasDocument()) {
@@ -27,6 +53,36 @@ async function ensureOffscreenDocument() {
     justification: "Client-side WebGPU vision inference and zero-leakage canvas redaction",
   });
   console.log("[Background] Offscreen WebGPU document initialized.");
+  // Give offscreen doc a moment to load its scripts before we send messages
+  await new Promise((r) => setTimeout(r, 300));
+}
+
+/**
+ * Sends a message to the offscreen document with a configurable timeout.
+ * Prevents the pipeline from hanging if the offscreen doc crashes or hangs.
+ */
+function sendOffscreenMessage(message, timeoutMs = 90000) {
+  return new Promise((resolve) => {
+    const timer = setTimeout(() => {
+      console.warn(`[Background] Offscreen message '${message.type}' timed out after ${timeoutMs}ms`);
+      resolve({ ok: false, error: `Offscreen timeout after ${timeoutMs}ms` });
+    }, timeoutMs);
+
+    try {
+      chrome.runtime.sendMessage(message, (response) => {
+        clearTimeout(timer);
+        if (chrome.runtime.lastError) {
+          console.warn("[Background] Offscreen sendMessage error:", chrome.runtime.lastError.message);
+          resolve({ ok: false, error: chrome.runtime.lastError.message });
+        } else {
+          resolve(response || { ok: false, error: "Empty offscreen response" });
+        }
+      });
+    } catch (err) {
+      clearTimeout(timer);
+      resolve({ ok: false, error: err.message });
+    }
+  });
 }
 
 // Installation & Update Hook
@@ -111,8 +167,35 @@ function updateBadge(enabled, piiCount = 0) {
 }
 
 async function getActiveTab() {
-  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  if (!tab || !tab.id || !tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    tab = tabs[0];
+  }
   return tab;
+}
+
+async function sendTabMessage(tabId, message) {
+  try {
+    return await chrome.tabs.sendMessage(tabId, message);
+  } catch (err) {
+    if (
+      err.message?.includes("Receiving end does not exist") ||
+      err.message?.includes("Could not establish connection")
+    ) {
+      try {
+        await chrome.scripting.executeScript({
+          target: { tabId },
+          files: ["content.js"],
+        });
+        await new Promise((r) => setTimeout(r, 120));
+        return await chrome.tabs.sendMessage(tabId, message);
+      } catch (injectErr) {
+        console.warn("[Background] Could not re-inject content script:", injectErr.message);
+      }
+    }
+    throw err;
+  }
 }
 
 /**
@@ -144,10 +227,10 @@ async function captureAndRedactActiveTab(options = {}) {
     console.log("[Background] Domain is whitelisted, skipping visual redaction:", tab.url);
   }
 
-  // 1. Fetch live DOM PII boxes from the active tab's content script
+  // 1. Fetch live DOM PII boxes from the active tab
   let domData = { boxes: [], viewport: { width: 1, height: 1, devicePixelRatio: 1 } };
   try {
-    const response = await chrome.tabs.sendMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
+    const response = await sendTabMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
     if (response && response.ok) {
       domData = response;
     }
@@ -177,7 +260,9 @@ async function captureAndRedactActiveTab(options = {}) {
     ...options,
   };
 
-  const result = await chrome.runtime.sendMessage({
+  // Use timeout-guarded offscreen messaging to prevent eternal hangs
+  // First capture may be slow (model loading), subsequent ones are fast
+  const result = await sendOffscreenMessage({
     type: "PROCESS_FRAME",
     payload: {
       screenshotUrl,
@@ -186,8 +271,9 @@ async function captureAndRedactActiveTab(options = {}) {
       viewport: domData.viewport || { width: 1, height: 1, devicePixelRatio: 1 },
       options: mergedOptions,
       url: tab.url || "",
+      userTask: options.userTask || agentSessionState.taskPrompt || "",
     },
-  });
+  }, 90000); // 90s to allow first-run OWL-ViT model loading
 
   if (!result || !result.ok) {
     if (settings.failClosed) {
@@ -208,12 +294,19 @@ async function captureAndRedactActiveTab(options = {}) {
     });
   }
 
-  return {
+  const returnPayload = {
     ...result,
     tabId: tab.id,
     tabTitle: tab.title,
     tabUrl: tab.url,
   };
+
+  if (result && result.ok) {
+    agentSessionState.latestCapture = returnPayload;
+    syncSessionState();
+  }
+
+  return returnPayload;
 }
 
 /**
@@ -233,9 +326,11 @@ async function executeTaskWithServer(task, options = {}) {
   let domElements = [];
   try {
     const tab = await getActiveTab();
-    const domResponse = await chrome.tabs.sendMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
-    if (domResponse?.interactiveElements) {
-      domElements = domResponse.interactiveElements;
+    if (tab && tab.id) {
+      const domResponse = await sendTabMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
+      if (domResponse?.interactiveElements) {
+        domElements = domResponse.interactiveElements;
+      }
     }
   } catch (e) {
     console.warn("[Background] Could not fetch interactive elements:", e);
@@ -293,10 +388,12 @@ async function executeTaskWithServer(task, options = {}) {
     }
     const execAction = { ...action, value: resolvedValue };
     const tab = await getActiveTab();
-    executionResult = await chrome.tabs.sendMessage(tab.id, {
-      type: "EXECUTE_ACTION",
-      action: execAction,
-    });
+    if (tab && tab.id) {
+      executionResult = await sendTabMessage(tab.id, {
+        type: "EXECUTE_ACTION",
+        action: execAction,
+      });
+    }
   }
 
   const totalCycleLatencyMs = performance.now() - startTime;
@@ -338,33 +435,88 @@ vault.init().catch((err) =>
 // Runtime Message Router
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "CAPTURE_AND_REDACT") {
-    captureAndRedactActiveTab(message.options)
+    captureAndRedactActiveTab(message.options || {})
       .then((data) => sendResponse(data))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
   }
 
   if (message.type === "START_AGENT_LOOP") {
+    agentSessionState.status = "RUNNING";
+    agentSessionState.taskPrompt = message.task;
+    agentSessionState.currentStep = 0;
+    agentSessionState.maxSteps = message.options?.maxSteps || 8;
+    agentSessionState.stepsHistory = [];
+    agentSessionState.activityLogs = [`Started task: "${message.task}"`];
+    agentSessionState.summary = "";
+    syncSessionState();
+
     agentLoop.runLoop(
       message.task,
       { ...message.options, captureFn: captureAndRedactActiveTab },
       (stepData) => {
+        agentSessionState.currentStep = stepData.step;
+        agentSessionState.stepsHistory.push(stepData);
+        if (stepData.sanitizedImage) {
+          agentSessionState.latestCapture = {
+            sanitizedImageUrl: stepData.sanitizedImage,
+            redactionList: stepData.redactionCount ? new Array(stepData.redactionCount).fill({ label: "PII Masked" }) : []
+          };
+        }
+        agentSessionState.activityLogs.push(`Step ${stepData.step}: ${stepData.action?.type || "action"} — ${stepData.action?.explanation || ""}`);
+        syncSessionState();
+
         // Broadcast step event to open popup or HUD
         chrome.runtime.sendMessage({
           type: "AGENT_LOOP_STEP_EVENT",
-          step: stepData
+          step: stepData,
+          session: agentSessionState
         }).catch(() => {});
       }
     )
-      .then((res) => sendResponse({ ok: true, ...res }))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
+      .then((res) => {
+        agentSessionState.status = res.status || "COMPLETED";
+        agentSessionState.summary = res.summary || "Task finished.";
+        syncSessionState();
+        sendResponse({ ok: true, ...res, session: agentSessionState });
+      })
+      .catch((err) => {
+        agentSessionState.status = "ERROR";
+        agentSessionState.summary = err.message;
+        syncSessionState();
+        sendResponse({ ok: false, error: err.message, session: agentSessionState });
+      });
     return true;
   }
 
   if (message.type === "STOP_AGENT_LOOP") {
     agentLoop.stop();
+    agentSessionState.status = "STOPPED";
+    agentSessionState.summary = "Agent stopped by user.";
+    syncSessionState();
+    sendResponse({ ok: true, session: agentSessionState });
+    return false;
+  }
+
+  if (message.type === "GET_AGENT_SESSION_STATE") {
+    sendResponse({ ok: true, session: agentSessionState });
+    return false;
+  }
+
+  if (message.type === "CLEAR_AGENT_SESSION") {
+    agentSessionState = {
+      status: "IDLE",
+      taskPrompt: "",
+      currentStep: 0,
+      maxSteps: 8,
+      stepsHistory: [],
+      latestCapture: null,
+      activityLogs: [],
+      summary: ""
+    };
+    syncSessionState();
     sendResponse({ ok: true });
-    return true;
+    return false;
   }
 
   if (message.type === "DISPATCH_TASK") {
@@ -377,16 +529,33 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "OPEN_OPTIONS") {
     chrome.runtime.openOptionsPage();
     sendResponse({ ok: true });
-    return true;
+    return false;
+  }
+
+  if (message.type === "OPEN_SIDE_PANEL") {
+    if (chrome.sidePanel && chrome.sidePanel.open) {
+      chrome.tabs.query({ active: true, currentWindow: true }, (tabs) => {
+        if (tabs[0]) {
+          chrome.sidePanel.open({ windowId: tabs[0].windowId })
+            .then(() => sendResponse({ ok: true }))
+            .catch((err) => sendResponse({ ok: false, error: err.message }));
+        } else {
+          sendResponse({ ok: false, error: "No active window" });
+        }
+      });
+      return true;
+    }
+    sendResponse({ ok: false, error: "Side panel not supported" });
+    return false;
   }
 
   if (message.type === "OPEN_POPUP") {
     if (chrome.sidePanel && chrome.sidePanel.open && sender.tab) {
-      chrome.sidePanel.open({ tabId: sender.tab.id });
+      chrome.sidePanel.open({ tabId: sender.tab.id }).catch(() => {});
     }
     sendResponse({ ok: true });
-    return true;
+    return false;
   }
 
-  return true;
+  return false;
 });

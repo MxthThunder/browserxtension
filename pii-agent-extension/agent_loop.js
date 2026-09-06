@@ -18,6 +18,7 @@ import { permissionEngine, PERMISSION_OUTCOMES } from "./permission_engine.js";
 import { promptGuard } from "./prompt_guard.js";
 import { semanticRedactor } from "./semantic_redactor.js";
 import { vault } from "./vault.js";
+import { defaultPrivacyReasoner } from "./local_reasoner.js";
 
 /**
  * De-anonymizes an action value locally before any DOM insertion.
@@ -125,7 +126,7 @@ export class AutonomousAgentLoop {
         }
 
         // ── Phase 1: Zero-Leakage Viewport Capture & Local Perception ──────────
-        const captureResult = await this._captureAndRedact(options);
+        const captureResult = await this._captureAndRedact({ ...options, userTask });
         if (!captureResult || !captureResult.ok) {
           throw new Error(`Capture and local perception failed: ${captureResult?.error || "Unknown"}`);
         }
@@ -136,7 +137,7 @@ export class AutonomousAgentLoop {
         try {
           const tab = await this._getActiveTab();
           if (tab && tab.id) {
-            const domResp = await chrome.tabs.sendMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
+            const domResp = await this._sendTabMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
             if (domResp) {
               if (domResp.interactiveElements) domElements = domResp.interactiveElements;
               if (domResp.structuredData) structuredData = domResp.structuredData;
@@ -149,6 +150,37 @@ export class AutonomousAgentLoop {
         // Apply Prompt-Guard & Semantic Redaction to DOM text
         const guardedElements = promptGuard.sanitizeElements(domElements);
         const sanitizedElements = semanticRedactor.sanitizePerceptionElements(guardedElements);
+
+        // Local Privacy Reasoner (Qwen on ambiguous situations) — single BATCH call
+        const ambiguousInputs = sanitizedElements.filter((el) => {
+          if (el.isRedacted) return false;
+          const tag = (el.tagName || el.tag || "").toLowerCase();
+          const isInput = tag === "input" || tag === "textarea" || tag === "select" || Boolean(el.isContentEditable);
+          if (!isInput) return false;
+          const text = [el.label, el.placeholder, el.name, el.id, el.text].filter(Boolean).join(" ").toLowerCase();
+          return /recovery|seed|private.?key|secret.?key|medical|prescription|diagnosis|salary|payroll|telemetry|launch.?code|confidential|kyc|identity/i.test(text);
+        });
+
+        if (ambiguousInputs.length > 0) {
+          // Use the batch resolver — one LLM call covers all elements
+          const batchManifest = {
+            ambiguousElements: ambiguousInputs.map((el) => ({ element: el })),
+            decisions: ambiguousInputs.map((el, i) => ({ elementId: el.id || `el_${i}`, element: el })),
+          };
+          const resolved = await defaultPrivacyReasoner.resolveManifestAmbiguities(batchManifest, { userTask });
+          for (const decision of (resolved.decisions || [])) {
+            const el = sanitizedElements.find((e) => (e.id || "") === String(decision.elementId));
+            if (el && (decision.decision === "BLOCK" || decision.decision === "REDACT")) {
+              el.value = semanticRedactor.anonymize(el.value || "SENSITIVE", decision.category || "custom");
+              el.isRedacted = true;
+            }
+            if (el) {
+              el.evaluated_by = decision.resolvedBy || "qwen-local-reasoner";
+              el.privacyDecision = decision.decision;
+            }
+          }
+        }
+
 
         // Build concise action history of previous steps in this session
         const historyDigest = this.stepHistory.map((s) => ({
@@ -241,7 +273,7 @@ export class AutonomousAgentLoop {
         try {
           const tab = await this._getActiveTab();
           if (tab && tab.id) {
-            executionReport = await chrome.tabs.sendMessage(tab.id, {
+            executionReport = await this._sendTabMessage(tab.id, {
               type: "EXECUTE_ACTION",
               action: execAction
             });
@@ -317,10 +349,37 @@ export class AutonomousAgentLoop {
 
   async _getActiveTab() {
     if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.query) {
-      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+      if (!tab || !tab.id || !tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) {
+        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+        tab = tabs[0];
+      }
       return tab;
     }
     return null;
+  }
+
+  async _sendTabMessage(tabId, message) {
+    try {
+      return await chrome.tabs.sendMessage(tabId, message);
+    } catch (err) {
+      if (
+        err.message?.includes("Receiving end does not exist") ||
+        err.message?.includes("Could not establish connection")
+      ) {
+        try {
+          await chrome.scripting.executeScript({
+            target: { tabId },
+            files: ["content.js"],
+          });
+          await new Promise((r) => setTimeout(r, 120));
+          return await chrome.tabs.sendMessage(tabId, message);
+        } catch (injectErr) {
+          console.warn("[AgentLoop] Could not re-inject content script:", injectErr.message);
+        }
+      }
+      throw err;
+    }
   }
 
   async _captureAndRedact(options = {}) {
@@ -333,8 +392,20 @@ export class AutonomousAgentLoop {
 
     return new Promise((resolve) => {
       if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+        // Timeout guard: OWL-ViT first-run can take up to 60s for model download
+        const timer = setTimeout(() => {
+          console.warn("[AgentLoop] CAPTURE_AND_REDACT timed out after 90s");
+          resolve({ ok: false, error: "Capture timed out (90s) — offscreen may be loading models" });
+        }, 90000);
+
         chrome.runtime.sendMessage({ type: "CAPTURE_AND_REDACT", options }, (response) => {
-          resolve(response || { ok: false, error: "Empty capture response" });
+          clearTimeout(timer);
+          if (chrome.runtime.lastError) {
+            console.warn("[AgentLoop] Capture sendMessage error:", chrome.runtime.lastError.message);
+            resolve({ ok: false, error: chrome.runtime.lastError.message });
+          } else {
+            resolve(response || { ok: false, error: "Empty capture response" });
+          }
         });
       } else {
         resolve({

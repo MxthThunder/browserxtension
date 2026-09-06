@@ -237,7 +237,7 @@ async def try_ollama_qwen(
     if not await is_ollama_available(ollama_host):
         return None
 
-    model = os.getenv("OLLAMA_MODEL", "qwen2.5:0.5b")
+    model = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
 
     elements_digest = [
         {
@@ -388,9 +388,9 @@ async def try_gemini(
             }
         })
 
-    primary_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    primary_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
     candidate_models = [primary_model]
-    for fallback in ["gemini-3.5-flash-lite", "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-3.6-flash"]:
+    for fallback in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-2.5-flash"]:
         if fallback not in candidate_models:
             candidate_models.append(fallback)
 
@@ -813,8 +813,8 @@ async def act_endpoint(payload: ActRequest):
         if action:
             model_used = "openai"
 
-    # Priority 3: Local Ollama / Qwen model (only if explicitly selected or offline fallback without cloud keys)
-    if not action and (payload.model_provider == "ollama_qwen" or payload.model_provider == "auto"):
+    # Priority 3: Local Ollama / Qwen model (ONLY if explicitly selected by user)
+    if not action and payload.model_provider == "ollama_qwen":
         print("[Reasoner] Delegating action planning to Local Ollama Qwen...")
         action = await try_ollama_qwen(
             payload.task,

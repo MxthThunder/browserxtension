@@ -85,6 +85,13 @@ export class SemanticRedactor {
   }
 
   /**
+   * Alias for getOrCreatePlaceholder to cleanly anonymize a value.
+   */
+  anonymize(rawValue, type = REDACTION_TYPES.GENERIC_PII) {
+    return this.getOrCreatePlaceholder(rawValue, type);
+  }
+
+  /**
    * De-anonymizes a string or object by restoring placeholders to raw values strictly locally.
    * NEVER pass the de-anonymized output over the network.
    * @param {string} text Sanitized text with placeholders
