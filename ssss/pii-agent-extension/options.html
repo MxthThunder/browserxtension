@@ -1,0 +1,367 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="color-scheme" content="dark" />
+  <title>Privacy Agent settings</title>
+  <link rel="stylesheet" href="options.css" />
+</head>
+<body>
+  <main class="page">
+
+    <!-- The whole basic experience starts here: one statement, one control. -->
+    <section class="hero" id="hero">
+      <button
+        id="toggleProtection"
+        class="hero-toggle"
+        data-state="on"
+        role="switch"
+        aria-checked="true"
+        aria-labelledby="statusText"
+      >
+        <span class="hero-toggle-track"><span class="hero-toggle-thumb"></span></span>
+      </button>
+      <div class="hero-body">
+        <h1 class="hero-status" id="statusText">Protection is on</h1>
+        <p class="hero-desc">
+          Passwords, card numbers, ID numbers and faces are covered on this
+          device before anything is sent to the agent.
+        </p>
+        <p class="hero-stat" id="lifetimeStat">Checking history…</p>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><h2>What gets hidden</h2></div>
+      <p class="section-note">Switch something off only if the agent needs to read it.</p>
+
+      <div class="row">
+        <div class="row-text">
+          <div class="row-label">Passwords and PINs</div>
+          <div class="row-sub">Password fields, one-time codes, security answers.</div>
+        </div>
+        <span class="switch">
+          <input type="checkbox" id="catPasswords" checked />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </span>
+      </div>
+      <div class="row">
+        <div class="row-text">
+          <div class="row-label">Card numbers</div>
+          <div class="row-sub">Card number, expiry date and CVV fields.</div>
+        </div>
+        <span class="switch">
+          <input type="checkbox" id="catCreditCards" checked />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </span>
+      </div>
+
+      <div class="row">
+        <div class="row-text">
+          <div class="row-label">ID numbers</div>
+          <div class="row-sub">Aadhaar, PAN, passport and SSN.</div>
+        </div>
+        <span class="switch">
+          <input type="checkbox" id="catGovIds" checked />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </span>
+      </div>
+
+      <div class="row">
+        <div class="row-text">
+          <div class="row-label">Faces and people</div>
+          <div class="row-sub">Webcam feeds, profile pictures, people in images.</div>
+        </div>
+        <span class="switch">
+          <input type="checkbox" id="catFaces" checked />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </span>
+      </div>
+
+      <div class="row">
+        <div class="row-text">
+          <div class="row-label">Phone, email and address</div>
+          <div class="row-sub">Contact details in text and in form fields.</div>
+        </div>
+        <span class="switch">
+          <input type="checkbox" id="catContactInfo" checked />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </span>
+      </div>
+
+      <div class="row">
+        <div class="row-text">
+          <div class="row-label">Screens inside photos</div>
+          <div class="row-sub">Monitors and phone screens visible in an image.</div>
+        </div>
+        <span class="switch">
+          <input type="checkbox" id="catScreens" checked />
+          <span class="switch-track"><span class="switch-thumb"></span></span>
+        </span>
+      </div>
+
+    </section>
+    <section class="section">
+      <div class="section-head"><h2>Your saved details</h2></div>
+      <p class="section-note">
+        Encrypted and kept on this device. The agent types these in for you;
+        the server only ever receives a placeholder such as
+        <code>{{VAULT:contact.email}}</code>, never the value itself.
+      </p>
+
+      <p class="status" id="vaultStatusText"><span class="dot" id="vaultStatusDot"></span>Opening…</p>
+
+      <div class="chips" id="vaultPresets">
+        <button class="chip vault-preset" data-cat="personal" data-key="first_name">First name</button>
+        <button class="chip vault-preset" data-cat="personal" data-key="last_name">Last name</button>
+        <button class="chip vault-preset" data-cat="contact" data-key="email">Email</button>
+        <button class="chip vault-preset" data-cat="contact" data-key="phone">Phone</button>
+        <button class="chip vault-preset" data-cat="address" data-key="street">Street</button>
+        <button class="chip vault-preset" data-cat="address" data-key="city">City</button>
+        <button class="chip vault-preset" data-cat="address" data-key="zip">Pincode</button>
+        <button class="chip vault-preset" data-cat="credentials" data-key="username">Username</button>
+        <button class="chip vault-preset" data-cat="gov_id" data-key="aadhaar">Aadhaar</button>
+        <button class="chip vault-preset" data-cat="gov_id" data-key="pan">PAN</button>
+      </div>
+
+      <div class="inline">
+        <select id="vaultCategory" class="select inline-narrow">
+          <option value="personal">Personal</option>
+          <option value="contact">Contact</option>
+          <option value="address">Address</option>
+          <option value="credentials">Sign-in</option>
+          <option value="financial">Payment</option>
+          <option value="gov_id">ID document</option>
+          <option value="custom">Other</option>
+        </select>
+        <input type="text" id="vaultKey" class="input" placeholder="What is it, e.g. email" />
+        <input type="text" id="vaultValue" class="input" placeholder="Value" />
+        <button id="btnAddVaultEntry" class="btn">Save</button>
+      </div>
+
+      <ul class="list" id="vaultList">
+        <li class="empty">Nothing saved yet.</li>
+      </ul>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><h2>Sites to skip</h2></div>
+      <p class="section-note">
+        Protection stays off on these sites. Add one only if a site stops
+        working properly.
+      </p>
+      <div class="inline">
+        <input type="text" id="txtNewDomain" class="input" placeholder="example.com" />
+        <button id="btnAddDomain" class="btn">Add</button>
+      </div>
+      <ul class="list" id="domainList"></ul>
+    </section>
+
+    <section class="section">
+      <div class="section-head"><h2>Shortcuts</h2></div>
+      <div class="row">
+        <div class="row-text"><div class="row-label">Turn protection on or off</div></div>
+        <kbd>Ctrl + Shift + P</kbd>
+      </div>
+      <div class="row">
+        <div class="row-text"><div class="row-label">Capture and hide the screen</div></div>
+        <kbd>Ctrl + Shift + S</kbd>
+      </div>
+      <p class="hint">Change these in Chrome under Extensions, Keyboard shortcuts.</p>
+    </section>
+    <label class="advanced-row">
+      <span class="row-text">
+        Advanced
+        <span class="row-sub">Engine, server, history and the finer redaction controls.</span>
+      </span>
+      <span class="switch">
+        <input type="checkbox" id="chkAdvanced" />
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </span>
+    </label>
+
+    <div class="advanced-panel" id="advancedPanel">
+      <div class="advanced-inner">
+
+        <section class="section">
+          <div class="section-head"><h2>How it hides</h2></div>
+
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Stop the agent if hiding fails</div>
+              <div class="row-sub">
+                If the model or the mask fails, block the action instead of
+                sending a page that might still show something.
+              </div>
+            </div>
+            <span class="switch">
+              <input type="checkbox" id="chkFailClosed" checked />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </span>
+          </div>
+
+          <div class="row">
+            <div class="row-text">
+              <div class="row-label">Show a badge on protected pages</div>
+              <div class="row-sub">A small marker in the corner of every page being watched.</div>
+            </div>
+            <span class="switch">
+              <input type="checkbox" id="chkShowPageBadge" checked />
+              <span class="switch-track"><span class="switch-thumb"></span></span>
+            </span>
+          </div>
+
+          <div class="field">
+            <div class="range-head">
+              <label class="field-label" for="numConfidence">How sure the model must be</label>
+              <span class="range-val" id="lblConfidenceVal">0.65</span>
+            </div>
+            <input type="range" id="numConfidence" class="range" min="0.30" max="0.95" step="0.05" value="0.65" />
+            <div class="range-ends"><span>Hide more</span><span>Only the obvious</span></div>
+          </div>
+
+          <div class="field">
+            <div class="range-head">
+              <label class="field-label" for="numFaceProxy">How much of a person to cover</label>
+              <span class="range-val" id="lblFaceProxyVal">30%</span>
+            </div>
+            <input type="range" id="numFaceProxy" class="range" min="0.15" max="0.50" step="0.05" value="0.30" />
+            <div class="range-ends"><span>Head only</span><span>Upper half</span></div>
+          </div>
+        </section>
+        <section class="section">
+          <div class="section-head"><h2>Where it runs</h2></div>
+
+          <div class="field">
+            <label class="field-label" for="selEngineMode">Run the model on</label>
+            <select id="selEngineMode" class="select">
+              <option value="auto">Whatever is fastest here</option>
+              <option value="webgpu">Always the graphics card</option>
+              <option value="wasm">Always the processor</option>
+            </select>
+            <span class="hint">
+              The first option uses the graphics card when the browser exposes
+              one and falls back to the processor when it does not.
+            </span>
+          </div>
+
+          <dl class="kv-list">
+            <div class="kv">
+              <dt>Graphics acceleration</dt>
+              <dd id="diagWebgpu">Checking…</dd>
+            </div>
+            <div class="kv">
+              <dt>Adapter</dt>
+              <dd id="diagGpuName">Checking…</dd>
+            </div>
+            <div class="kv">
+              <dt>Processor fallback</dt>
+              <dd id="diagWasm">Available</dd>
+            </div>
+            <div class="kv">
+              <dt>Model</dt>
+              <dd id="diagModel">OWL-ViT, zero-shot</dd>
+            </div>
+          </dl>
+
+          <div class="field">
+            <div class="btn-row">
+              <button id="btnOpenHud" class="btn">Open the live view</button>
+              <button id="btnOpenDemo" class="btn">Open the test page</button>
+            </div>
+            <span class="hint">
+              The live view puts the screen as it is next to what the agent is
+              allowed to see, with the time each step took.
+            </span>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Agent server</h2></div>
+          <p class="section-note">
+            The server plans what to click. It receives the covered page only.
+          </p>
+
+          <div class="field">
+            <label class="field-label" for="txtServerUrl">Address</label>
+            <input type="text" id="txtServerUrl" class="input mono" value="http://127.0.0.1:8001/api/act" />
+          </div>
+
+          <div class="field">
+            <label class="field-label" for="txtHealthUrl">Health check</label>
+            <div class="inline">
+              <input type="text" id="txtHealthUrl" class="input mono" value="http://127.0.0.1:8001/health" />
+              <button id="btnTestConnection" class="btn">Test</button>
+            </div>
+            <p class="status" id="connectionStatus">Not tested yet.</p>
+          </div>
+
+          <div class="field">
+            <label class="field-label" for="txtApiKey">Access key</label>
+            <input type="password" id="txtApiKey" class="input" placeholder="Only if your server asks for one" />
+          </div>
+        </section>
+        <section class="section">
+          <div class="section-head"><h2>History</h2></div>
+          <p class="section-note">
+            The most recent things covered, kept on this device and never uploaded.
+          </p>
+
+          <div class="table-wrap">
+            <table class="data">
+              <thead>
+                <tr>
+                  <th>Time</th>
+                  <th>Site</th>
+                  <th>Hidden</th>
+                  <th>Ran on</th>
+                  <th>Took</th>
+                </tr>
+              </thead>
+              <tbody id="auditTableBody"></tbody>
+            </table>
+          </div>
+
+          <div class="btn-row">
+            <button id="btnExportJson" class="btn">Export JSON</button>
+            <button id="btnExportCsv" class="btn">Export CSV</button>
+            <button id="btnClearLogs" class="btn-quiet destructive">Clear history</button>
+          </div>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Saved details, backup and locking</h2></div>
+          <div class="btn-row">
+            <button id="btnExportVault" class="btn">Export encrypted backup</button>
+            <button id="btnLockVault" class="btn">Lock now</button>
+            <button id="btnClearVault" class="btn-quiet destructive">Delete everything saved</button>
+          </div>
+          <p class="hint">
+            The backup stays encrypted with a key held by this browser profile,
+            so it can only be restored here.
+          </p>
+        </section>
+
+        <section class="section">
+          <div class="section-head"><h2>Start over</h2></div>
+          <div class="btn-row">
+            <button id="btnReset" class="btn-quiet destructive">Reset every setting to its default</button>
+          </div>
+        </section>
+
+
+      </div>
+    </div>
+    <footer class="footer">
+      <span>Privacy Agent 1.2.0</span>
+      <span>ISRO PS #26171</span>
+    </footer>
+
+    <div class="saved" id="savedNote" role="status" aria-live="polite"></div>
+
+
+
+  </main>
+  <script type="module" src="options.js"></script>
+</body>
+</html>

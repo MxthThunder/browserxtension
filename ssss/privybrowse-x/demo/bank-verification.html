@@ -1,0 +1,270 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Meridian Bank — Account Verification (SYNTHETIC DEMO)</title>
+<!--
+  ============================================================================
+  SYNTHETIC TEST PAGE. Every identifier below is fabricated.
+
+  The Aadhaar numbers carry VALID Verhoeff checksums and the card numbers carry
+  VALID Luhn checksums, because the detector gates on those checksums to keep
+  its false-positive rate down. A page full of random digits would not exercise
+  the real code path and would make the demo look better than it is.
+
+  The page is built to exercise every detection layer AND to contain deliberate
+  traps — see the "control" section near the bottom. Showing that the detector
+  ignores an order number and a price is what makes the precision claim
+  credible; a page where everything is PII proves nothing about precision.
+  ============================================================================
+-->
+<style>
+  :root { color-scheme: light; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; background: #eef1f5; color: #1a1d23;
+    font: 15px/1.6 -apple-system, "Segoe UI", system-ui, sans-serif;
+  }
+  .warn {
+    background: #fff4d6; border-bottom: 1px solid #e8d9a8; color: #7a5c00;
+    padding: 8px 20px; font-size: 12px; text-align: center;
+  }
+  header {
+    background: #0f2f5c; color: #fff; padding: 18px 28px;
+    display: flex; align-items: center; gap: 12px;
+  }
+  header .logo { font-weight: 700; font-size: 17px; letter-spacing: -0.01em; }
+  header .tag { font-size: 12px; opacity: .75; }
+  main { max-width: 940px; margin: 24px auto; padding: 0 20px; display: grid; gap: 20px; }
+  .card {
+    background: #fff; border: 1px solid #dbe0e8; border-radius: 10px; padding: 22px;
+  }
+  h2 { margin: 0 0 4px; font-size: 15px; }
+  .hint { color: #6b7280; font-size: 12.5px; margin: 0 0 16px; }
+  .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 14px; }
+  @media (max-width: 700px) { .grid { grid-template-columns: 1fr; } }
+  label { display: block; font-size: 12.5px; font-weight: 600; margin-bottom: 4px; color: #374151; }
+  input, select {
+    width: 100%; padding: 9px 11px; font: inherit; font-size: 14px;
+    border: 1px solid #cbd5e1; border-radius: 6px; background: #fff;
+  }
+  input:focus { outline: 2px solid #0f2f5c; outline-offset: -1px; }
+  .full { grid-column: 1 / -1; }
+  button.submit {
+    background: #0f2f5c; color: #fff; border: 0; border-radius: 6px;
+    padding: 10px 22px; font: inherit; font-weight: 600; cursor: pointer;
+  }
+  dl { display: grid; grid-template-columns: 190px 1fr; gap: 8px 16px; margin: 0; }
+  dt { color: #6b7280; font-size: 13px; }
+  dd { margin: 0; font-family: ui-monospace, "SF Mono", Menlo, monospace; font-size: 13.5px; }
+  video, .cam {
+    width: 320px; height: 240px; border-radius: 8px; background: #111;
+    display: block; object-fit: cover;
+  }
+  .camrow { display: flex; gap: 18px; align-items: flex-start; flex-wrap: wrap; }
+  .control { background: #f0fdf4; border-color: #bbf7d0; }
+  .control dd { color: #14532d; }
+  footer { text-align: center; color: #6b7280; font-size: 12px; padding: 20px; }
+  .pill { display: inline-block; font: 600 10px/1 ui-monospace, monospace;
+          padding: 3px 6px; border-radius: 3px; background: #e0e7ff; color: #3730a3; }
+</style>
+</head>
+<body>
+
+<div class="warn">
+  <strong>SYNTHETIC TEST PAGE</strong> — all identifiers are fabricated for
+  testing PII detection. Checksums are valid so the detector's validation logic
+  is genuinely exercised. No real personal data appears anywhere on this page.
+</div>
+
+<header>
+  <span class="logo">Meridian Bank</span>
+  <span class="tag">Account verification portal</span>
+</header>
+
+<main>
+
+  <!-- ================= L1 + L2: form fields ================= -->
+  <section class="card">
+    <h2>Identity verification</h2>
+    <p class="hint">
+      Exercises detection layers <span class="pill">L1 type=password</span>
+      <span class="pill">L2 autocomplete</span> <span class="pill">L3 label/name</span>
+    </p>
+
+    <div class="grid">
+      <div>
+        <label for="user">Username</label>
+        <input id="user" name="username" autocomplete="username" value="a.mehta" />
+      </div>
+      <div>
+        <label for="pw">Password</label>
+        <!-- L1: the highest-confidence signal there is -->
+        <input id="pw" type="password" name="password" autocomplete="current-password" value="Str0ngPassPhrase!" />
+      </div>
+
+      <div>
+        <label for="email">Email address</label>
+        <!-- L2 via autocomplete, and L4 via the value itself -->
+        <input id="email" type="email" name="email" autocomplete="email" value="arjun.mehta@example.in" />
+      </div>
+      <div>
+        <label for="phone">Mobile number</label>
+        <input id="phone" type="tel" name="mobile" autocomplete="tel" value="9876543210" />
+      </div>
+
+      <div>
+        <label for="aadhaar">Aadhaar number</label>
+        <!-- L3 via the name, L4 via a Verhoeff-valid synthetic value -->
+        <input id="aadhaar" name="aadhaar_no" value="7412 8536 0906" />
+      </div>
+      <div>
+        <label for="pan">PAN</label>
+        <input id="pan" name="pan_card" value="ABCDE1234F" />
+      </div>
+
+      <div>
+        <label for="dob">Date of birth</label>
+        <input id="dob" type="date" name="dob" autocomplete="bday" value="1994-07-19" />
+      </div>
+      <div>
+        <label for="otp">One-time code</label>
+        <input id="otp" name="otp" autocomplete="one-time-code" inputmode="numeric" value="418293" />
+      </div>
+
+      <div class="full">
+        <label for="addr">Residential address</label>
+        <input id="addr" name="street_address" autocomplete="street-address"
+               value="Flat 402, Sundar Residency, Indiranagar, Bengaluru 560038" />
+      </div>
+    </div>
+
+    <p style="margin-top:18px"><button class="submit" id="verifyBtn">Verify account</button></p>
+  </section>
+
+  <!-- ================= L2: payment ================= -->
+  <section class="card">
+    <h2>Payment method</h2>
+    <p class="hint">Card number carries a valid Luhn checksum, so the Luhn gate is genuinely tested.</p>
+    <div class="grid">
+      <div class="full">
+        <label for="cc">Card number</label>
+        <input id="cc" name="cc-number" autocomplete="cc-number" value="4111 1111 1111 1111" />
+      </div>
+      <div>
+        <label for="ccexp">Expiry</label>
+        <input id="ccexp" name="cc-exp" autocomplete="cc-exp" value="08/29" />
+      </div>
+      <div>
+        <label for="cvv">CVV</label>
+        <input id="cvv" name="cvv" autocomplete="cc-csc" value="317" />
+      </div>
+      <div>
+        <label for="upi">UPI ID</label>
+        <input id="upi" name="upi_id" value="arjun.mehta@okicici" />
+      </div>
+      <div>
+        <label for="ifsc">IFSC code</label>
+        <input id="ifsc" name="ifsc" value="HDFC0001234" />
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= L4: rendered text, no attribute hints ================= -->
+  <section class="card">
+    <h2>Account summary</h2>
+    <p class="hint">
+      <span class="pill">L4 value/text regex</span>
+      No form fields here at all — this is PII rendered as plain text, which the
+      DOM-attribute layers cannot see. This is the section that proves the text
+      scanner matters.
+    </p>
+    <dl>
+      <dt>Registered email</dt>       <dd>arjun.mehta@example.in</dd>
+      <dt>Registered mobile</dt>      <dd>+91 9876543210</dd>
+      <dt>Aadhaar on file</dt>        <dd>7412 8536 1907</dd>
+      <dt>PAN on file</dt>            <dd>QWERT5678G</dd>
+      <dt>Primary account</dt>        <dd>IFSC SBIN0001234</dd>
+      <dt>Linked UPI</dt>             <dd>arjun@paytm</dd>
+      <dt>Backup card</dt>            <dd>5500 0055 5555 5559</dd>
+    </dl>
+  </section>
+
+  <!-- ================= Vision layer ================= -->
+  <section class="card">
+    <h2>Live identity check</h2>
+    <p class="hint">
+      <span class="pill">Vision layer</span>
+      A webcam feed has no DOM structure describing its contents — the pixels are
+      opaque to every attribute-based rule above. This is precisely the gap the
+      local vision model fills.
+    </p>
+    <div class="camrow">
+      <div>
+        <video id="cam" class="cam" autoplay muted playsinline></video>
+        <p style="font-size:12px;color:#6b7280;margin-top:6px">
+          <button id="startCam" style="font:inherit;padding:5px 10px;cursor:pointer">Start camera</button>
+          &nbsp;<span id="camStatus">camera off</span>
+        </p>
+      </div>
+      <div style="max-width:340px;font-size:13px;color:#4b5563">
+        <p style="margin-top:0"><strong>What to point out during the demo:</strong>
+        every field above is caught by cheap, deterministic DOM rules with
+        essentially perfect precision. Nothing in this video panel is. Run the
+        HUD with the camera on and the face is masked in the transmitted frame
+        while remaining visible in the local-only raw panel.</p>
+        <p><em>Honest caveat worth saying aloud:</em> yolos-tiny is a COCO
+        detector, so it returns a whole-body <code>person</code> box rather than
+        a tight face box. A dedicated face model would mask more precisely.</p>
+      </div>
+    </div>
+  </section>
+
+  <!-- ================= CONTROL: must NOT be flagged ================= -->
+  <section class="card control">
+    <h2>Control group — these must NOT be redacted</h2>
+    <p class="hint">
+      Precision is 20% of the score, and a detector that flags everything scores
+      perfect recall with useless precision. These are the false-positive traps:
+      numbers that look like PII but are not. If the overlay boxes anything in
+      this section, the detector needs tightening.
+    </p>
+    <dl>
+      <dt>Order number (16 digits, fails Luhn)</dt>  <dd>1234 5678 1234 5678</dd>
+      <dt>Order number (12 digits, fails Verhoeff)</dt><dd>2345 6789 0123</dd>
+      <dt>Product price</dt>                          <dd>52,999</dd>
+      <dt>Ticket reference</dt>                       <dd>REF-2026-00814</dd>
+      <dt>Product SKU</dt>                            <dd>TPX1C-16GB-512</dd>
+      <dt>Support hours</dt>                          <dd>0900 to 1800 IST</dd>
+      <dt>Version string</dt>                         <dd>v4.11.2 build 20260415</dd>
+      <dt>Branch code (not an IFSC)</dt>              <dd>BR-4471</dd>
+    </dl>
+  </section>
+
+</main>
+
+<footer>Meridian Bank is a fictional institution. This page exists solely to test PII detection.</footer>
+
+<script>
+  document.getElementById("verifyBtn").addEventListener("click", (e) => {
+    e.preventDefault();
+    alert("Synthetic demo — no data is submitted anywhere.");
+  });
+
+  // The camera is opt-in: nobody wants a webcam light coming on unannounced,
+  // least of all during a judged demo.
+  const cam = document.getElementById("cam");
+  const camStatus = document.getElementById("camStatus");
+  document.getElementById("startCam").addEventListener("click", async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ video: { width: 320, height: 240 } });
+      cam.srcObject = stream;
+      camStatus.textContent = "camera live — vision layer now has something to find";
+    } catch (err) {
+      camStatus.textContent = "camera unavailable: " + err.message;
+    }
+  });
+</script>
+</body>
+</html>

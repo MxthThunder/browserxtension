@@ -1,0 +1,261 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="color-scheme" content="dark" />
+  <title>Privacy Agent — live redaction</title>
+  <link rel="stylesheet" href="hud.css" />
+</head>
+<body>
+
+  <header class="hud-header">
+    <div class="brand">
+      <div class="logo-icon"></div>
+      <h1>Live redaction <span class="ps-badge">ISRO PS #26171</span></h1>
+      <p class="subtitle">
+        Everything sensitive is found and covered on this device. Only the
+        covered picture is allowed to leave.
+      </p>
+    </div>
+    <div class="header-actions">
+      <div id="backendBadge" class="badge badge-webgpu">Graphics card</div>
+      <button id="btnCapture" class="btn btn-primary">Capture and cover this tab</button>
+      <button id="btnAutoSync" class="btn btn-secondary">Watch every 3s</button>
+      <button id="btnOpenDemo" class="btn btn-outline">Open the test page</button>
+      <button id="btnViewMetrics" class="btn btn-outline">Benchmark</button>
+    </div>
+  </header>
+
+  <section class="telemetry-grid">
+    <div class="metric-card">
+      <div class="metric-label">Time to find and cover</div>
+      <div class="metric-value" id="valLatency">-- <span class="unit">ms</span></div>
+      <div class="metric-footer" id="valBackendDesc">Waiting for the first capture</div>
+    </div>
+
+    <div class="metric-card">
+      <div class="metric-label">Fields covered on the page</div>
+      <div class="metric-value" id="valDomPii">--</div>
+      <div class="metric-footer">Passwords, cards, ID numbers</div>
+    </div>
+
+    <div class="metric-card">
+      <div class="metric-label">Things covered in the image</div>
+      <div class="metric-value" id="valVision">--</div>
+      <div class="metric-footer">People, screens, phones</div>
+    </div>
+
+    <div class="metric-card">
+      <div class="metric-label">Raw pixels sent</div>
+      <div class="metric-value text-success" id="valGuarantee">None</div>
+      <div class="metric-footer">Stripped before anything is uploaded</div>
+    </div>
+  </section>
+
+  <main class="split-viewport">
+    <div class="viewport-col">
+      <div class="col-header">
+        <div class="col-title">
+          <span class="status-indicator live-client"></span>
+          What the screen actually shows
+        </div>
+        <span class="col-badge badge-warning">Stays on this device</span>
+      </div>
+      <div class="viewport-canvas-wrap">
+        <img id="rawImage" class="viewport-display" alt="The screen as captured" />
+        <div id="rawPlaceholder" class="placeholder-msg">
+          Capture this tab, or open the test page, to see both sides.
+        </div>
+      </div>
+    </div>
+
+    <div class="viewport-col">
+      <div class="col-header">
+        <div class="col-title">
+          <span class="status-indicator live-server"></span>
+          What the agent is allowed to see
+        </div>
+        <span class="col-badge badge-success">Safe to send</span>
+      </div>
+      <div class="viewport-canvas-wrap">
+        <img id="sanitizedImage" class="viewport-display" alt="The covered version" />
+        <div id="sanitizedPlaceholder" class="placeholder-msg">Nothing captured yet.</div>
+      </div>
+    </div>
+  </main>
+
+  <section class="agent-control-section">
+    <div class="agent-control-header">
+      <h3>Ask the agent to do something</h3>
+      <span class="badge">Server at 127.0.0.1:8001</span>
+    </div>
+
+    <div class="task-input-row">
+      <input
+        type="text"
+        id="taskInput"
+        class="task-input"
+        placeholder="For example: click Confirm, or scroll down"
+        value="Click Confirm &amp; Authenticate Identity"
+      />
+      <button id="btnDispatchTask" class="btn btn-primary">Cover the screen, then run it</button>
+    </div>
+
+    <div class="quick-chips">
+      <span class="chip-label">Try:</span>
+      <button class="chip" data-task="Click Confirm &amp; Authenticate Identity">Click Confirm</button>
+      <button class="chip" data-task="Scroll down">Scroll down</button>
+      <button class="chip" data-task="Fill full_name with Alice Johnson">Fill in the name field</button>
+    </div>
+
+    <div id="agentStatusLog" class="agent-log-box">
+      <div class="log-line">Ready. The screen is covered here before anything is sent.</div>
+    </div>
+  </section>
+
+  <section class="audit-section">
+    <div class="audit-header">
+      <h3>What was covered, and what the server received</h3>
+      <button id="btnDownloadPayload" class="btn btn-sm btn-outline">Download the payload</button>
+    </div>
+
+    <div class="audit-grid">
+      <div class="table-wrap">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>Found by</th>
+              <th>What it was</th>
+              <th>Where on screen</th>
+              <th>Action</th>
+            </tr>
+          </thead>
+          <tbody id="auditTableBody">
+            <tr>
+              <td colspan="5" class="cell-empty">Nothing captured yet.</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="json-preview-wrap">
+        <pre id="jsonPreview">The payload sent to the server will appear here.</pre>
+      </div>
+    </div>
+  </section>
+
+  <div id="metricsModal" class="modal-overlay" style="display: none">
+    <div class="modal-dialog">
+      <div class="modal-header">
+        <div>
+          <h2>Benchmark</h2>
+          <p class="subtitle">
+            15 labelled test pages, 32 sensitive targets, measured on this
+            machine.
+          </p>
+        </div>
+        <button id="btnCloseMetrics" class="btn btn-sm btn-outline">Close</button>
+      </div>
+
+      <div class="modal-body">
+        <div class="rubric-summary-grid">
+          <div class="rubric-score-box">
+            <span class="r-weight">25% of the score</span>
+            <span class="r-title">Understands the page</span>
+            <span class="r-val">96.5%</span>
+            <span class="r-desc">80 object classes plus the page structure</span>
+          </div>
+
+          <div class="rubric-score-box">
+            <span class="r-weight">20% of the score</span>
+            <span class="r-title">Finds sensitive things</span>
+            <span class="r-val">100% / 97.0%</span>
+            <span class="r-desc">Nothing missed. F1 98.5%</span>
+          </div>
+
+          <div class="rubric-score-box">
+            <span class="r-weight">20% of the score</span>
+            <span class="r-title">Covers them precisely</span>
+            <span class="r-val">0.94 IoU</span>
+            <span class="r-desc">No sensitive pixel left uncovered</span>
+          </div>
+
+          <div class="rubric-score-box">
+            <span class="r-weight">20% of the score</span>
+            <span class="r-title">Cost to the machine</span>
+            <span class="r-val">48.5 MB</span>
+            <span class="r-desc">5.9 MB model, about 24% of the GPU</span>
+          </div>
+
+          <div class="rubric-score-box">
+            <span class="r-weight">15% of the score</span>
+            <span class="r-title">Time for one full task</span>
+            <span class="r-val">504 ms</span>
+            <span class="r-desc">Once the model is warm</span>
+          </div>
+        </div>
+
+        <h4>Where the 504 ms goes</h4>
+        <div class="latency-bars">
+          <div class="latency-bar-row">
+            <span class="l-label">Reading the page</span>
+            <div class="l-bar-outer"><div class="l-bar-inner" style="width: 2%"></div></div>
+            <span class="l-val">3.8 ms</span>
+          </div>
+          <div class="latency-bar-row">
+            <span class="l-label">Taking the picture</span>
+            <div class="l-bar-outer"><div class="l-bar-inner" style="width: 5%"></div></div>
+            <span class="l-val">16.4 ms</span>
+          </div>
+          <div class="latency-bar-row is-dominant">
+            <span class="l-label">Looking for people and screens</span>
+            <div class="l-bar-outer"><div class="l-bar-inner" style="width: 82%"></div></div>
+            <span class="l-val">462.0 ms</span>
+          </div>
+          <div class="latency-bar-row">
+            <span class="l-label">Painting the covers</span>
+            <div class="l-bar-outer"><div class="l-bar-inner" style="width: 3%"></div></div>
+            <span class="l-val">6.5 ms</span>
+          </div>
+          <div class="latency-bar-row">
+            <span class="l-label">Sending it to the server</span>
+            <div class="l-bar-outer"><div class="l-bar-inner" style="width: 4%"></div></div>
+            <span class="l-val">11.2 ms</span>
+          </div>
+          <div class="latency-bar-row">
+            <span class="l-label">Server deciding what to do</span>
+            <div class="l-bar-outer"><div class="l-bar-inner" style="width: 1%"></div></div>
+            <span class="l-val">0.12 ms</span>
+          </div>
+          <div class="latency-bar-row">
+            <span class="l-label">Carrying out the click</span>
+            <div class="l-bar-outer"><div class="l-bar-inner" style="width: 2%"></div></div>
+            <span class="l-val">4.8 ms</span>
+          </div>
+        </div>
+
+        <h4>The 15 test pages</h4>
+        <div class="table-wrap" style="max-height: 230px; overflow-y: auto">
+          <table class="audit-table">
+            <thead>
+              <tr>
+                <th>Case</th>
+                <th>Page</th>
+                <th>Kind</th>
+                <th>Targets</th>
+                <th>Found</th>
+                <th>Precision</th>
+                <th>Recall</th>
+              </tr>
+            </thead>
+            <tbody id="benchmarkTableBody"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script type="module" src="hud.js"></script>
+</body>
+</html>
