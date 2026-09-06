@@ -170,7 +170,11 @@ async function getActiveTab() {
   let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
   if (!tab || !tab.id || !tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    tab = tabs[0];
+    tab = tabs.find((t) => t.url && !t.url.startsWith("chrome://") && !t.url.startsWith("chrome-extension://")) || tabs[0];
+  }
+  if (!tab || !tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) {
+    const allTabs = await chrome.tabs.query({});
+    tab = allTabs.find((t) => t.url && (t.url.startsWith("http://") || t.url.startsWith("https://") || t.url.includes("demo.html"))) || tab;
   }
   return tab;
 }
@@ -216,10 +220,24 @@ function isDomainWhitelisted(url, whitelist = []) {
  */
 async function captureAndRedactActiveTab(options = {}) {
   const settings = await getSettings();
-  const tab = await getActiveTab();
+  let tab = null;
+  if (options.tabId) {
+    try { tab = await chrome.tabs.get(options.tabId); } catch {}
+  }
+  if (!tab) {
+    tab = await getActiveTab();
+  }
 
   if (!tab || !tab.id) {
     throw new Error("No active tab found to capture.");
+  }
+
+  // Ensure target tab is active in its window before capturing
+  if (!tab.active) {
+    try {
+      await chrome.tabs.update(tab.id, { active: true });
+      await new Promise((r) => setTimeout(r, 120));
+    } catch {}
   }
 
   // Check domain allowlist

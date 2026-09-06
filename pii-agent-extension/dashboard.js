@@ -90,7 +90,9 @@ async function probeHardware() {
 async function loadDashboardData() {
   const [logs, sessionResp] = await Promise.all([
     getAuditLogs(),
-    chrome.runtime.sendMessage({ type: "GET_AGENT_SESSION_STATE" }).catch(() => ({ ok: false }))
+    (typeof chrome !== "undefined" && chrome.runtime?.sendMessage)
+      ? chrome.runtime.sendMessage({ type: "GET_AGENT_SESSION_STATE" }).catch(() => ({ ok: false }))
+      : Promise.resolve({ ok: false })
   ]);
 
   const session = sessionResp?.session || {};

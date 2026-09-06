@@ -96,7 +96,9 @@
         "demo.html",
         "dashboard.html",
         "dashboard.js",
-        "dashboard.css",
+        "hud.html",
+        "hud.js",
+        "hud.css",
         "mission_console.html",
         "openmct_telemetry_plugin.js",
         "demo-photo.jpg",
@@ -104,5 +106,13 @@
       ],
       "matches": ["<all_urls>"]
     }
-  ]
+  ],
+  "externally_connectable": {
+    "matches": [
+      "http://localhost:8000/*",
+      "http://127.0.0.1:8000/*",
+      "http://localhost:8001/*",
+      "http://127.0.0.1:8001/*"
+    ]
+  }
 }

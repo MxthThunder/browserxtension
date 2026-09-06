@@ -82,9 +82,12 @@ async function initOWLViT() {
 
   owlvitLoadPromise = (async () => {
     console.log("[Offscreen] OWL-ViT: initialising zero-shot detector (WASM SIMD CPU) …");
-    // In Transformers.js v3, WebAssembly execution provider is specified as device: "cpu"
+    // setup_vendor.py pins @xenova/transformers@2.17.2 (a v2.x release). That
+    // version's device option only recognizes "wasm"/"webgpu" — "cpu" is a
+    // v3-only value and gets silently mishandled here, so OWL-ViT never loads.
     owlvitPipeline = await pipeline("zero-shot-object-detection", OWL_VIT_MODEL, {
-      device: "cpu",
+      device: "wasm",
+      quantized: true,
     });
     console.log("[Offscreen] OWL-ViT ready (WASM SIMD CPU)");
     return owlvitPipeline;
@@ -361,8 +364,8 @@ async function processAndRedactFrame(payload) {
   rawCtx.drawImage(img, 0, 0, width, height); // inspection copy (local HUD only)
   ctx.drawImage(img, 0, 0, width, height);    // redaction canvas
 
-  const scaleX = width  / (viewport.width  || width);
-  const scaleY = height / (viewport.height || height);
+  const scaleX = (viewport.width && viewport.width > 1) ? (width / viewport.width) : 1;
+  const scaleY = (viewport.height && viewport.height > 1) ? (height / viewport.height) : 1;
 
   const tImgReady = performance.now();
 
@@ -395,7 +398,7 @@ async function processAndRedactFrame(payload) {
         categories.govIds !== false ||
         categories.creditCards !== false;
       if (!shouldRun) return [];
-      const rawImg = await RawImage.fromURL(screenshotUrl);
+      const rawImg = await (RawImage.read ? RawImage.read(screenshotUrl) : (RawImage.fromURL ? RawImage.fromURL(screenshotUrl) : screenshotUrl));
       return owlvitModel(rawImg, PII_VISUAL_QUERIES, { threshold });
     })(),
 
