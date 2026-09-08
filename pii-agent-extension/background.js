@@ -29,16 +29,23 @@ let agentSessionState = {
 };
 
 if (chrome.storage?.session) {
-  chrome.storage.session.get(["agentSessionState"], (res) => {
-    if (res?.agentSessionState) {
-      agentSessionState = { ...agentSessionState, ...res.agentSessionState };
-    }
-  }).catch(() => {});
+  try {
+    chrome.storage.session.get(["agentSessionState"], (res) => {
+      if (chrome.runtime.lastError) return;
+      if (res?.agentSessionState) {
+        agentSessionState = { ...agentSessionState, ...res.agentSessionState };
+      }
+    });
+  } catch {}
 }
 
 function syncSessionState() {
   if (chrome.storage?.session) {
-    chrome.storage.session.set({ agentSessionState }).catch(() => {});
+    try {
+      chrome.storage.session.set({ agentSessionState }, () => {
+        if (chrome.runtime.lastError) {}
+      });
+    } catch {}
   }
 }
 
@@ -459,9 +466,14 @@ chrome.storage.onChanged.addListener((changes, area) => {
   if (area !== "local" || !changes.settings) return;
   const newSettings = changes.settings.newValue;
   chrome.tabs.query({}, (tabs) => {
+    if (chrome.runtime.lastError || !tabs) return;
     tabs.forEach((tab) => {
       if (!tab.id) return;
-      chrome.tabs.sendMessage(tab.id, { type: "SETTINGS_CHANGED", settings: newSettings }).catch(() => {});
+      try {
+        chrome.tabs.sendMessage(tab.id, { type: "SETTINGS_CHANGED", settings: newSettings }, () => {
+          if (chrome.runtime.lastError) {}
+        });
+      } catch {}
     });
   });
 });
@@ -509,11 +521,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         syncSessionState();
 
         // Broadcast step event to open popup or HUD
-        chrome.runtime.sendMessage({
-          type: "AGENT_LOOP_STEP_EVENT",
-          step: stepData,
-          session: agentSessionState
-        }).catch(() => {});
+        try {
+          chrome.runtime.sendMessage({
+            type: "AGENT_LOOP_STEP_EVENT",
+            step: stepData,
+            session: agentSessionState
+          }, () => {
+            if (chrome.runtime.lastError) {}
+          });
+        } catch {}
       }
     )
       .then((res) => {
