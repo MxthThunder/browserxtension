@@ -74,11 +74,17 @@
           type="text"
           id="taskInput"
           class="input"
-          placeholder="e.g. Fill the form and submit"
+          placeholder="e.g. Find ASUS laptops on Amazon"
           autocomplete="off"
           spellcheck="false"
         />
-        <button id="btnDispatchTask" class="btn-primary">Run</button>
+        <button id="btnDispatchTask" class="btn-primary" title="Execute prompt">Go</button>
+        <button id="btnStopTask" class="btn-stop hidden" title="Stop prompt execution" aria-label="Stop prompt execution">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+          </svg>
+          <span>Stop</span>
+        </button>
       </div>
       <p id="lblServerStatus" class="hint hidden"></p>
       <div id="stepFeed" class="step-feed"></div>
@@ -102,10 +108,11 @@
           <div class="field-row">
             <span class="field-label-inline">Reasoner</span>
             <select id="selModelProvider" class="select">
-              <option value="ollama_qwen" selected>Qwen (Ollama local)</option>
-              <option value="auto">Auto (Qwen > Gemini)</option>
-              <option value="gemini">Gemini</option>
-              <option value="nlp">Offline NLP</option>
+              <option value="ollama_qwen" selected>Qwen 2.5 (Local Ollama · 100% On-Device)</option>
+              <option value="auto">Auto Adaptive (Qwen Local ➔ Gemini Fallback)</option>
+              <option value="gemini">Google Gemini 2.5 Flash (Cloud Multi-Modal)</option>
+              <option value="openai">OpenAI GPT-4o / GPT-4o-mini</option>
+              <option value="nlp">Deterministic Offline NLP (Rule-Based)</option>
             </select>
           </div>
         </section>

@@ -602,12 +602,34 @@ function extractInteractiveElements() {
       selector = `[data-agent-id="${agentId}"]`;
     }
 
+    let rawText = (node.innerText || node.value || node.getAttribute("aria-label") || node.placeholder || "").trim();
+
+    // Enrich e-commerce search results with price and star ratings if inside a product card container
+    const productCard = node.closest && node.closest(
+      "[data-component-type='s-search-result'], .s-result-item, .puis-card-container, [data-id], ._1AtVbE, ._75nlfW, .product-card, .product-item"
+    );
+    if (productCard && (node.tagName === "A" || node.tagName === "BUTTON" || node.tagName === "H2")) {
+      const priceEl = productCard.querySelector(".a-price .a-offscreen, .a-price-whole, ._30jeq3, .Nx9bqj, .price, [data-price]");
+      const ratingEl = productCard.querySelector(".a-icon-alt, ._3LWZlK, .XQDdHH, .rating, [data-rating]");
+      const reviewCountEl = productCard.querySelector(".s-underline-text, ._2_R_DZ, .reviews-count");
+
+      const extras = [];
+      if (priceEl && priceEl.innerText) extras.push(`Price: ${priceEl.innerText.trim()}`);
+      if (ratingEl && (ratingEl.innerText || ratingEl.textContent)) extras.push(`Rating: ${(ratingEl.innerText || ratingEl.textContent).trim()}`);
+      if (reviewCountEl && reviewCountEl.innerText) extras.push(`Reviews: ${reviewCountEl.innerText.trim()}`);
+
+      if (extras.length > 0 && !rawText.includes("Price:")) {
+        rawText = `${rawText} [${extras.join(" | ")}]`;
+      }
+    }
+
     elements.push({
       tag: node.tagName.toLowerCase(),
       id: node.id || "",
       name: node.name || "",
       type: node.type || (node.isContentEditable ? "contenteditable" : ""),
-      text: (node.innerText || node.value || node.getAttribute("aria-label") || node.placeholder || "").trim().substring(0, 80),
+      value: (node.value !== undefined ? String(node.value) : (node.isContentEditable ? node.innerText : "")).trim(),
+      text: rawText.substring(0, 180),
       selector,
       rect: {
         x: Math.round(rect.left),

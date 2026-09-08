@@ -335,6 +335,33 @@ body {
 .btn-primary:active:not(:disabled) { transform: scale(0.96); }
 .btn-primary:disabled { opacity: 0.35; cursor: not-allowed; }
 
+.btn-stop {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  background: var(--red-dim, rgba(239, 68, 68, 0.12));
+  color: var(--red, #ef4444);
+  border: 1px solid var(--red, #ef4444);
+  border-radius: var(--radius-sm);
+  padding: 9px 14px;
+  font: inherit;
+  font-size: 12.5px;
+  font-weight: 600;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: opacity var(--duration) ease, transform 120ms var(--ease), background var(--duration) ease, color var(--duration) ease;
+}
+
+.btn-stop:hover {
+  background: var(--red, #ef4444);
+  color: #fff;
+}
+
+.btn-stop:active {
+  transform: scale(0.96);
+}
+
 .btn-ghost {
   flex: 1;
   background: transparent;

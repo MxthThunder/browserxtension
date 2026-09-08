@@ -16,6 +16,7 @@ const advancedPanel = document.getElementById("advancedPanel");
 const taskInput = document.getElementById("taskInput");
 const selModelProvider = document.getElementById("selModelProvider");
 const btnDispatchTask = document.getElementById("btnDispatchTask");
+const btnStopTask = document.getElementById("btnStopTask");
 const lblServerStatus = document.getElementById("lblServerStatus");
 const stepFeed = document.getElementById("stepFeed");
 
@@ -107,18 +108,28 @@ function restoreSessionState(session) {
   }
 
   if (session.status === "RUNNING") {
-    btnDispatchTask.disabled = true;
-    btnDispatchTask.textContent = "…";
-    taskInput.disabled = true;
+    setRunningUI(true);
     clearPendingRow();
     setPendingRow("Deciding the next step…");
-  } else if (session.status === "COMPLETED") {
+  } else {
+    setRunningUI(false);
     clearPendingRow();
-    btnDispatchTask.disabled = false;
-    btnDispatchTask.textContent = "Go";
-    taskInput.disabled = false;
-  } else if (session.status === "STOPPED" || session.status === "ERROR") {
-    clearPendingRow();
+  }
+}
+
+function setRunningUI(isRunning) {
+  if (isRunning) {
+    btnDispatchTask.classList.add("hidden");
+    if (btnStopTask) {
+      btnStopTask.classList.remove("hidden");
+      btnStopTask.disabled = false;
+    }
+    taskInput.disabled = true;
+  } else {
+    if (btnStopTask) {
+      btnStopTask.classList.add("hidden");
+    }
+    btnDispatchTask.classList.remove("hidden");
     btnDispatchTask.disabled = false;
     btnDispatchTask.textContent = "Go";
     taskInput.disabled = false;
@@ -442,9 +453,27 @@ btnAutoSync.addEventListener("click", () => {
   }
 });
 
-// Dispatch agent task — the prompt box is the core feature:
-// type a goal in plain English, the page gets redacted on-device before
-// any of it is analyzed, then the agent acts step-by-step until done.
+// Stop prompt execution immediately
+if (btnStopTask) {
+  btnStopTask.addEventListener("click", async () => {
+    btnStopTask.disabled = true;
+    btnStopTask.innerHTML = `<span>Stopping…</span>`;
+    appendLog("Stopping agent execution…", "info");
+    try {
+      await chrome.runtime.sendMessage({ type: "STOP_AGENT_LOOP" });
+      clearPendingRow();
+      addStepRow("Agent stopped by user.", "error");
+      appendLog("Agent stopped by user.", "error");
+    } catch (err) {
+      console.warn("[Popup] Stop signal error:", err);
+    } finally {
+      btnStopTask.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2" /></svg><span>Stop</span>`;
+      setRunningUI(false);
+    }
+  });
+}
+
+// Dispatch agent task — prompt box execution
 btnDispatchTask.addEventListener("click", async () => {
   const task = taskInput.value.trim();
   if (!task) {
@@ -454,9 +483,7 @@ btnDispatchTask.addEventListener("click", async () => {
     return;
   }
 
-  btnDispatchTask.disabled = true;
-  btnDispatchTask.textContent = "…";
-  taskInput.disabled = true;
+  setRunningUI(true);
   stepFeed.innerHTML = "";
   setPendingRow("Reading the page…");
   appendLog(`Running: "${task}"`);
@@ -479,9 +506,23 @@ btnDispatchTask.addEventListener("click", async () => {
     addStepRow(err.message, "error");
     appendLog(`Failed: ${err.message}`, "error");
   } finally {
-    btnDispatchTask.disabled = false;
-    btnDispatchTask.textContent = "Go";
-    taskInput.disabled = false;
+    setRunningUI(false);
+  }
+});
+
+// Keyboard shortcuts: Enter to run, Escape to stop
+taskInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter" && !e.shiftKey) {
+    e.preventDefault();
+    if (!btnDispatchTask.classList.contains("hidden") && !btnDispatchTask.disabled) {
+      btnDispatchTask.click();
+    }
+  }
+});
+
+window.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && btnStopTask && !btnStopTask.classList.contains("hidden")) {
+    btnStopTask.click();
   }
 });
 

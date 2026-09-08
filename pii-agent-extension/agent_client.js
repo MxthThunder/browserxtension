@@ -63,6 +63,7 @@ export class AgentClient {
       name: el.name || "",
       type: el.type || "",
       text: el.text || "",
+      value: el.value || "",
       selector: el.selector || (el.id ? `#${el.id}` : el.name ? `[name="${el.name}"]` : ""),
       role: el.role || null,
       rect: el.bbox || el.rect || null,

@@ -204,12 +204,13 @@ _last_ollama_check_time = 0
 async def is_ollama_available(ollama_host: str) -> bool:
     global _ollama_checked, _ollama_online, _last_ollama_check_time
     now = time.time()
-    # Cache result for 30 seconds
-    if _ollama_checked and (now - _last_ollama_check_time < 30):
+    # Cache result for 5 seconds if offline, 30 seconds if online
+    cache_duration = 30 if _ollama_online else 5
+    if _ollama_checked and (now - _last_ollama_check_time < cache_duration):
         return _ollama_online
 
     try:
-        async with httpx.AsyncClient(timeout=2.0) as client:
+        async with httpx.AsyncClient(timeout=4.0) as client:
             resp = await client.get(f"{ollama_host}/api/tags")
             _ollama_online = (resp.status_code == 200)
     except Exception:
@@ -218,6 +219,53 @@ async def is_ollama_available(ollama_host: str) -> bool:
     _ollama_checked = True
     _last_ollama_check_time = now
     return _ollama_online
+
+
+def format_elements_for_vlm(elements: List[DOMElement], limit: int = 60) -> str:
+    """Formats DOM elements into a concise, high-density structured text list for VLMs/LLMs."""
+    lines = []
+    for i, el in enumerate(elements[:limit]):
+        tag = el.tag or "element"
+        props = []
+        if el.type:
+            props.append(f'type="{el.type}"')
+        if el.name:
+            props.append(f'name="{el.name}"')
+        if el.id:
+            props.append(f'id="{el.id}"')
+        if el.role:
+            props.append(f'role="{el.role}"')
+
+        desc = f"<{tag} {' '.join(props)}>" if props else f"<{tag}>"
+        txt = (el.text or "").strip().replace("\n", " ")
+        if len(txt) > 80:
+            txt = txt[:77] + "..."
+        val = (el.value or "").strip().replace("\n", " ")
+        if len(val) > 40:
+            val = val[:37] + "..."
+
+        line = f"[{i+1}] {desc} selector='{el.selector}'"
+        if txt:
+            line += f' text="{txt}"'
+        if val:
+            line += f' value="{val}"'
+        lines.append(line)
+    return "\n".join(lines) if lines else "No interactive elements detected."
+
+
+def clean_search_query(task: str) -> str:
+    """Extracts concise product/search terms from arbitrary conversational prompts."""
+    q = task.strip()
+    prefixes = [
+        r"^(?:please\s+)?(?:can\s+you\s+)?(?:could\s+you\s+)?(?:i\s+want\s+to\s+)?(?:i'd\s+like\s+to\s+)?",
+        r"^(?:find|search(?:\s+for)?|look(?:\s+up|\s+for)?|show(?:\s+me)?|give\s+me|get(?:\s+me)?|buy|shop(?:\s+for)?|browse(?:\s+for)?|recommend(?:\s+me)?|suggest(?:\s+me)?|pick(?:\s+me)?)\s+",
+        r"^(?:me\s+)?(?:a\s+|an\s+|the\s+|some\s+)?(?:good\s+|best\s+|top\s+|cheap\s+|latest\s+|new\s+|nice\s+|proper\s+|decent\s+|popular\s+|trending\s+)?",
+        r"^(?:a\s+|an\s+|the\s+|some\s+)?",
+    ]
+    for p in prefixes:
+        q = re.sub(p, "", q, flags=re.I).strip()
+    q = re.sub(r"\s+(?:for\s+me|on\s+amazon|on\s+flipkart|online|please|thanks)$", "", q, flags=re.I).strip()
+    return q if len(q) > 1 else task.strip()
 
 
 async def try_ollama_qwen(
@@ -230,7 +278,7 @@ async def try_ollama_qwen(
     structured_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[ActionOutput]:
     """
-    Attempts fast on-device reasoning using local Ollama (Qwen2.5:1.5b).
+    Attempts fast on-device reasoning using local Ollama (Qwen2.5:1.5b / Qwen2.5:7b).
     Only invoked if Ollama is actively running.
     """
     ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
@@ -238,41 +286,33 @@ async def try_ollama_qwen(
         return None
 
     model = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
-
-    elements_digest = [
-        {
-            "id": el.id,
-            "tag": el.tag,
-            "type": el.type,
-            "name": el.name,
-            "text": (el.text or "")[:40],
-            "selector": el.selector,
-            "role": el.role,
-            "value": (el.value or "")[:30],
-            "is_interactive": el.is_interactive
-        }
-        for el in elements[:40]
-    ]
+    elements_text = format_elements_for_vlm(elements, 50)
+    clean_query = clean_search_query(task)
 
     history_text = ""
+    already_searched = False
     if history and len(history) > 0:
         history_text = "\nPrevious Actions:\n" + "\n".join(
             f"- Step {h.get('step', i+1)}: [{h.get('action', '').upper()}] {h.get('selector', '')}: {h.get('explanation', '')}"
             for i, h in enumerate(history[-3:])
         )
+        already_searched = any(
+            h.get("action") in ["type", "submit"] or "search" in str(h.get("explanation", "")).lower()
+            for h in history
+        )
 
     system_prompt = (
-        "You are an autonomous browser agent. Choose next action from visible web elements.\n"
+        "You are an expert autonomous browser agent. Choose next action from visible web elements.\n"
         f"Progress: Step {step}/{max_steps}.\n"
         "RULES:\n"
-        "1. If search input exists and task is searching, type query into search input.\n"
-        "2. If search results visible or already searched, scroll down or pick top result.\n"
-        "3. Once product or goal is found, use type: 'finish'.\n"
+        "1. NEVER REPEAT: If search was ALREADY performed in Previous Actions or if step >= 2, DO NOT type in search box again. Examine products, pick the best one, or finish.\n"
+        f"2. If search input exists and no search was performed yet, type clean query '{clean_query}' into search input.\n"
+        "3. Once products or answers are visible on screen, recommend the best product with specifications and price.\n"
         "4. Write explanation in plain English text only (no emojis or non-English characters).\n"
         "Output JSON only: {\"type\": \"click\"|\"type\"|\"scroll\"|\"select\"|\"submit\"|\"finish\", \"selector\": \"CSS selector\", \"value\": \"text or down\", \"explanation\": \"short English description\"}"
     )
 
-    user_prompt = f"Goal: {task}{history_text}\nElements:\n{json.dumps(elements_digest)}"
+    user_prompt = f"Goal: {task}\nClean Search Query: {clean_query}\n{history_text}\nAlready Searched: {already_searched}\nInteractive Page Elements:\n{elements_text}"
 
     payload = {
         "model": model,
@@ -286,7 +326,7 @@ async def try_ollama_qwen(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=12.0) as client:
+        async with httpx.AsyncClient(timeout=18.0) as client:
             resp = await client.post(f"{ollama_host}/api/generate", json=payload)
             if resp.status_code == 200:
                 data = resp.json()
@@ -300,7 +340,42 @@ async def try_ollama_qwen(
                 elif act_type in ["complete", "done", "stop"]:
                     act_type = "finish"
 
-                raw_explanation = raw_json.get("explanation", "Action planned by local Qwen model.")
+                sel_str = str(raw_json.get("selector") or "").lower()
+                is_search_target = any(k in sel_str for k in ["search", "twotabsearch", "keywords", "query", "nav-search", "prompt", "field-keywords"])
+
+                # 1. On step 1 for search queries: promote to 'type' with clean query
+                if not already_searched and step == 1 and (is_search_target or act_type in ["type", "click"]):
+                    act_type = "type"
+                    raw_json["value"] = clean_query
+                    safe_explanation = f"Searching for '{clean_query}'"
+
+                # 2. On search results: evaluate products and select top recommendation
+                if already_searched:
+                    query_words = [w for w in re.findall(r"\w{3,}", clean_query.lower()) if w not in ["find", "search", "show", "laptop", "laptops", "best", "good", "recommend"]]
+                    if not query_words:
+                        query_words = [w for w in re.findall(r"\w{3,}", clean_query.lower())]
+
+                    matching_products = []
+                    for el in elements:
+                        txt = (el.text or "").strip()
+                        if len(txt) > 20 and el.tag in ["a", "h2", "span", "div", "button"] and el.selector:
+                            if any(w in txt.lower() for w in query_words):
+                                matching_products.append(el)
+
+                    if matching_products:
+                        top_pick = matching_products[0]
+                        if step == 2 and top_pick.selector and top_pick.tag in ["a", "h2", "button"]:
+                            act_type = "click"
+                            raw_json["selector"] = top_pick.selector
+                            safe_explanation = f"Selected Top Pick: {top_pick.text}. Navigating to product details."
+                        else:
+                            act_type = "finish"
+                            safe_explanation = f"Top Recommendation Selected: {top_pick.text}"
+                    else:
+                        act_type = "finish"
+                        safe_explanation = f"Completed search review for '{clean_query}'."
+
+                raw_explanation = safe_explanation if 'safe_explanation' in locals() else raw_json.get("explanation", "Action planned by local Qwen model.")
                 safe_explanation = raw_explanation.encode("ascii", "ignore").decode("ascii").strip()
                 if not safe_explanation:
                     safe_explanation = f"Executing {act_type} on page"
@@ -308,8 +383,8 @@ async def try_ollama_qwen(
                 if act_type in ["click", "type", "scroll", "select", "submit", "wait", "navigate", "finish"]:
                     return ActionOutput(
                         type=act_type,
-                        selector=raw_json.get("selector"),
-                        value=raw_json.get("value"),
+                        selector=raw_json.get("selector") if act_type != "finish" else None,
+                        value=raw_json.get("value") if act_type != "finish" else None,
                         explanation=f"[Qwen] {safe_explanation}",
                         confidence=float(raw_json.get("confidence", 0.92))
                     )
@@ -627,12 +702,17 @@ def universal_nlp_reasoner(
     elements: List[DOMElement],
     redactions: List[RedactionItem],
     has_image: bool,
+    history: Optional[List[Dict[str, Any]]] = None,
+    url: Optional[str] = None,
+    step: int = 1,
 ) -> ActionOutput:
     """
     Universal NLP Reasoner capable of understanding any free-form prompt.
     """
     task_clean = task.strip()
     task_lower = task_clean.lower()
+    hist = history or []
+    current_url = (url or "").lower()
 
     # 1. Navigation intents (e.g. "go to amazon.com", "open cart", "visit checkout")
     nav_match = re.search(r"(?:navigate to|open url|go to|goto|visit)\s+([^\s]+)", task_clean, re.I)
@@ -696,28 +776,58 @@ def universal_nlp_reasoner(
                     confidence=0.95,
                 )
 
-    # 5. Search / Product Finding Intent (e.g. "find asus laptops", "search for headphones", "buy iphone")
-    search_match = re.search(r"^(?:find|search(?:\s+for)?|look(?:\s+up|\s+for)?|show(?:\s+me)?|buy|shop(?:\s+for)?|get)\s+(.+)$", task_clean, re.I)
-    if search_match:
-        query_text = search_match.group(1).strip()
+    # 5. Search / Product Finding Intent (e.g. "find me a good asus laptop", "search for headphones", "buy iphone")
+    clean_query = clean_search_query(task_clean)
+    is_search_intent = any(k in task_lower for k in ["find", "search", "look", "show", "buy", "shop", "recommend", "suggest", "pick", "laptop", "phone", "price", "under"]) or bool(clean_query)
 
-        # Check if search results are already on screen
-        product_results = []
+    if is_search_intent and clean_query:
+        already_searched = (
+            len(hist) >= 1 or
+            step >= 2 or
+            "s?k=" in current_url or
+            "/search" in current_url or
+            "query=" in current_url or
+            "q=" in current_url or
+            any(h.get("action") in ["type", "submit", "click"] and "search" in str(h).lower() for h in hist)
+        )
+
+        # Check for product / search result listings on screen
+        query_words = [w for w in re.findall(r"\w{3,}", clean_query.lower()) if w not in ["find", "search", "show", "laptop", "laptops", "best", "good", "recommend"]]
+        if not query_words:
+            query_words = [w for w in re.findall(r"\w{3,}", clean_query.lower())]
+
+        matching_products = []
         for el in elements:
             txt = (el.text or "").strip()
-            if len(txt) > 20 and el.tag not in ["input", "textarea", "select", "button"]:
-                if any(w in txt.lower() for w in query_text.lower().split() if len(w) > 2):
-                    product_results.append(txt)
+            if len(txt) > 20 and el.tag in ["a", "h2", "span", "div", "button"] and el.selector:
+                if any(w in txt.lower() for w in query_words):
+                    matching_products.append(el)
 
-        if product_results and history and len(history) >= 1:
-            top_3 = " | ".join(product_results[:3])
-            return ActionOutput(
-                type="finish",
-                explanation=f"Found top matching products for '{query_text}': {top_3}",
-                confidence=0.98,
-            )
+        if already_searched:
+            if matching_products:
+                top_pick = matching_products[0]
+                if step == 2 and top_pick.selector and top_pick.tag in ["a", "h2", "button"]:
+                    return ActionOutput(
+                        type="click",
+                        selector=top_pick.selector,
+                        explanation=f"Selected Top Recommendation: {top_pick.text}. Opening product page.",
+                        confidence=0.96,
+                    )
+                else:
+                    return ActionOutput(
+                        type="finish",
+                        explanation=f"Top Recommendation Selected: {top_pick.text}",
+                        confidence=0.98,
+                    )
+            else:
+                return ActionOutput(
+                    type="scroll",
+                    coordinates={"x": 0, "y": 450},
+                    explanation=f"Scrolling down to view search results for '{clean_query}'.",
+                    confidence=0.90,
+                )
 
-        # Find best search input
+        # First step: Find search box and type clean query
         search_input = None
         for el in elements:
             if el.tag in ["input", "textarea"]:
@@ -733,31 +843,14 @@ def universal_nlp_reasoner(
                     break
 
         if search_input:
-            if not search_input.value or query_text.lower() not in search_input.value.lower():
-                sel = search_input.selector or (f"#{search_input.id}" if search_input.id else "input[type='text']")
-                return ActionOutput(
-                    type="type",
-                    selector=sel,
-                    value=query_text,
-                    explanation=f"Searching for '{query_text}'.",
-                    confidence=0.95,
-                )
-            else:
-                # Search bar already contains query -> press search button or submit
-                for el in elements:
-                    if (el.tag in ["button", "input"] or el.type == "submit") and any(k in (el.text or el.id or el.name or "").lower() for k in ["search", "go", "submit", "find", "nav-search-submit"]):
-                        return ActionOutput(
-                            type="click",
-                            selector=el.selector or (f"#{el.id}" if el.id else "button[type='submit']"),
-                            explanation=f"Submitting search query for '{query_text}'.",
-                            confidence=0.95,
-                        )
-                return ActionOutput(
-                    type="submit",
-                    selector=search_input.selector or "input",
-                    explanation=f"Submitting search for '{query_text}'.",
-                    confidence=0.90,
-                )
+            sel = search_input.selector or (f"#{search_input.id}" if search_input.id else "input[type='text']")
+            return ActionOutput(
+                type="type",
+                selector=sel,
+                value=clean_query,
+                explanation=f"Searching for '{clean_query}'.",
+                confidence=0.95,
+            )
 
     # 6. Generic single-value typing if user gave simple string
     if any(k in task_lower for k in ["type ", "enter ", "fill ", "input ", "write "]):
@@ -847,10 +940,24 @@ async def act_endpoint(payload: ActRequest):
     model_used = "universal-nlp-engine"
     action = None
 
-    # ── Priority 1: Local Ollama / Qwen (primary — on-device, zero cloud cost)
-    # In "auto" mode Qwen is tried FIRST. Cloud VLMs are only used if Ollama is
-    # unavailable or the user explicitly selects a cloud provider.
-    if payload.model_provider in ("ollama_qwen", "auto"):
+    provider = (payload.model_provider or "auto").lower()
+
+    # ── Option 1: Explicit Offline Deterministic NLP
+    if provider == "nlp":
+        print("[Reasoner] Directly invoking Deterministic Offline NLP Engine...")
+        action = universal_nlp_reasoner(
+            task=payload.task,
+            elements=payload.dom_elements or [],
+            redactions=payload.redaction_manifest or [],
+            has_image=has_image,
+            history=payload.history or [],
+            url=payload.url,
+            step=payload.step or 1,
+        )
+        model_used = "deterministic-nlp-engine"
+
+    # ── Option 2: Local Ollama / Qwen (Primary On-Device)
+    elif provider == "ollama_qwen":
         print(f"[Reasoner] Delegating to local Ollama Qwen (Step {payload.step or 1}/{payload.max_steps or 8})...")
         action = await try_ollama_qwen(
             payload.task,
@@ -864,9 +971,9 @@ async def act_endpoint(payload: ActRequest):
         if action:
             model_used = "ollama-qwen"
 
-    # ── Priority 2: Google Gemini (cloud fallback when Qwen unavailable, or explicit selection)
-    if not action and (payload.model_provider == "gemini" or (payload.model_provider == "auto" and os.getenv("GEMINI_API_KEY"))):
-        print(f"[Reasoner] Qwen unavailable — falling back to Gemini Cloud VLM (Step {payload.step or 1}/{payload.max_steps or 8})...")
+    # ── Option 3: Google Gemini
+    elif provider == "gemini":
+        print(f"[Reasoner] Delegating to Gemini Cloud VLM (Step {payload.step or 1}/{payload.max_steps or 8})...")
         action = await try_gemini(
             payload.task,
             payload.dom_elements or [],
@@ -879,9 +986,9 @@ async def act_endpoint(payload: ActRequest):
         if action:
             model_used = "gemini"
 
-    # ── Priority 3: OpenAI (explicit selection only)
-    if not action and (payload.model_provider == "openai" or (payload.model_provider == "auto" and os.getenv("OPENAI_API_KEY"))):
-        print("[Reasoner] Falling back to OpenAI Cloud VLM...")
+    # ── Option 4: OpenAI
+    elif provider == "openai":
+        print(f"[Reasoner] Delegating to OpenAI (Step {payload.step or 1}/{payload.max_steps or 8})...")
         action = await try_openai(
             payload.task,
             payload.dom_elements or [],
@@ -894,7 +1001,48 @@ async def act_endpoint(payload: ActRequest):
         if action:
             model_used = "openai"
 
-    # Priority 4: Fallback Universal Semantic NLP Reasoner (Handles ANY free-form prompt offline)
+    # ── Option 5: Auto Adaptive (Qwen Local ➔ Gemini ➔ OpenAI ➔ NLP)
+    elif provider == "auto":
+        print(f"[Reasoner] Auto mode: trying local Qwen first (Step {payload.step or 1}/{payload.max_steps or 8})...")
+        action = await try_ollama_qwen(
+            payload.task,
+            payload.dom_elements or [],
+            payload.sanitized_image_base64,
+            history=payload.history or [],
+            step=payload.step or 1,
+            max_steps=payload.max_steps or 8,
+            structured_data=payload.structured_data,
+        )
+        if action:
+            model_used = "ollama-qwen"
+        elif os.getenv("GEMINI_API_KEY"):
+            print("[Reasoner] Qwen unavailable — falling back to Gemini Cloud VLM...")
+            action = await try_gemini(
+                payload.task,
+                payload.dom_elements or [],
+                payload.sanitized_image_base64,
+                history=payload.history or [],
+                step=payload.step or 1,
+                max_steps=payload.max_steps or 8,
+                structured_data=payload.structured_data,
+            )
+            if action:
+                model_used = "gemini"
+        elif os.getenv("OPENAI_API_KEY"):
+            print("[Reasoner] Falling back to OpenAI...")
+            action = await try_openai(
+                payload.task,
+                payload.dom_elements or [],
+                payload.sanitized_image_base64,
+                history=payload.history or [],
+                step=payload.step or 1,
+                max_steps=payload.max_steps or 8,
+                structured_data=payload.structured_data,
+            )
+            if action:
+                model_used = "openai"
+
+    # ── Universal NLP Reasoner fallback (guarantees safe, immediate response)
     if not action:
         print("[Reasoner] Using Universal Semantic NLP Reasoner fallback...")
         action = universal_nlp_reasoner(
@@ -902,7 +1050,11 @@ async def act_endpoint(payload: ActRequest):
             elements=payload.dom_elements or [],
             redactions=payload.redaction_manifest or [],
             has_image=has_image,
+            history=payload.history or [],
+            url=payload.url,
+            step=payload.step or 1,
         )
+        model_used = "universal-nlp-engine"
 
     elapsed_ms = (time.perf_counter() - start_time) * 1000
 
