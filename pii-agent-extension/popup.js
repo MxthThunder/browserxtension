@@ -1,56 +1,52 @@
 /**
- * Privacy Agent — popup controller.
- * Basic view: one toggle, plain-language status. Advanced view (opt-in):
- * agent task runner, quick capture tools, and a preview/activity log.
+ * PriviBrowse-X — Air-Gapped Popup Instrumentation Controller
+ * ISRO PS #26171 Security & Redaction System
  */
 
 import { getSettings, saveSettings } from "./storage.js";
 
-const toggleProtection = document.getElementById("toggleProtection");
-const statusText = document.getElementById("statusText");
-const basicCount = document.getElementById("basicCount");
+// ── DOM References ──────────────────────────────────────────
+const toggleProtection    = document.getElementById("toggleProtection");
+const statusText          = document.getElementById("statusText");
+const basicCount          = document.getElementById("basicCount");
 
-const chkAdvanced = document.getElementById("chkAdvanced");
-const advancedPanel = document.getElementById("advancedPanel");
+const chkAdvanced         = document.getElementById("chkAdvanced");
+const advancedPanel       = document.getElementById("advancedPanel");
 
-const taskInput = document.getElementById("taskInput");
-const selModelProvider = document.getElementById("selModelProvider");
-const btnDispatchTask = document.getElementById("btnDispatchTask");
-const btnStopTask = document.getElementById("btnStopTask");
-const lblServerStatus = document.getElementById("lblServerStatus");
-const stepFeed = document.getElementById("stepFeed");
+const taskInput           = document.getElementById("taskInput");
+const selModelProvider    = document.getElementById("selModelProvider");
+const btnDispatchTask     = document.getElementById("btnDispatchTask");
+const btnStopTask         = document.getElementById("btnStopTask");
+const lblServerStatus     = document.getElementById("lblServerStatus");
+const stepFeed            = document.getElementById("stepFeed");
 
-const btnCapture = document.getElementById("btnCapture");
-const btnHighlightDOM = document.getElementById("btnHighlightDOM");
-const btnAutoSync = document.getElementById("btnAutoSync");
-const btnClearOverlays = document.getElementById("btnClearOverlays");
+const btnCapture          = document.getElementById("btnCapture");
+const btnHighlightDOM     = document.getElementById("btnHighlightDOM");
+const btnAutoSync         = document.getElementById("btnAutoSync");
+const lblLiveState        = document.getElementById("lblLiveState");
+const btnClearOverlays    = document.getElementById("btnClearOverlays");
 
-const btnViewSanitized = document.getElementById("btnViewSanitized");
-const btnViewRaw = document.getElementById("btnViewRaw");
-const displayImage = document.getElementById("displayImage");
+const btnViewSanitized    = document.getElementById("btnViewSanitized");
+const btnViewRaw          = document.getElementById("btnViewRaw");
+const displayImage        = document.getElementById("displayImage");
 const viewportPlaceholder = document.getElementById("viewportPlaceholder");
-const redactionCountPill = document.getElementById("redactionCountPill");
+const redactionCountPill  = document.getElementById("redactionCountPill");
 const visualRedactionList = document.getElementById("visualRedactionList");
 
-const agentStatusLog = document.getElementById("agentStatusLog");
-const linkOpenOptions = document.getElementById("linkOpenOptions");
-const linkOpenDemo = document.getElementById("linkOpenDemo");
-const btnOpenSidePanel = document.getElementById("btnOpenSidePanel");
-const linkOpenDashboard = document.getElementById("linkOpenDashboard");
-const btnTheme = document.getElementById("btnTheme");
-const iconMoon = document.getElementById("iconMoon");
-const iconSun  = document.getElementById("iconSun");
+const agentStatusLog      = document.getElementById("agentStatusLog");
+const linkOpenOptions     = document.getElementById("linkOpenOptions");
+const linkOpenDemo        = document.getElementById("linkOpenDemo");
+const btnOpenSidePanel    = document.getElementById("btnOpenSidePanel");
+const linkOpenDashboard   = document.getElementById("linkOpenDashboard");
 
 let latestCapture = null;
 let activeViewMode = "sanitized";
 let autoSyncInterval = null;
 let pendingStepRow = null;
 
+// ── Initialization ───────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
   const settings = await getSettings();
-
-  // Apply saved theme
-  applyTheme(settings.theme || "dark");
 
   setProtectionUI(settings.enabled !== false);
   setAdvancedUI(Boolean(settings.uiAdvancedMode));
@@ -59,7 +55,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   await probeServerHealth();
   await loadBasicCount();
 
-  // Rehydrate state from background session if popup was reopened
+  // Rehydrate state from background session
   try {
     const sessionResp = await chrome.runtime.sendMessage({ type: "GET_AGENT_SESSION_STATE" });
     if (sessionResp?.ok && sessionResp.session) {
@@ -84,7 +80,7 @@ function restoreSessionState(session) {
       const privacyPhrase = describePrivacy(s.redactionCount);
       const actionPhrase = describeAction(act);
       const text = privacyPhrase
-        ? `${privacyPhrase}, then ${actionPhrase.charAt(0).toLowerCase()}${actionPhrase.slice(1)}`
+        ? `${privacyPhrase} // ${actionPhrase}`
         : actionPhrase;
       addStepRow(text, s.error ? "error" : "success");
     });
@@ -100,7 +96,7 @@ function restoreSessionState(session) {
     agentStatusLog.innerHTML = "";
     session.activityLogs.forEach((log) => {
       const entry = document.createElement("div");
-      entry.className = "log-entry";
+      entry.className = "log-row";
       entry.textContent = log;
       agentStatusLog.appendChild(entry);
     });
@@ -110,7 +106,7 @@ function restoreSessionState(session) {
   if (session.status === "RUNNING") {
     setRunningUI(true);
     clearPendingRow();
-    setPendingRow("Deciding the next step…");
+    setPendingRow("EVALUATING DOM & VISION SENSITIVITY…");
   } else {
     setRunningUI(false);
     clearPendingRow();
@@ -131,7 +127,7 @@ function setRunningUI(isRunning) {
     }
     btnDispatchTask.classList.remove("hidden");
     btnDispatchTask.disabled = false;
-    btnDispatchTask.textContent = "Go";
+    btnDispatchTask.textContent = "EXEC";
     taskInput.disabled = false;
   }
 }
@@ -172,7 +168,7 @@ async function sendTabMessage(tabId, message) {
   }
 }
 
-// Basic view: plain-language count of what's protected on the current page
+// ── Status Readout ───────────────────────────────────────────
 async function loadBasicCount() {
   try {
     const tab = await getActiveWebTab();
@@ -180,48 +176,26 @@ async function loadBasicCount() {
     const resp = await sendTabMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
     const n = resp && resp.ok ? (resp.boxes || []).length : 0;
     basicCount.textContent =
-      n === 0 ? "Nothing sensitive found on this page." : `${n} sensitive field${n === 1 ? "" : "s"} protected on this page.`;
+      n === 0 ? "0 SENSITIVE NODES DETECTED" : `[${n} SENSITIVE FIELD${n === 1 ? "" : "S"} INTERCEPTED]`;
   } catch {
-    basicCount.textContent = "";
+    basicCount.textContent = "0 SENSITIVE NODES DETECTED";
   }
 }
 
-// Protection toggle (the entire "basic" control surface)
 function setProtectionUI(enabled) {
   toggleProtection.dataset.state = enabled ? "on" : "off";
   toggleProtection.setAttribute("aria-pressed", String(enabled));
-  statusText.textContent = enabled ? "Protected" : "Paused";
+  statusText.textContent = enabled ? "AIR-GAP ENFORCED" : "INTERCEPT PAUSED";
 }
 
 toggleProtection.addEventListener("click", async () => {
   const next = toggleProtection.dataset.state !== "on";
   setProtectionUI(next);
   await saveSettings({ enabled: next });
-  appendLog(next ? "Protection resumed." : "Protection paused.");
+  appendLog(next ? "AIR-GAP RESUMED // FAIL-CLOSED ACTIVE" : "INTERCEPT SUSPENDED // RAW PASSTHROUGH");
 });
 
-// ── Theme toggle ─────────────────────────────────────────────────
-function applyTheme(theme) {
-  document.documentElement.dataset.theme = theme;
-  if (theme === "light") {
-    iconMoon.style.display = "none";
-    iconSun.style.display  = "block";
-  } else {
-    iconMoon.style.display = "block";
-    iconSun.style.display  = "none";
-  }
-}
-
-if (btnTheme) {
-  btnTheme.addEventListener("click", async () => {
-    const current = document.documentElement.dataset.theme || "dark";
-    const next = current === "dark" ? "light" : "dark";
-    applyTheme(next);
-    await saveSettings({ theme: next });
-  });
-}
-
-// Advanced view toggle
+// ── Advanced Drawer ──────────────────────────────────────────
 function setAdvancedUI(open) {
   chkAdvanced.checked = open;
   advancedPanel.classList.toggle("open", open);
@@ -240,15 +214,14 @@ if (selModelProvider) {
 
 function appendLog(msg, type = "info") {
   const entry = document.createElement("div");
-  entry.className = `log-entry${type !== "info" ? " " + type : ""}`;
-  const timeStr = new Date().toLocaleTimeString().split(" ")[0];
-  entry.textContent = `${timeStr}  ${msg}`;
+  entry.className = "log-row";
+  const timeStr = new Date().toISOString().substring(11, 19);
+  entry.textContent = `[${timeStr}] ${msg}`;
   agentStatusLog.appendChild(entry);
   agentStatusLog.scrollTop = agentStatusLog.scrollHeight;
 }
 
-// Plain-language step feed (Basic view) — no jargon, no timestamps.
-// The technical Activity log in Advanced still gets the detailed version.
+// ── Declassified Receipt Feed Formatting ─────────────────────
 function stripModelTag(text) {
   return (text || "").replace(/^\[[^\]]+\]\s*/, "");
 }
@@ -257,26 +230,27 @@ function describeAction(act = {}) {
   const explanation = stripModelTag(act.explanation);
   if (explanation) return explanation;
   switch (act.type) {
-    case "click": return "Clicked an element on the page";
-    case "type": return "Typed into a field";
-    case "scroll": return "Scrolled the page";
-    case "finish": return "Finished the task";
-    default: return "Took an action";
+    case "click": return "Dispatched click on DOM selector";
+    case "type": return "Injected keystrokes into sanitized input";
+    case "scroll": return "Adjusted viewport scroll matrix";
+    case "finish": return "Task execution verified and completed";
+    default: return "Executed pipeline perception cycle";
   }
 }
 
 function describePrivacy(redactionCount = 0) {
   if (!redactionCount) return null;
-  return `Redacted ${redactionCount} sensitive item${redactionCount === 1 ? "" : "s"}`;
+  return `SHIELDED ${redactionCount} PII REGION${redactionCount === 1 ? "" : "S"}`;
 }
 
 function addStepRow(text, state = "success") {
   const row = document.createElement("div");
-  row.className = `step-row ${state}`;
-  const mark = state === "pending" ? "…" : state === "error" ? "✕" : "✓";
-  row.innerHTML = `<span class="mark">${mark}</span><span></span>`;
-  row.lastChild.textContent = text;
+  row.className = `receipt-row ${state}`;
+  const tag = state === "pending" ? "EXEC" : state === "error" ? "HALT" : "SHIELD";
+  row.innerHTML = `<span class="receipt-tag">[${tag}]</span><span class="receipt-text"></span>`;
+  row.querySelector(".receipt-text").textContent = text;
   stepFeed.appendChild(row);
+  stepFeed.scrollTop = stepFeed.scrollHeight;
   return row;
 }
 
@@ -292,7 +266,7 @@ function clearPendingRow() {
   }
 }
 
-// Server health — stay silent when healthy, only speak up when something's wrong
+// ── Server Health Probe ──────────────────────────────────────
 async function probeServerHealth() {
   const settings = await getSettings();
   const url = settings.serverHealthUrl || "http://127.0.0.1:8001/health";
@@ -301,16 +275,16 @@ async function probeServerHealth() {
     if (res.ok) {
       lblServerStatus.classList.add("hidden");
     } else {
-      lblServerStatus.textContent = `Server responded with HTTP ${res.status}`;
+      lblServerStatus.textContent = `LOCAL BRIDGE WARNING: HTTP ${res.status}`;
       lblServerStatus.classList.remove("hidden");
     }
   } catch {
-    lblServerStatus.textContent = "Server offline — start it on port 8001";
+    lblServerStatus.textContent = "BRIDGE OFFLINE // RUN LOCAL BRIDGE ON PORT 8001";
     lblServerStatus.classList.remove("hidden");
   }
 }
 
-// Sandbox preview toggle
+// ── Viewport Sandbox Preview ─────────────────────────────────
 btnViewSanitized.addEventListener("click", () => {
   activeViewMode = "sanitized";
   btnViewSanitized.classList.add("active");
@@ -335,40 +309,36 @@ function updateSandboxDisplay() {
 }
 
 function updateDetectedList(redactions = []) {
-  redactionCountPill.textContent = `${redactions.length} masked`;
+  redactionCountPill.textContent = `${redactions.length} MASKED`;
 
   visualRedactionList.innerHTML = "";
   if (redactions.length === 0) {
-    visualRedactionList.innerHTML = `<div class="muted">Nothing detected on this screen.</div>`;
+    visualRedactionList.innerHTML = `<div class="empty-hint">NO SENSITIVE ENTITIES CAUGHT IN LAST FRAME</div>`;
     return;
   }
 
   redactions.forEach((r) => {
     const item = document.createElement("div");
-    item.className = "detected-item";
-    item.innerHTML = `<span class="label">${r.label}</span><span class="source">${r.source}</span>`;
+    item.className = "detected-row";
+    item.innerHTML = `<span class="detected-cat">[${escapeHtml(r.label || "PII")}]</span><span class="detected-val">${escapeHtml(r.source || "DOM")}</span>`;
     visualRedactionList.appendChild(item);
   });
 }
 
-// Capture & Redact
+// ── Action Buttons (F1, F2, F3, CLR) ─────────────────────────
+
+// F1: Capture
 btnCapture.addEventListener("click", async () => {
   btnCapture.disabled = true;
-  btnCapture.textContent = "…";
-  appendLog("Capturing and redacting viewport…");
-
-  // Show a hint after 5s so the user knows model loading is normal
-  const loadHintTimer = setTimeout(() => {
-    appendLog("Loading vision models (first run may take 30-60s)…", "info");
-    btnCapture.textContent = "Loading…";
-  }, 5000);
+  const originalHtml = btnCapture.innerHTML;
+  btnCapture.innerHTML = `<span class="ctrl-code">F1</span><span class="ctrl-name">MASKING…</span>`;
+  appendLog("Perception pipeline triggered (WebGPU + BlazeFace + OCR)…");
 
   try {
-    // Use a promise wrapper with timeout so button never stays disabled forever
     const result = await new Promise((resolve) => {
       const timer = setTimeout(() => {
-        resolve({ ok: false, error: "Capture timed out — please try again" });
-      }, 90000);
+        resolve({ ok: false, error: "Capture timed out" });
+      }, 30000);
 
       chrome.runtime.sendMessage({ type: "CAPTURE_AND_REDACT", options: {} }, (response) => {
         clearTimeout(timer);
@@ -380,8 +350,6 @@ btnCapture.addEventListener("click", async () => {
       });
     });
 
-    clearTimeout(loadHintTimer);
-
     if (!result || !result.ok) {
       throw new Error(result?.error || "Capture failed");
     }
@@ -392,20 +360,18 @@ btnCapture.addEventListener("click", async () => {
 
     const ms = result.timings?.totalRedactionLatencyMs;
     appendLog(
-      `${result.redactionList?.length || 0} region(s) redacted${ms ? ` in ${ms.toFixed(0)} ms` : ""}.`,
+      `SHIELDED ${result.redactionList?.length || 0} region(s)${ms ? ` in ${ms.toFixed(0)}ms` : ""}.`,
       "success"
     );
   } catch (err) {
-    clearTimeout(loadHintTimer);
     appendLog(`Capture error: ${err.message}`, "error");
   } finally {
     btnCapture.disabled = false;
-    btnCapture.textContent = "Capture";
+    btnCapture.innerHTML = originalHtml;
   }
 });
 
-
-// Highlight DOM
+// F2: Highlight DOM
 btnHighlightDOM.addEventListener("click", async () => {
   try {
     const tab = await getActiveWebTab();
@@ -415,7 +381,7 @@ btnHighlightDOM.addEventListener("click", async () => {
     }
     const resp = await sendTabMessage(tab.id, { type: "HIGHLIGHT_DOM" });
     if (resp && resp.ok) {
-      appendLog(`Highlighted ${resp.count} field(s) on the page.`, "success");
+      appendLog(`HIGHLIGHTED ${resp.count} PII DOM node(s).`, "success");
     } else {
       appendLog(`Highlight error: ${resp?.error || "Failed"}`, "error");
     }
@@ -424,69 +390,65 @@ btnHighlightDOM.addEventListener("click", async () => {
   }
 });
 
-// Clear overlays
+// CLR: Clear Overlays
 btnClearOverlays.addEventListener("click", async () => {
   try {
     const tab = await getActiveWebTab();
     if (!tab || !tab.id) return;
     await sendTabMessage(tab.id, { type: "CLEAR_OVERLAYS" });
-    appendLog("Cleared overlays.", "success");
+    appendLog("CLEARED all visual highlight overlays.", "success");
   } catch (err) {
     appendLog(`Clear error: ${err.message}`, "error");
   }
 });
 
-// Live stream toggle
+// F3: Live Sync Toggle
 btnAutoSync.addEventListener("click", () => {
   if (autoSyncInterval) {
     clearInterval(autoSyncInterval);
     autoSyncInterval = null;
-    btnAutoSync.textContent = "Live";
     btnAutoSync.classList.remove("active");
-    appendLog("Stopped live capture.");
+    if (lblLiveState) lblLiveState.textContent = "LIVE";
+    appendLog("Live capture loop stopped.");
   } else {
-    btnAutoSync.textContent = "Stop";
     btnAutoSync.classList.add("active");
-    appendLog("Started live capture (every 3s).");
+    if (lblLiveState) lblLiveState.textContent = "STREAMING";
+    appendLog("Live air-gap stream engaged (3s interval).");
     btnCapture.click();
     autoSyncInterval = setInterval(() => btnCapture.click(), 3000);
   }
 });
 
-// Stop prompt execution immediately
+// ── Agent Execution & Halt Controls ──────────────────────────
 if (btnStopTask) {
   btnStopTask.addEventListener("click", async () => {
     btnStopTask.disabled = true;
-    btnStopTask.innerHTML = `<span>Stopping…</span>`;
-    appendLog("Stopping agent execution…", "info");
+    btnStopTask.innerHTML = `<span class="halt-box">■</span> ABORTING…`;
+    appendLog("EMERGENCY HALT SIGNAL SENT", "error");
     try {
       await chrome.runtime.sendMessage({ type: "STOP_AGENT_LOOP" });
       clearPendingRow();
-      addStepRow("Agent stopped by user.", "error");
-      appendLog("Agent stopped by user.", "error");
+      addStepRow("Agent loop aborted by user command.", "error");
     } catch (err) {
       console.warn("[Popup] Stop signal error:", err);
     } finally {
-      btnStopTask.innerHTML = `<svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2" /></svg><span>Stop</span>`;
+      btnStopTask.innerHTML = `<span class="halt-box">■</span> HALT`;
       setRunningUI(false);
     }
   });
 }
 
-// Dispatch agent task — prompt box execution
 btnDispatchTask.addEventListener("click", async () => {
   const task = taskInput.value.trim();
   if (!task) {
-    taskInput.classList.add("attention");
     taskInput.focus();
-    setTimeout(() => taskInput.classList.remove("attention"), 400);
     return;
   }
 
   setRunningUI(true);
   stepFeed.innerHTML = "";
-  setPendingRow("Reading the page…");
-  appendLog(`Running: "${task}"`);
+  setPendingRow("INTERCEPTING DOM & PLANNING AIR-GAPPED ACTION…");
+  appendLog(`TASK DISPATCH: "${task}"`);
 
   try {
     const modelProvider = selModelProvider?.value || "auto";
@@ -499,18 +461,18 @@ btnDispatchTask.addEventListener("click", async () => {
     if (!res || !res.ok) throw new Error(res?.error || "Agent loop failed");
 
     clearPendingRow();
-    addStepRow(stripModelTag(res.summary) || "Done.", "success");
-    appendLog(`Done: ${res.summary} (${res.stepsExecuted || 0} step(s)).`, "success");
+    addStepRow(stripModelTag(res.summary) || "Task completed successfully.", "success");
+    appendLog(`TASK COMPLETED: ${res.summary} (${res.stepsExecuted || 0} steps).`, "success");
   } catch (err) {
     clearPendingRow();
     addStepRow(err.message, "error");
-    appendLog(`Failed: ${err.message}`, "error");
+    appendLog(`TASK FAILED: ${err.message}`, "error");
   } finally {
     setRunningUI(false);
   }
 });
 
-// Keyboard shortcuts: Enter to run, Escape to stop
+// Keyboard shortcuts
 taskInput.addEventListener("keydown", (e) => {
   if (e.key === "Enter" && !e.shiftKey) {
     e.preventDefault();
@@ -526,7 +488,7 @@ window.addEventListener("keydown", (e) => {
   }
 });
 
-// Live step events from a running agent loop
+// Runtime event listener for step events
 chrome.runtime.onMessage.addListener((msg) => {
   if (msg.type === "AGENT_LOOP_STEP_EVENT" && msg.step) {
     const s = msg.step;
@@ -536,12 +498,12 @@ chrome.runtime.onMessage.addListener((msg) => {
     const privacyPhrase = describePrivacy(s.redactionCount);
     const actionPhrase = describeAction(act);
     const text = privacyPhrase
-      ? `${privacyPhrase}, then ${actionPhrase.charAt(0).toLowerCase()}${actionPhrase.slice(1)}`
+      ? `${privacyPhrase} // ${actionPhrase}`
       : actionPhrase;
     addStepRow(text, "success");
-    if (act.type !== "finish") setPendingRow("Deciding the next step…");
+    if (act.type !== "finish") setPendingRow("PROCESSING NEXT PERCEPTION CYCLE…");
 
-    appendLog(`Step ${s.step}: ${(act.type || "action")} → ${act.selector || act.value || "viewport"}`, "success");
+    appendLog(`STEP ${s.step}: ${(act.type || "ACTION").toUpperCase()} -> ${act.selector || act.value || "VIEWPORT"}`);
     if (s.sanitizedImage) {
       latestCapture = { sanitizedImageUrl: s.sanitizedImage, redactionList: [] };
       updateSandboxDisplay();
@@ -549,6 +511,7 @@ chrome.runtime.onMessage.addListener((msg) => {
   }
 });
 
+// Navigation Links
 if (btnOpenSidePanel) {
   btnOpenSidePanel.addEventListener("click", () => {
     chrome.runtime.sendMessage({ type: "OPEN_SIDE_PANEL" });
@@ -562,14 +525,29 @@ if (linkOpenDashboard) {
   });
 }
 
-linkOpenOptions.addEventListener("click", () => chrome.runtime.openOptionsPage());
-linkOpenDemo.addEventListener("click", async () => {
-  try {
-    const probe = await fetch("http://localhost:8000/demo.html", { method: "HEAD", signal: AbortSignal.timeout(600) });
-    if (probe.ok) {
-      chrome.tabs.create({ url: "http://localhost:8000/demo.html" });
-      return;
-    }
-  } catch {}
-  chrome.tabs.create({ url: chrome.runtime.getURL("demo.html") });
-});
+if (linkOpenOptions) {
+  linkOpenOptions.addEventListener("click", () => chrome.runtime.openOptionsPage());
+}
+
+if (linkOpenDemo) {
+  linkOpenDemo.addEventListener("click", async () => {
+    try {
+      const probe = await fetch("http://localhost:8000/demo.html", { method: "HEAD", signal: AbortSignal.timeout(600) });
+      if (probe.ok) {
+        chrome.tabs.create({ url: "http://localhost:8000/demo.html" });
+        return;
+      }
+    } catch {}
+    chrome.tabs.create({ url: chrome.runtime.getURL("demo.html") });
+  });
+}
+
+function escapeHtml(str) {
+  return (str || "").replace(/[&<>"']/g, (m) => ({
+    "&": "&amp;",
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#39;"
+  }[m]));
+}
