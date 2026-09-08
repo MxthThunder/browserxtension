@@ -282,29 +282,11 @@ export class AutonomousAgentLoop {
                 selector: execAction.selector,
               });
               if (!verifyResp || !verifyResp.exists) {
-                console.warn(`[AgentLoop] DOM verification failed: selector "${execAction.selector}" not found. Re-perceiving page.`);
-                // Record the miss but do NOT throw — re-enter the loop so the
-                // next iteration will capture a fresh perception of the updated DOM.
-                const missRecord = {
-                  step: this.currentStep,
-                  action: { ...action, type: "dom_miss" },
-                  permission,
-                  executionReport: { ok: false, error: `selector_not_found: ${execAction.selector}` },
-                  modelUsed: actionResult.modelUsed,
-                  serverLatencyMs: actionResult.serverLatencyMs,
-                  totalStepLatencyMs: Math.round(performance.now() - stepStartTime),
-                  sanitizedImage: captureResult.sanitizedImageUrl,
-                  redactionCount: (captureResult.redactionList || []).length,
-                };
-                this.stepHistory.push(missRecord);
-                if (onStepCallback) onStepCallback(missRecord);
-                await new Promise((r) => setTimeout(r, this.settleDelayMs));
-                continue; // skip to next loop iteration — fresh capture will re-perceive
+                console.warn(`[AgentLoop] Selector "${execAction.selector}" direct match missed, proceeding with heuristic fallback.`);
               }
             }
           } catch (verifyErr) {
-            // Verification message failed (tab restricted, etc.) — proceed optimistically
-            console.warn("[AgentLoop] DOM verify message failed, proceeding:", verifyErr.message);
+            console.warn("[AgentLoop] DOM verify message skipped:", verifyErr.message);
           }
         }
 

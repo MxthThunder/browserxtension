@@ -778,6 +778,21 @@ function animateActionTarget(target, actionType) {
 function findElementAcrossFrames(selector) {
   if (!selector) return null;
   let el = null;
+
+  // Support :contains('text') pseudo-selector
+  if (selector.includes(":contains(")) {
+    try {
+      const textMatch = selector.match(/:contains\(['"]?(.*?)['"]?\)/i);
+      const text = textMatch ? textMatch[1].toLowerCase().trim() : "";
+      const baseTag = selector.split(":")[0] || "*";
+      for (const cand of document.querySelectorAll(baseTag)) {
+        if (cand.textContent && cand.textContent.toLowerCase().includes(text)) {
+          return cand;
+        }
+      }
+    } catch {}
+  }
+
   try {
     el = document.querySelector(selector);
   } catch {}
@@ -1018,7 +1033,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         sendResponse({ ok: true, exists: false, reason: "no_selector" });
         return false;
       }
-      const el = document.querySelector(sel);
+      const el = findElementAcrossFrames(sel);
       const exists = Boolean(el);
       let visible = false;
       if (el) {
