@@ -121,9 +121,10 @@ async function initFaceDetector() {
   return faceDetectorPromise;
 }
 
-// ── Pre-warm vision models immediately upon document load (no delay) ───────
-initOWLViT().catch((err) => console.warn("[Offscreen] OWL-ViT pre-warm failed:", err.message));
-initFaceDetector().catch((err) => console.warn("[Offscreen] BlazeFace pre-warm failed:", err.message));
+// Defer model warming to background idle
+setTimeout(() => {
+  initFaceDetector().catch(() => {});
+}, 500);
 
 
 

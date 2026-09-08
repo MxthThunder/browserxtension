@@ -924,6 +924,34 @@ async function executeAgentAction(action) {
         target.dispatchEvent(new Event("input", { bubbles: true }));
         target.dispatchEvent(new Event("change", { bubbles: true }));
       }
+
+      // If typing in a search bar, automatically submit/dispatch Enter for single-step execution
+      const isSearchInput = (
+        target.getAttribute("type") === "search" ||
+        (target.getAttribute("name") || "").toLowerCase().includes("q") ||
+        (target.getAttribute("name") || "").toLowerCase().includes("search") ||
+        (target.getAttribute("name") || "").toLowerCase().includes("field-keywords") ||
+        (target.getAttribute("id") || "").toLowerCase().includes("search") ||
+        (target.getAttribute("id") || "").toLowerCase().includes("twotabsearchtextbox") ||
+        (target.getAttribute("placeholder") || "").toLowerCase().includes("search")
+      );
+
+      if (isSearchInput) {
+        setTimeout(() => {
+          try {
+            if (target.form && target.form.requestSubmit) {
+              target.form.requestSubmit();
+            } else {
+              target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+              target.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+            }
+          } catch {
+            target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+            target.dispatchEvent(new KeyboardEvent("keyup", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+          }
+        }, 150);
+      }
+
       return { ok: true, executed: "type", value: val };
 
     case "scroll":
@@ -1072,38 +1100,87 @@ function drawHighlightOverlay(matches) {
     zIndex: "2147483647",
   });
 
-  matches.forEach(({ x, y, width, height, reason }) => {
-    const box = document.createElement("div");
-    Object.assign(box.style, {
+  if (matches.length === 0) {
+    // Show a sleek green banner indicating page is clean
+    const safeBanner = document.createElement("div");
+    safeBanner.textContent = "🛡️ PriviBrowse-X: Scanned page — 0 sensitive fields detected (Page is safe)";
+    Object.assign(safeBanner.style, {
       position: "fixed",
-      top: `${y}px`,
-      left: `${x}px`,
-      width: `${width}px`,
-      height: `${height}px`,
-      background: "rgba(239, 68, 68, 0.25)",
-      border: "2px solid #ef4444",
-      borderRadius: "4px",
-      boxSizing: "border-box",
+      top: "16px",
+      left: "50%",
+      transform: "translateX(-50%)",
+      background: "#10b981",
+      color: "#ffffff",
+      padding: "8px 16px",
+      borderRadius: "20px",
+      fontFamily: "system-ui, -apple-system, sans-serif",
+      fontSize: "13px",
+      fontWeight: "600",
+      boxShadow: "0 4px 12px rgba(0,0,0,0.25)",
+      zIndex: "2147483647",
+      animation: "fadein 0.3s",
+    });
+    layer.appendChild(safeBanner);
+
+    // Also highlight scanned interactive inputs with subtle green outline
+    document.querySelectorAll("input, textarea, select, [role='searchbox']").forEach((el) => {
+      const rect = el.getBoundingClientRect();
+      if (rect.width > 20 && rect.height > 10 && rect.top > 0 && rect.bottom < window.innerHeight) {
+        const box = document.createElement("div");
+        Object.assign(box.style, {
+          position: "fixed",
+          top: `${rect.top}px`,
+          left: `${rect.left}px`,
+          width: `${rect.width}px`,
+          height: `${rect.height}px`,
+          border: "2px dashed #10b981",
+          borderRadius: "4px",
+          pointerEvents: "none",
+          boxSizing: "border-box",
+        });
+        layer.appendChild(box);
+      }
     });
 
-    const lbl = document.createElement("div");
-    lbl.textContent = `🛡️ PII: ${reason}`;
-    Object.assign(lbl.style, {
-      position: "absolute",
-      top: "-18px",
-      left: "0",
-      fontSize: "10px",
-      fontWeight: "700",
-      background: "#ef4444",
-      color: "#fff",
-      padding: "1px 5px",
-      borderRadius: "3px",
-      whiteSpace: "nowrap",
-    });
+    setTimeout(() => {
+      layer.style.transition = "opacity 0.5s";
+      layer.style.opacity = "0";
+      setTimeout(() => layer.remove(), 500);
+    }, 3500);
+  } else {
+    matches.forEach(({ x, y, width, height, reason }) => {
+      const box = document.createElement("div");
+      Object.assign(box.style, {
+        position: "fixed",
+        top: `${y}px`,
+        left: `${x}px`,
+        width: `${width}px`,
+        height: `${height}px`,
+        background: "rgba(239, 68, 68, 0.25)",
+        border: "2px solid #ef4444",
+        borderRadius: "4px",
+        boxSizing: "border-box",
+      });
 
-    box.appendChild(lbl);
-    layer.appendChild(box);
-  });
+      const lbl = document.createElement("div");
+      lbl.textContent = `🛡️ PII: ${reason}`;
+      Object.assign(lbl.style, {
+        position: "absolute",
+        top: "-18px",
+        left: "0",
+        fontSize: "10px",
+        fontWeight: "700",
+        background: "#ef4444",
+        color: "#fff",
+        padding: "1px 5px",
+        borderRadius: "3px",
+        whiteSpace: "nowrap",
+      });
+
+      box.appendChild(lbl);
+      layer.appendChild(box);
+    });
+  }
 
   document.body.appendChild(layer);
 }

@@ -400,12 +400,7 @@ async def try_gemini(
             }
         })
 
-    primary_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
-    candidate_models = [primary_model]
-    for fallback in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-2.5-flash"]:
-        if fallback not in candidate_models:
-            candidate_models.append(fallback)
-
+    model = os.getenv("GEMINI_MODEL", "gemini-2.5-flash")
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
@@ -414,30 +409,24 @@ async def try_gemini(
         }
     }
 
-    async with httpx.AsyncClient(timeout=45.0) as client:
-        for model in candidate_models:
-            url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
-            try:
-                resp = await client.post(url, json=payload)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    text_response = data["candidates"][0]["content"]["parts"][0]["text"]
-                    raw_json = json.loads(text_response)
-                    if "type" in raw_json:
-                        return ActionOutput(
-                            type=raw_json.get("type", "finish"),
-                            selector=raw_json.get("selector"),
-                            value=raw_json.get("value"),
-                            explanation=f"[Gemini ({model})] " + raw_json.get("explanation", "Action planned by Gemini."),
-                            confidence=float(raw_json.get("confidence", 0.95)),
-                        )
-                elif resp.status_code == 429:
-                    print(f"[Gemini] {model} hit rate limit (429), trying fallback model...")
-                    continue
-                else:
-                    print(f"[Gemini] {model} API error {resp.status_code}: {resp.text[:200]}")
-            except Exception as e:
-                print(f"[Gemini] {model} Exception: {e}")
+    url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
+    try:
+        async with httpx.AsyncClient(timeout=3.5) as client:
+            resp = await client.post(url, json=payload)
+            if resp.status_code == 200:
+                data = resp.json()
+                text_response = data["candidates"][0]["content"]["parts"][0]["text"]
+                raw_json = json.loads(text_response)
+                if "type" in raw_json:
+                    return ActionOutput(
+                        type=raw_json.get("type", "finish"),
+                        selector=raw_json.get("selector"),
+                        value=raw_json.get("value"),
+                        explanation=f"[Gemini] " + raw_json.get("explanation", "Action planned by Gemini."),
+                        confidence=float(raw_json.get("confidence", 0.95)),
+                    )
+    except Exception as e:
+        print(f"[Gemini Exception] {e}")
     return None
 
 
@@ -711,13 +700,29 @@ def universal_nlp_reasoner(
     search_match = re.search(r"^(?:find|search(?:\s+for)?|look(?:\s+up|\s+for)?|show(?:\s+me)?|buy|shop(?:\s+for)?|get)\s+(.+)$", task_clean, re.I)
     if search_match:
         query_text = search_match.group(1).strip()
+
+        # Check if search results are already on screen
+        product_results = []
+        for el in elements:
+            txt = (el.text or "").strip()
+            if len(txt) > 20 and el.tag not in ["input", "textarea", "select", "button"]:
+                if any(w in txt.lower() for w in query_text.lower().split() if len(w) > 2):
+                    product_results.append(txt)
+
+        if product_results and history and len(history) >= 1:
+            top_3 = " | ".join(product_results[:3])
+            return ActionOutput(
+                type="finish",
+                explanation=f"Found top matching products for '{query_text}': {top_3}",
+                confidence=0.98,
+            )
+
         # Find best search input
         search_input = None
         for el in elements:
             if el.tag in ["input", "textarea"]:
                 haystack = f"{el.name} {el.id} {el.text} {el.selector} {el.role}".lower()
-                placeholder = haystack
-                if any(k in haystack for k in ["search", "query", "searchbox", "nav-search", "q", "search_query", "searchinput", "prompt", "products"]):
+                if any(k in haystack for k in ["search", "query", "searchbox", "nav-search", "q", "search_query", "searchinput", "prompt", "products", "field-keywords", "twotabsearchtextbox"]):
                     search_input = el
                     break
         if not search_input:
@@ -740,7 +745,7 @@ def universal_nlp_reasoner(
             else:
                 # Search bar already contains query -> press search button or submit
                 for el in elements:
-                    if (el.tag == "button" or el.type == "submit") and any(k in (el.text or el.id or el.name or "").lower() for k in ["search", "go", "submit", "find"]):
+                    if (el.tag in ["button", "input"] or el.type == "submit") and any(k in (el.text or el.id or el.name or "").lower() for k in ["search", "go", "submit", "find", "nav-search-submit"]):
                         return ActionOutput(
                             type="click",
                             selector=el.selector or (f"#{el.id}" if el.id else "button[type='submit']"),
