@@ -46,32 +46,18 @@ const rawCtx    = rawCanvas.getContext("2d");
 
 // ── OWL-ViT: zero-shot PII object detection ──────────────────────────────────
 const OWL_VIT_MODEL     = "Xenova/owlvit-base-patch32";
-const OWL_VIT_THRESHOLD = 0.12; // Sensitive threshold for open-vocabulary zero-shot queries
+const OWL_VIT_THRESHOLD = 0.15; // Sensitive threshold for open-vocabulary zero-shot queries
 
-/** 22 zero-shot text queries covering physical PII objects */
+/** Essential zero-shot text queries covering physical PII objects (optimized for high FPS) */
 const PII_VISUAL_QUERIES = [
   "credit card",
   "debit card",
-  "bank card",
   "passport",
   "identity card",
   "national id card",
-  "driving license",
   "driver's license",
-  "aadhaar card",
-  "pan card",
-  "social security card",
-  "government document",
-  "official document",
   "laptop screen",
-  "phone screen",
-  "computer monitor",
-  "bank statement",
-  "printed financial document",
-  "medical record",
   "confidential document",
-  "cheque book",
-  "voter id card",
 ];
 
 let owlvitPipeline    = null;
@@ -83,9 +69,6 @@ async function initOWLViT() {
 
   owlvitLoadPromise = (async () => {
     console.log("[Offscreen] OWL-ViT: initialising zero-shot detector (WASM SIMD CPU) …");
-    // setup_vendor.py pins @xenova/transformers@2.17.2 (a v2.x release). That
-    // version's device option only recognizes "wasm"/"webgpu" — "cpu" is a
-    // v3-only value and gets silently mishandled here, so OWL-ViT never loads.
     owlvitPipeline = await pipeline("zero-shot-object-detection", OWL_VIT_MODEL, {
       device: "wasm",
       quantized: true,
@@ -94,8 +77,6 @@ async function initOWLViT() {
     return owlvitPipeline;
   })();
 
-  // Race: return null if model hasn't loaded yet to avoid blocking pipeline
-  // The model will still be loading in the background for future calls
   return owlvitLoadPromise;
 }
 
@@ -342,7 +323,7 @@ async function processAndRedactFrame(payload) {
   let owlvitModel = null;
   try {
     if (owlvitLoadPromise) {
-      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 25000));
+      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 3500));
       owlvitModel = await Promise.race([owlvitLoadPromise, timeoutPromise]);
     } else {
       owlvitModel = await initOWLViT();
@@ -389,6 +370,22 @@ async function processAndRedactFrame(payload) {
   // ── L2 + L3: OWL-ViT and MediaPipe run in parallel ──────────────────────
   const tStartVision = performance.now();
 
+  // Downscale image for fast OWL-ViT inference (max 768px)
+  const maxOwlDim = 768;
+  const owlScale = Math.min(1.0, maxOwlDim / Math.max(width, height));
+  const owlW = Math.round(width * owlScale);
+  const owlH = Math.round(height * owlScale);
+
+  const owlCanvas = new OffscreenCanvas(owlW, owlH);
+  const owlCtx = owlCanvas.getContext("2d");
+  owlCtx.drawImage(img, 0, 0, owlW, owlH);
+  const owlBlob = await owlCanvas.convertToBlob({ type: "image/jpeg", quality: 0.8 });
+  const owlDataUrl = await new Promise((res) => {
+    const reader = new FileReader();
+    reader.onload = () => res(reader.result);
+    reader.readAsDataURL(owlBlob);
+  });
+
   const [owlResult, faceResult] = await Promise.allSettled([
     // L2: OWL-ViT zero-shot object detection (credit cards, IDs, passports, screens)
     (async () => {
@@ -399,7 +396,7 @@ async function processAndRedactFrame(payload) {
         categories.govIds !== false ||
         categories.creditCards !== false;
       if (!shouldRun) return [];
-      return owlvitModel(screenshotUrl, PII_VISUAL_QUERIES, { threshold });
+      return owlvitModel(owlDataUrl, PII_VISUAL_QUERIES, { threshold });
     })(),
 
     // L3: MediaPipe BlazeFace (human face bounding boxes)
@@ -418,9 +415,10 @@ async function processAndRedactFrame(payload) {
   }
 
 
-  // ── Map OWL-ViT detections → PII redaction boxes ──────────────────────────
+  // ── Map OWL-ViT detections → PII redaction boxes (scaled back to original resolution) ──
   const owlRedactions = [];
   const owlDetections = owlResult.value ?? [];
+  const invScale = 1.0 / owlScale;
 
   for (const det of owlDetections) {
     const { label, score, box: { xmin, ymin, xmax, ymax } } = det;
@@ -444,10 +442,10 @@ async function processAndRedactFrame(payload) {
       label:      `OWL-ViT: ${label}`,
       category,
       confidence: score,
-      x: Math.round(xmin),
-      y: Math.round(ymin),
-      w: Math.round(xmax - xmin),
-      h: Math.round(ymax - ymin),
+      x: Math.round(xmin * invScale),
+      y: Math.round(ymin * invScale),
+      w: Math.round((xmax - xmin) * invScale),
+      h: Math.round((ymax - ymin) * invScale),
     });
   }
 

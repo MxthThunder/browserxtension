@@ -36,6 +36,9 @@ const linkOpenOptions = document.getElementById("linkOpenOptions");
 const linkOpenDemo = document.getElementById("linkOpenDemo");
 const btnOpenSidePanel = document.getElementById("btnOpenSidePanel");
 const linkOpenDashboard = document.getElementById("linkOpenDashboard");
+const btnTheme = document.getElementById("btnTheme");
+const iconMoon = document.getElementById("iconMoon");
+const iconSun  = document.getElementById("iconSun");
 
 let latestCapture = null;
 let activeViewMode = "sanitized";
@@ -45,9 +48,12 @@ let pendingStepRow = null;
 document.addEventListener("DOMContentLoaded", async () => {
   const settings = await getSettings();
 
+  // Apply saved theme
+  applyTheme(settings.theme || "dark");
+
   setProtectionUI(settings.enabled !== false);
   setAdvancedUI(Boolean(settings.uiAdvancedMode));
-  if (selModelProvider) selModelProvider.value = settings.modelProvider || "auto";
+  if (selModelProvider) selModelProvider.value = settings.modelProvider || "ollama_qwen";
 
   await probeServerHealth();
   await loadBasicCount();
@@ -182,6 +188,27 @@ toggleProtection.addEventListener("click", async () => {
   await saveSettings({ enabled: next });
   appendLog(next ? "Protection resumed." : "Protection paused.");
 });
+
+// ── Theme toggle ─────────────────────────────────────────────────
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  if (theme === "light") {
+    iconMoon.style.display = "none";
+    iconSun.style.display  = "block";
+  } else {
+    iconMoon.style.display = "block";
+    iconSun.style.display  = "none";
+  }
+}
+
+if (btnTheme) {
+  btnTheme.addEventListener("click", async () => {
+    const current = document.documentElement.dataset.theme || "dark";
+    const next = current === "dark" ? "light" : "dark";
+    applyTheme(next);
+    await saveSettings({ theme: next });
+  });
+}
 
 // Advanced view toggle
 function setAdvancedUI(open) {

@@ -209,7 +209,7 @@ async def is_ollama_available(ollama_host: str) -> bool:
         return _ollama_online
 
     try:
-        async with httpx.AsyncClient(timeout=0.15) as client:
+        async with httpx.AsyncClient(timeout=2.0) as client:
             resp = await client.get(f"{ollama_host}/api/tags")
             _ollama_online = (resp.status_code == 200)
     except Exception:
@@ -230,7 +230,7 @@ async def try_ollama_qwen(
     structured_data: Optional[Dict[str, Any]] = None,
 ) -> Optional[ActionOutput]:
     """
-    Attempts reasoning using local Ollama (Qwen2.5-VL / Qwen2.5-Coder / Qwen3).
+    Attempts fast on-device reasoning using local Ollama (Qwen2.5:1.5b).
     Only invoked if Ollama is actively running.
     """
     ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
@@ -245,64 +245,76 @@ async def try_ollama_qwen(
             "tag": el.tag,
             "type": el.type,
             "name": el.name,
-            "text": el.text,
+            "text": (el.text or "")[:40],
             "selector": el.selector,
             "role": el.role,
-            "value": el.value or "",
+            "value": (el.value or "")[:30],
             "is_interactive": el.is_interactive
         }
-        for el in elements[:80]
+        for el in elements[:40]
     ]
 
     history_text = ""
     if history and len(history) > 0:
         history_text = "\nPrevious Actions:\n" + "\n".join(
             f"- Step {h.get('step', i+1)}: [{h.get('action', '').upper()}] {h.get('selector', '')}: {h.get('explanation', '')}"
-            for i, h in enumerate(history)
+            for i, h in enumerate(history[-3:])
         )
 
-    telemetry_text = ""
-    if structured_data:
-        telemetry_text = "\n\n=== REAL-TIME TELEMETRY & STRUCTURED DATA ===\n" + json.dumps(structured_data, indent=2) + "\n============================================\n"
-
     system_prompt = (
-        "You are an expert autonomous browser agent. You receive a user goal, session history, and visible web elements.\n"
-        f"Progress: Step {step} of {max_steps}.\n"
+        "You are an autonomous browser agent. Choose next action from visible web elements.\n"
+        f"Progress: Step {step}/{max_steps}.\n"
         "RULES:\n"
-        "1. DO NOT REPEAT ACTIONS: If search was already done, do NOT search again. Inspect products or scroll down!\n"
-        "2. To explore more results, use type: 'scroll', value: 'down'.\n"
-        "3. Once best product is found, use type: 'finish' with your recommendation summary in explanation.\n"
-        "4. If 'REAL-TIME TELEMETRY & STRUCTURED DATA' is provided below, treat those values as verified exact parameters.\n"
-        "Respond strictly with JSON: "
-        '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
-        '"selector": "CSS selector or element id", "value": "text or scroll direction", '
-        '"explanation": "reasoning and findings", "confidence": 0.0-1.0}'
+        "1. If search input exists and task is searching, type query into search input.\n"
+        "2. If search results visible or already searched, scroll down or pick top result.\n"
+        "3. Once product or goal is found, use type: 'finish'.\n"
+        "4. Write explanation in plain English text only (no emojis or non-English characters).\n"
+        "Output JSON only: {\"type\": \"click\"|\"type\"|\"scroll\"|\"select\"|\"submit\"|\"finish\", \"selector\": \"CSS selector\", \"value\": \"text or down\", \"explanation\": \"short English description\"}"
     )
 
-    user_prompt = f"User Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
+    user_prompt = f"Goal: {task}{history_text}\nElements:\n{json.dumps(elements_digest)}"
 
     payload = {
         "model": model,
         "prompt": f"{system_prompt}\n\n{user_prompt}",
         "stream": False,
-        "format": "json"
+        "format": "json",
+        "options": {
+            "temperature": 0.1,
+            "num_predict": 100
+        }
     }
 
     try:
-        async with httpx.AsyncClient(timeout=30.0) as client:
+        async with httpx.AsyncClient(timeout=12.0) as client:
             resp = await client.post(f"{ollama_host}/api/generate", json=payload)
             if resp.status_code == 200:
                 data = resp.json()
                 raw_json = json.loads(data.get("response", "{}"))
-                if "type" in raw_json:
+                act_type = str(raw_json.get("type", "finish")).lower().strip()
+                # Normalize types
+                if act_type in ["search", "input", "enter", "fill", "write"]:
+                    act_type = "type"
+                elif act_type in ["press", "tap", "open"]:
+                    act_type = "click"
+                elif act_type in ["complete", "done", "stop"]:
+                    act_type = "finish"
+
+                raw_explanation = raw_json.get("explanation", "Action planned by local Qwen model.")
+                safe_explanation = raw_explanation.encode("ascii", "ignore").decode("ascii").strip()
+                if not safe_explanation:
+                    safe_explanation = f"Executing {act_type} on page"
+
+                if act_type in ["click", "type", "scroll", "select", "submit", "wait", "navigate", "finish"]:
                     return ActionOutput(
-                        type=raw_json.get("type", "finish"),
+                        type=act_type,
                         selector=raw_json.get("selector"),
                         value=raw_json.get("value"),
-                        explanation=f"[Qwen] " + raw_json.get("explanation", "Action planned by local model."),
+                        explanation=f"[Qwen] {safe_explanation}",
                         confidence=float(raw_json.get("confidence", 0.92))
                     )
-    except Exception:
+    except Exception as e:
+        print(f"[Qwen Exception] {e}")
         return None
     return None
 
@@ -695,7 +707,54 @@ def universal_nlp_reasoner(
                     confidence=0.95,
                 )
 
-    # 5. Generic single-value typing if user gave simple string
+    # 5. Search / Product Finding Intent (e.g. "find asus laptops", "search for headphones", "buy iphone")
+    search_match = re.search(r"^(?:find|search(?:\s+for)?|look(?:\s+up|\s+for)?|show(?:\s+me)?|buy|shop(?:\s+for)?|get)\s+(.+)$", task_clean, re.I)
+    if search_match:
+        query_text = search_match.group(1).strip()
+        # Find best search input
+        search_input = None
+        for el in elements:
+            if el.tag in ["input", "textarea"]:
+                haystack = f"{el.name} {el.id} {el.text} {el.selector} {el.role}".lower()
+                placeholder = haystack
+                if any(k in haystack for k in ["search", "query", "searchbox", "nav-search", "q", "search_query", "searchinput", "prompt", "products"]):
+                    search_input = el
+                    break
+        if not search_input:
+            # Pick first visible text input
+            for el in elements:
+                if el.tag == "input" and el.type in ["text", "search", "", None]:
+                    search_input = el
+                    break
+
+        if search_input:
+            if not search_input.value or query_text.lower() not in search_input.value.lower():
+                sel = search_input.selector or (f"#{search_input.id}" if search_input.id else "input[type='text']")
+                return ActionOutput(
+                    type="type",
+                    selector=sel,
+                    value=query_text,
+                    explanation=f"Searching for '{query_text}'.",
+                    confidence=0.95,
+                )
+            else:
+                # Search bar already contains query -> press search button or submit
+                for el in elements:
+                    if (el.tag == "button" or el.type == "submit") and any(k in (el.text or el.id or el.name or "").lower() for k in ["search", "go", "submit", "find"]):
+                        return ActionOutput(
+                            type="click",
+                            selector=el.selector or (f"#{el.id}" if el.id else "button[type='submit']"),
+                            explanation=f"Submitting search query for '{query_text}'.",
+                            confidence=0.95,
+                        )
+                return ActionOutput(
+                    type="submit",
+                    selector=search_input.selector or "input",
+                    explanation=f"Submitting search for '{query_text}'.",
+                    confidence=0.90,
+                )
+
+    # 6. Generic single-value typing if user gave simple string
     if any(k in task_lower for k in ["type ", "enter ", "fill ", "input ", "write "]):
         for el in elements:
             if el.tag in ["input", "textarea"] and (not el.value or el.value.strip() == ""):
