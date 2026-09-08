@@ -783,9 +783,26 @@ async def act_endpoint(payload: ActRequest):
     model_used = "universal-nlp-engine"
     action = None
 
-    # Priority 1: Google Gemini (Primary Cloud VLM for intelligent multi-step browser actions)
-    if payload.model_provider == "gemini" or (payload.model_provider == "auto" and os.getenv("GEMINI_API_KEY")):
-        print(f"[Reasoner] Delegating action planning to Gemini Cloud VLM (Step {payload.step or 1}/{payload.max_steps or 8})...")
+    # ── Priority 1: Local Ollama / Qwen (primary — on-device, zero cloud cost)
+    # In "auto" mode Qwen is tried FIRST. Cloud VLMs are only used if Ollama is
+    # unavailable or the user explicitly selects a cloud provider.
+    if payload.model_provider in ("ollama_qwen", "auto"):
+        print(f"[Reasoner] Delegating to local Ollama Qwen (Step {payload.step or 1}/{payload.max_steps or 8})...")
+        action = await try_ollama_qwen(
+            payload.task,
+            payload.dom_elements or [],
+            payload.sanitized_image_base64,
+            history=payload.history or [],
+            step=payload.step or 1,
+            max_steps=payload.max_steps or 8,
+            structured_data=payload.structured_data,
+        )
+        if action:
+            model_used = "ollama-qwen"
+
+    # ── Priority 2: Google Gemini (cloud fallback when Qwen unavailable, or explicit selection)
+    if not action and (payload.model_provider == "gemini" or (payload.model_provider == "auto" and os.getenv("GEMINI_API_KEY"))):
+        print(f"[Reasoner] Qwen unavailable — falling back to Gemini Cloud VLM (Step {payload.step or 1}/{payload.max_steps or 8})...")
         action = await try_gemini(
             payload.task,
             payload.dom_elements or [],
@@ -798,9 +815,9 @@ async def act_endpoint(payload: ActRequest):
         if action:
             model_used = "gemini"
 
-    # Priority 2: OpenAI Cloud VLM (if explicitly selected or auto fallback with key)
+    # ── Priority 3: OpenAI (explicit selection only)
     if not action and (payload.model_provider == "openai" or (payload.model_provider == "auto" and os.getenv("OPENAI_API_KEY"))):
-        print("[Reasoner] Delegating action planning to OpenAI Cloud VLM...")
+        print("[Reasoner] Falling back to OpenAI Cloud VLM...")
         action = await try_openai(
             payload.task,
             payload.dom_elements or [],
@@ -812,21 +829,6 @@ async def act_endpoint(payload: ActRequest):
         )
         if action:
             model_used = "openai"
-
-    # Priority 3: Local Ollama / Qwen model (ONLY if explicitly selected by user)
-    if not action and payload.model_provider == "ollama_qwen":
-        print("[Reasoner] Delegating action planning to Local Ollama Qwen...")
-        action = await try_ollama_qwen(
-            payload.task,
-            payload.dom_elements or [],
-            payload.sanitized_image_base64,
-            history=payload.history or [],
-            step=payload.step or 1,
-            max_steps=payload.max_steps or 8,
-            structured_data=payload.structured_data,
-        )
-        if action:
-            model_used = "ollama-qwen"
 
     # Priority 4: Fallback Universal Semantic NLP Reasoner (Handles ANY free-form prompt offline)
     if not action:

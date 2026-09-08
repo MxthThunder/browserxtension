@@ -269,6 +269,45 @@ export class AutonomousAgentLoop {
           execAction.selector = resolveLocalActionValue(execAction.selector);
         }
 
+        // ── DOM Verification (L1 Authoritative Check) ─────────────────────────
+        // Before any DOM mutation, confirm the target selector still exists in
+        // the live page. Catches SPA navigations and stale perception state.
+        const needsSelectorCheck = ["click", "type", "select", "submit"].includes(execAction.type) && execAction.selector;
+        if (needsSelectorCheck) {
+          try {
+            const tab = await this._getActiveTab();
+            if (tab && tab.id) {
+              const verifyResp = await this._sendTabMessage(tab.id, {
+                type: "VERIFY_SELECTOR",
+                selector: execAction.selector,
+              });
+              if (!verifyResp || !verifyResp.exists) {
+                console.warn(`[AgentLoop] DOM verification failed: selector "${execAction.selector}" not found. Re-perceiving page.`);
+                // Record the miss but do NOT throw — re-enter the loop so the
+                // next iteration will capture a fresh perception of the updated DOM.
+                const missRecord = {
+                  step: this.currentStep,
+                  action: { ...action, type: "dom_miss" },
+                  permission,
+                  executionReport: { ok: false, error: `selector_not_found: ${execAction.selector}` },
+                  modelUsed: actionResult.modelUsed,
+                  serverLatencyMs: actionResult.serverLatencyMs,
+                  totalStepLatencyMs: Math.round(performance.now() - stepStartTime),
+                  sanitizedImage: captureResult.sanitizedImageUrl,
+                  redactionCount: (captureResult.redactionList || []).length,
+                };
+                this.stepHistory.push(missRecord);
+                if (onStepCallback) onStepCallback(missRecord);
+                await new Promise((r) => setTimeout(r, this.settleDelayMs));
+                continue; // skip to next loop iteration — fresh capture will re-perceive
+              }
+            }
+          } catch (verifyErr) {
+            // Verification message failed (tab restricted, etc.) — proceed optimistically
+            console.warn("[AgentLoop] DOM verify message failed, proceeding:", verifyErr.message);
+          }
+        }
+
         let executionReport = null;
         try {
           const tab = await this._getActiveTab();

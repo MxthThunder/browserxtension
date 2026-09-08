@@ -26,7 +26,7 @@ export const DEFAULT_SETTINGS = {
   // Server & VLM Backend
   serverUrl: "http://127.0.0.1:8001/api/act",
   serverHealthUrl: "http://127.0.0.1:8001/health",
-  modelProvider: "auto", // "auto" (Gemini Cloud VLM preferred) | "gemini" | "ollama_qwen" | "nlp"
+  modelProvider: "ollama_qwen", // Primary: local Qwen via Ollama | fallback: "gemini" | offline: "nlp"
   requestTimeoutMs: 60000,
   apiKey: "",
 
@@ -36,6 +36,7 @@ export const DEFAULT_SETTINGS = {
   autoScanOnLoad: true,
   autoRefreshStream: false,
   uiAdvancedMode: false, // Popup: show power-user tools beyond the basic on/off view
+  theme: "dark",         // Popup colour scheme: "dark" | "light"
 
   // Whitelist / Excluded Domains (Redaction bypassed on these domains)
   domainWhitelist: [],

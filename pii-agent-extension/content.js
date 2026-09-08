@@ -1007,6 +1007,37 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     return false;
   }
 
+  // ── DOM Verification (L1 Authoritative) ─────────────────────────────────
+  // Called by agent_loop.js before each click/type/select to confirm the
+  // target element still exists in the live DOM (guards against SPA navigation
+  // and stale perception state).
+  if (message.type === "VERIFY_SELECTOR") {
+    try {
+      const sel = message.selector;
+      if (!sel) {
+        sendResponse({ ok: true, exists: false, reason: "no_selector" });
+        return false;
+      }
+      const el = document.querySelector(sel);
+      const exists = Boolean(el);
+      let visible = false;
+      if (el) {
+        const rect = el.getBoundingClientRect();
+        const style = window.getComputedStyle(el);
+        visible =
+          rect.width > 0 &&
+          rect.height > 0 &&
+          style.display !== "none" &&
+          style.visibility !== "hidden" &&
+          style.opacity !== "0";
+      }
+      sendResponse({ ok: true, exists, visible, selector: sel });
+    } catch (err) {
+      sendResponse({ ok: false, exists: false, reason: err.message });
+    }
+    return false;
+  }
+
   return false;
 });
 

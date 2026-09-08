@@ -1,8 +1,8 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <title>ISRO PS #26171 — Pitch Deck & Architecture Presentation</title>
+  <title>ISRO PS #26171 â€” Pitch Deck & Architecture Presentation</title>
   <style>
     :root {
       --bg: #0b0f19;
@@ -135,14 +135,14 @@
 <body>
   <header>
     <div class="brand">
-      <span style="font-size: 20px;">🛡️</span>
+      <span style="font-size: 20px;">ðŸ›¡ï¸</span>
       <strong style="font-size: 15px;">Visual Perception Privacy Agent</strong>
       <span class="badge">ISRO PS #26171</span>
     </div>
     <div class="slide-nav">
       <span id="slideIndicator" style="font-size: 13px; color: var(--muted);">Slide 1 of 6</span>
-      <button id="btnPrev" class="btn">◀ Prev</button>
-      <button id="btnNext" class="btn btn-primary">Next ▶</button>
+      <button id="btnPrev" class="btn">â—€ Prev</button>
+      <button id="btnNext" class="btn btn-primary">Next â–¶</button>
     </div>
   </header>
 
@@ -150,21 +150,21 @@
     <!-- Slide 1: Title & Executive Summary -->
     <div class="slide active">
       <div style="text-align: center; max-width: 800px; margin: 40px auto;">
-        <span class="badge" style="font-size: 13px; padding: 4px 12px;">Indian Space Research Organisation (ISRO) — PS #26171</span>
+        <span class="badge" style="font-size: 13px; padding: 4px 12px;">Indian Space Research Organisation (ISRO) â€” PS #26171</span>
         <h1 style="font-size: 34px; margin: 16px 0 10px;">On-Device Visual Perception for Light-weight Browser Agents</h1>
         <p style="font-size: 18px; color: #93c5fd; font-weight: 500;">Zero-Leakage Client-Side Visual Sanitization with WebGPU On-Device Transformers</p>
         
         <div class="grid-3" style="margin: 36px 0 24px; text-align: left;">
           <div class="card">
-            <h3>🔒 Zero-Leakage Guarantee</h3>
+            <h3>ðŸ”’ Zero-Leakage Guarantee</h3>
             <p style="font-size: 12px; margin-bottom: 0;">Canvas-level redaction occurs before any pixel reaches the network. Raw screens never leave client memory.</p>
           </div>
           <div class="card">
-            <h3>⚡ WebGPU Hardware Acceleration</h3>
+            <h3>âš¡ WebGPU Hardware Acceleration</h3>
             <p style="font-size: 12px; margin-bottom: 0;">Runs quantized Vision Transformers locally on the client GPU with automated WASM fallback.</p>
           </div>
           <div class="card">
-            <h3>🤖 Closed-Loop Agent</h3>
+            <h3>ðŸ¤– Closed-Loop Agent</h3>
             <p style="font-size: 12px; margin-bottom: 0;">Centralized VLM plans actions on sanitized context; client executes synthesized native DOM events.</p>
           </div>
         </div>
@@ -178,7 +178,7 @@
       
       <div class="grid-2" style="margin-bottom: 20px;">
         <div class="card" style="border-left: 4px solid var(--red);">
-          <h3 style="color: #f87171;">❌ Existing Cloud Browser Agents</h3>
+          <h3 style="color: #f87171;">âŒ Existing Cloud Browser Agents</h3>
           <p style="font-size: 13px;">Google Gemini Auto Browse, OpenAI Operator, Claude for Chrome, Edge Copilot:</p>
           <ul style="font-size: 13px; color: #d1d5db; padding-left: 20px; line-height: 1.8;">
             <li>Stream <strong>unredacted raw screen buffers</strong> to centralized cloud servers.</li>
@@ -188,7 +188,7 @@
         </div>
 
         <div class="card" style="border-left: 4px solid var(--green);">
-          <h3 style="color: #34d399;">✔ Our Solution: Local Visual Perception</h3>
+          <h3 style="color: #34d399;">âœ” Our Solution: Local Visual Perception</h3>
           <p style="font-size: 13px;">Dual-Layer Hybrid Defense running strictly in the user's browser:</p>
           <ul style="font-size: 13px; color: #d1d5db; padding-left: 20px; line-height: 1.8;">
             <li><strong>Layer 1 (DOM Engine):</strong> Deterministic 100% precision on credentials & cards.</li>
@@ -209,30 +209,30 @@
 | BROWSER EXTENSION (MANIFEST V3 - ZERO-LEAKAGE BOUNDARY)                                       |
 |                                                                                               |
 |  [Active Web Tab]                                                                             |
-|         │                                                                                     |
-|         ├── (1) Viewport Screenshot ────────┐                                                 |
-|         │                                   ▼                                                 |
-|         └── (2) DOM PII Scanner ───► [Offscreen Canvas & WebGPU Engine]                       |
-|                 (Passwords, Cards,         │                                                  |
-|                  Aadhaar/SSN, ARIA)        ├─► Local Vision Model (yolos-tiny on WebGPU)      |
-|                                            │   - Detects person & computes ~30% face proxy    |
-|                                            ▼                                                  |
+|         â”‚                                                                                     |
+|         â”œâ”€â”€ (1) Viewport Screenshot â”€â”€â”€â”€â”€â”€â”€â”€â”                                                 |
+|         â”‚                                   â–¼                                                 |
+|         â””â”€â”€ (2) DOM PII Scanner â”€â”€â”€â–º [Offscreen Canvas & WebGPU Engine]                       |
+|                 (Passwords, Cards,         â”‚                                                  |
+|                  Aadhaar/SSN, ARIA)        â”œâ”€â–º Local Vision Model (OWL-ViT + MediaPipe BlazeFace)      |
+|                                            â”‚   - OWL-ViT: zero-shot PII objects | MediaPipe: faces | Tesseract: OCR    |
+|                                            â–¼                                                  |
 |                                     [Canvas Blackout Redaction]                               |
-|                                            │                                                  |
-|                                            ▼                                                  |
+|                                            â”‚                                                  |
+|                                            â–¼                                                  |
 |                        Sanitized Context Payload (0 Raw Pixels)                               |
-+────────────────────────────────────────────┼──────────────────────────────────────────────────+
-                                             │ POST /api/act (HTTP)
-                                             ▼
-+───────────────────────────────────────────────────────────────────────────────────────────────+
++â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¼â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€+
+                                             â”‚ POST /api/act (HTTP)
+                                             â–¼
++â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€+
 | CENTRALIZED VLM REASONING SERVER (FASTAPI)                                                    |
 |                                                                                               |
 |   Receives: Sanitized Visual Frame + DOM Element Digest + User Instruction                    |
 |   Reasoning Engine: Redaction-aware VLM (Gemini / OpenAI / Semantic Matcher)                  |
 |   Output: Structured Action JSON -> { "type": "click", "selector": "#submitBtn" }             |
-+────────────────────────────────────────────┬──────────────────────────────────────────────────+
-                                             │ Action JSON
-                                             ▼
++â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”¬â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€+
+                                             â”‚ Action JSON
+                                             â–¼
                                      [Client DOM Executor]
                               Synthesizes native click/type event
                       on target element with animated action indicator
@@ -324,7 +324,7 @@
 
       <div class="grid-2">
         <div class="card">
-          <h3>⚡ Latency Breakdown (Warm WebGPU Loop: 504.8 ms)</h3>
+          <h3>âš¡ Latency Breakdown (Warm WebGPU Loop: 504.8 ms)</h3>
           <div style="margin-top: 14px; font-size: 12px; line-height: 2;">
             <div style="display:flex; justify-content:space-between;"><span>1. DOM PII Coordinates Scan</span><strong>3.8 ms</strong></div>
             <div style="display:flex; justify-content:space-between;"><span>2. Viewport Screen Capture</span><strong>16.4 ms</strong></div>
@@ -337,7 +337,7 @@
         </div>
 
         <div class="card">
-          <h3>💻 Resource Utilization Comparison</h3>
+          <h3>ðŸ’» Resource Utilization Comparison</h3>
           <table>
             <thead>
               <tr><th>Metric</th><th>WebGPU Engine</th><th>CPU WASM</th></tr>
@@ -408,7 +408,7 @@
       slides[currentIdx].classList.add("active");
       slideIndicator.textContent = `Slide ${currentIdx + 1} of ${slides.length}`;
       btnPrev.disabled = currentIdx === 0;
-      btnNext.textContent = currentIdx === slides.length - 1 ? "Replay 🔄" : "Next ▶";
+      btnNext.textContent = currentIdx === slides.length - 1 ? "Replay ðŸ”„" : "Next â–¶";
     }
 
     btnPrev.addEventListener("click", () => updateSlide(currentIdx - 1));
