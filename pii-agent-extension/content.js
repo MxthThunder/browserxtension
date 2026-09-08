@@ -8,6 +8,10 @@
  * 4. Execute synthesized native browser events from centralized VLM agent.
  */
 
+(() => {
+if (window.__PRIVIBROWSE_CONTENT_INITIALIZED__) return;
+window.__PRIVIBROWSE_CONTENT_INITIALIZED__ = true;
+
 // Sensitive Autocomplete Standard Tokens
 const SENSITIVE_AUTOCOMPLETE_TOKENS = [
   "cc-number", "cc-exp", "cc-exp-month", "cc-exp-year", "cc-csc", "cc-name", "cc-type",
@@ -939,10 +943,10 @@ async function executeAgentAction(action) {
 
 // Runtime Message Listener
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
-  // Only the top-level document handles extension commands to prevent iframe race conditions
-  if (window.top !== window.self) return;
-
   if (message.type === "GET_DOM_PII_BOXES") {
+    if (window.top !== window.self) {
+      return false;
+    }
     const matches = scanPageForSensitiveElements();
     const interactive = extractInteractiveElements();
     let structuredData = null;
@@ -1089,3 +1093,4 @@ if (document.readyState === "loading") {
 } else {
   bootWithSettings();
 }
+})();

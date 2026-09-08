@@ -68,6 +68,27 @@ app.add_middleware(
 )
 
 
+class LogItem(BaseModel):
+    source: str = "extension"
+    level: str = "info"
+    message: str
+    details: Optional[Dict[str, Any]] = None
+
+@app.post("/api/log")
+async def log_endpoint(item: LogItem):
+    t = time.strftime("%H:%M:%S")
+    prefix = f"[{t}] [{item.source.upper()}] [{item.level.upper()}]"
+    if item.level == "error":
+        print(f"\033[91m{prefix} {item.message}\033[0m", flush=True)
+    elif item.level == "warn":
+        print(f"\033[93m{prefix} {item.message}\033[0m", flush=True)
+    else:
+        print(f"\033[96m{prefix} {item.message}\033[0m", flush=True)
+    if item.details:
+        print(f"       Details: {json.dumps(item.details)}", flush=True)
+    return {"ok": True}
+
+
 class DOMElement(BaseModel):
     tag: str
     id: Optional[str] = ""
@@ -388,9 +409,9 @@ async def try_gemini(
             }
         })
 
-    primary_model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+    primary_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
     candidate_models = [primary_model]
-    for fallback in ["gemini-1.5-flash", "gemini-2.0-flash", "gemini-1.5-pro", "gemini-2.5-flash"]:
+    for fallback in ["gemini-3.5-flash-lite", "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
         if fallback not in candidate_models:
             candidate_models.append(fallback)
 
@@ -813,8 +834,8 @@ async def act_endpoint(payload: ActRequest):
         if action:
             model_used = "openai"
 
-    # Priority 3: Local Ollama / Qwen model (ONLY if explicitly selected by user)
-    if not action and payload.model_provider == "ollama_qwen":
+    # Priority 3: Local Ollama / Qwen model (if explicitly selected or fallback)
+    if not action and (payload.model_provider == "ollama_qwen" or payload.model_provider == "auto"):
         print("[Reasoner] Delegating action planning to Local Ollama Qwen...")
         action = await try_ollama_qwen(
             payload.task,

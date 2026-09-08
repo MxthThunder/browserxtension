@@ -13,6 +13,7 @@ import { getSettings, saveSettings, logAuditEntry, DEFAULT_SETTINGS } from "./st
 import { agentLoop } from "./agent_loop.js";
 import { vault } from "./vault.js";
 import { semanticRedactor } from "./semantic_redactor.js";
+import { logEvent } from "./telemetry.js";
 
 const OFFSCREEN_DOCUMENT_PATH = "offscreen.html";
 
@@ -28,62 +29,56 @@ let agentSessionState = {
   summary: ""
 };
 
-if (chrome.storage?.session) {
-  chrome.storage.session.get(["agentSessionState"], (res) => {
-    if (res?.agentSessionState) {
-      agentSessionState = { ...agentSessionState, ...res.agentSessionState };
-    }
-  }).catch(() => {});
-}
+try {
+  if (chrome.storage?.session) {
+    chrome.storage.session.get(["agentSessionState"]).then((res) => {
+      if (res?.agentSessionState) {
+        agentSessionState = { ...agentSessionState, ...res.agentSessionState };
+      }
+    }).catch(() => {});
+  }
+} catch {}
 
 function syncSessionState() {
-  if (chrome.storage?.session) {
-    chrome.storage.session.set({ agentSessionState }).catch(() => {});
-  }
+  try {
+    if (chrome.storage?.session) {
+      chrome.storage.session.set({ agentSessionState }).catch(() => {});
+    }
+  } catch {}
 }
 
+logEvent("background", "Service Worker loaded and active");
+
 // Ensure offscreen document exists for WebGPU inference and canvas redaction
+let offscreenCreationPromise = null;
 async function ensureOffscreenDocument() {
   if (await chrome.offscreen.hasDocument()) {
     return;
   }
-  await chrome.offscreen.createDocument({
-    url: OFFSCREEN_DOCUMENT_PATH,
-    reasons: ["BLOBS"],
-    justification: "Client-side WebGPU vision inference and zero-leakage canvas redaction",
-  });
-  console.log("[Background] Offscreen WebGPU document initialized.");
-  // Give offscreen doc a moment to load its scripts before we send messages
-  await new Promise((r) => setTimeout(r, 300));
-}
+  if (offscreenCreationPromise) return offscreenCreationPromise;
 
-/**
- * Sends a message to the offscreen document with a configurable timeout.
- * Prevents the pipeline from hanging if the offscreen doc crashes or hangs.
- */
-function sendOffscreenMessage(message, timeoutMs = 90000) {
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => {
-      console.warn(`[Background] Offscreen message '${message.type}' timed out after ${timeoutMs}ms`);
-      resolve({ ok: false, error: `Offscreen timeout after ${timeoutMs}ms` });
-    }, timeoutMs);
-
+  offscreenCreationPromise = (async () => {
     try {
-      chrome.runtime.sendMessage(message, (response) => {
-        clearTimeout(timer);
-        if (chrome.runtime.lastError) {
-          console.warn("[Background] Offscreen sendMessage error:", chrome.runtime.lastError.message);
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
-        } else {
-          resolve(response || { ok: false, error: "Empty offscreen response" });
-        }
+      if (await chrome.offscreen.hasDocument()) return;
+      await chrome.offscreen.createDocument({
+        url: OFFSCREEN_DOCUMENT_PATH,
+        reasons: ["BLOBS"],
+        justification: "Client-side WebGPU vision inference and zero-leakage canvas redaction",
       });
+      logEvent("background", "Offscreen WebGPU document initialized.");
+      await new Promise((r) => setTimeout(r, 300));
     } catch (err) {
-      clearTimeout(timer);
-      resolve({ ok: false, error: err.message });
+      if (!err.message?.includes("Only a single offscreen document")) {
+        logEvent("background", `Offscreen creation note: ${err.message}`, null, "warn");
+      }
+    } finally {
+      offscreenCreationPromise = null;
     }
-  });
+  })();
+
+  return offscreenCreationPromise;
 }
+
 
 // Installation & Update Hook
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -167,12 +162,10 @@ function updateBadge(enabled, piiCount = 0) {
 }
 
 async function getActiveTab() {
-  let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab || !tab.id || !tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    tab = tabs[0];
-  }
-  return tab;
+  const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab && tab.id) return tab;
+  const allTabs = await chrome.tabs.query({ active: true });
+  return allTabs[0];
 }
 
 async function sendTabMessage(tabId, message) {
@@ -215,39 +208,80 @@ function isDomainWhitelisted(url, whitelist = []) {
  * Executes zero-leakage capture and client-side redaction pipeline.
  */
 async function captureAndRedactActiveTab(options = {}) {
+  const t0 = performance.now();
+  logEvent("background", "1/6: Starting captureAndRedactActiveTab pipeline...");
   const settings = await getSettings();
-  const tab = await getActiveTab();
+
+  let tab = null;
+  if (options.tabId) {
+    try {
+      tab = await chrome.tabs.get(options.tabId);
+    } catch (e) {
+      logEvent("background", `Could not get tab by ID ${options.tabId}: ${e.message}`, null, "warn");
+    }
+  }
+  if (!tab || !tab.id) {
+    tab = await getActiveTab();
+  }
 
   if (!tab || !tab.id) {
-    throw new Error("No active tab found to capture.");
+    logEvent("background", "No active tab found to capture!", null, "error");
+    throw new Error("No active tab found to capture. Please focus a web tab.");
   }
+  logEvent("background", `2/6: Active tab identified: ID=${tab.id}, Title="${tab.title || ''}", URL="${tab.url || ''}"`);
 
   // Check domain allowlist
   if (isDomainWhitelisted(tab.url, settings.domainWhitelist)) {
-    console.log("[Background] Domain is whitelisted, skipping visual redaction:", tab.url);
+    logEvent("background", `Domain is allowlisted, skipping redaction: ${tab.url}`);
   }
 
-  // 1. Fetch live DOM PII boxes from the active tab
+  // 1. Fetch live DOM PII boxes from the active tab with 3s timeout
+  logEvent("background", "3/6: Querying DOM content script for sensitive input fields...");
   let domData = { boxes: [], viewport: { width: 1, height: 1, devicePixelRatio: 1 } };
   try {
-    const response = await sendTabMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
+    const response = await Promise.race([
+      sendTabMessage(tab.id, { type: "GET_DOM_PII_BOXES" }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("Content script timeout after 3s")), 3000))
+    ]);
     if (response && response.ok) {
       domData = response;
+      logEvent("background", `Content script returned ${domData.boxes?.length || 0} DOM PII box(es)`);
     }
   } catch (err) {
-    console.warn("[Background] Could not contact content script on tab:", err.message);
+    logEvent("background", `DOM query note: ${err.message}`, null, "warn");
   }
 
   // Update badge with detected PII count
   updateBadge(settings.enabled, (domData.boxes || []).length);
 
   // 2. Capture tab screenshot
-  const screenshotUrl = await chrome.tabs.captureVisibleTab(tab.windowId, {
-    format: "jpeg",
-    quality: 90,
-  });
+  logEvent("background", "4/6: Capturing tab viewport screenshot...");
+  const windowId = options.windowId || tab.windowId;
+  let screenshotUrl;
+  try {
+    screenshotUrl = await chrome.tabs.captureVisibleTab(windowId, {
+      format: "jpeg",
+      quality: 90,
+    });
+  } catch (err) {
+    logEvent("background", `captureVisibleTab(windowId=${windowId}) note: ${err.message}. Retrying with active window...`, null, "warn");
+    try {
+      screenshotUrl = await chrome.tabs.captureVisibleTab(null, {
+        format: "jpeg",
+        quality: 90,
+      });
+    } catch (err2) {
+      logEvent("background", `captureVisibleTab(null) failed: ${err2.message}`, null, "error");
+      throw new Error(`Screenshot capture failed: ${err2.message}`);
+    }
+  }
+  if (!screenshotUrl) {
+    throw new Error("Failed to capture tab screenshot: empty data returned.");
+  }
+  logEvent("background", `Screenshot captured (${Math.round((screenshotUrl?.length || 0) / 1024)} KB)`);
 
   // 3. Ensure offscreen document is ready
+  logEvent("background", "5/6: Ensuring offscreen WebGPU/WASM engine is initialized...");
   await ensureOffscreenDocument();
 
   // 4. Send to offscreen engine for WebGPU inference + Canvas Redaction
@@ -260,20 +294,30 @@ async function captureAndRedactActiveTab(options = {}) {
     ...options,
   };
 
-  // Use timeout-guarded offscreen messaging to prevent eternal hangs
-  // First capture may be slow (model loading), subsequent ones are fast
-  const result = await sendOffscreenMessage({
-    type: "PROCESS_FRAME",
-    payload: {
-      screenshotUrl,
-      domBoxes: domData.boxes || [],
-      interactiveElements: domData.interactiveElements || [],
-      viewport: domData.viewport || { width: 1, height: 1, devicePixelRatio: 1 },
-      options: mergedOptions,
-      url: tab.url || "",
-      userTask: options.userTask || agentSessionState.taskPrompt || "",
-    },
-  }, 90000); // 90s to allow first-run OWL-ViT model loading
+  logEvent("background", "6/6: Dispatching PROCESS_FRAME to offscreen engine...");
+  let result;
+  try {
+    result = await Promise.race([
+      chrome.runtime.sendMessage({
+        type: "PROCESS_FRAME",
+        payload: {
+          screenshotUrl,
+          domBoxes: domData.boxes || [],
+          interactiveElements: domData.interactiveElements || [],
+          viewport: domData.viewport || { width: 1, height: 1, devicePixelRatio: 1 },
+          options: mergedOptions,
+          url: tab.url || "",
+          userTask: options.userTask || agentSessionState.taskPrompt || "",
+        },
+      }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("Offscreen PROCESS_FRAME timed out after 30s")), 30000))
+    ]);
+  } catch (err) {
+    logEvent("background", `Offscreen engine error: ${err.message}`, null, "error");
+    throw err;
+  }
+
+  logEvent("background", `Offscreen processing finished in ${Math.round(performance.now() - t0)}ms: ok=${result?.ok}, redacted=${result?.redactionList?.length || 0}`);
 
   if (!result || !result.ok) {
     if (settings.failClosed) {
@@ -434,10 +478,22 @@ vault.init().catch((err) =>
 
 // Runtime Message Router
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
+  if (!message || !message.type) return false;
+  if (message.type === "TELEMETRY_LOG") return false;
+
+  logEvent("background", `Received runtime message: ${message.type}`);
+
   if (message.type === "CAPTURE_AND_REDACT") {
+    logEvent("background", "Executing CAPTURE_AND_REDACT pipeline");
     captureAndRedactActiveTab(message.options || {})
-      .then((data) => sendResponse(data))
-      .catch((err) => sendResponse({ ok: false, error: err.message }));
+      .then((data) => {
+        logEvent("background", `CAPTURE_AND_REDACT succeeded: ok=${data?.ok}, redacted=${data?.redactionList?.length || 0}`);
+        sendResponse(data);
+      })
+      .catch((err) => {
+        logEvent("background", `CAPTURE_AND_REDACT failed: ${err.message}`, null, "error");
+        sendResponse({ ok: false, error: err.message });
+      });
     return true;
   }
 

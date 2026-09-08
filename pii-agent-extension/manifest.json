@@ -81,6 +81,7 @@
         "local_reasoner.js",
         "vault.js",
         "semantic_redactor.js",
+        "telemetry.js",
         "agent_client.js",
         "action_engine.js",
         "permission_engine.js",

@@ -19,6 +19,7 @@ import { promptGuard } from "./prompt_guard.js";
 import { semanticRedactor } from "./semantic_redactor.js";
 import { vault } from "./vault.js";
 import { defaultPrivacyReasoner } from "./local_reasoner.js";
+import { logEvent } from "./telemetry.js";
 
 /**
  * De-anonymizes an action value locally before any DOM insertion.
@@ -103,6 +104,7 @@ export class AutonomousAgentLoop {
     const settings = await getSettings();
     const maxSteps = options.maxSteps || settings.maxSteps || this.maxSteps;
 
+    this.options = options || {};
     this.status = AGENT_LOOP_STATUS.RUNNING;
     this.currentStep = 0;
     this.stepHistory = [];
@@ -111,6 +113,7 @@ export class AutonomousAgentLoop {
     // Reset session-scoped placeholder mappings for a clean task run
     semanticRedactor.resetSession();
 
+    logEvent("agent", `Starting autonomous loop: "${userTask}" (Max steps: ${maxSteps})`);
     let loopSummary = "Task completed successfully.";
 
     try {
@@ -126,7 +129,8 @@ export class AutonomousAgentLoop {
         }
 
         // ── Phase 1: Zero-Leakage Viewport Capture & Local Perception ──────────
-        const captureResult = await this._captureAndRedact({ ...options, userTask });
+        logEvent("agent", `Step ${this.currentStep}/${maxSteps}: Capturing & redacting tab viewport...`);
+        const captureResult = await this._captureAndRedact({ ...options, userTask, resolveAmbiguities: false });
         if (!captureResult || !captureResult.ok) {
           throw new Error(`Capture and local perception failed: ${captureResult?.error || "Unknown"}`);
         }
@@ -349,12 +353,16 @@ export class AutonomousAgentLoop {
 
   async _getActiveTab() {
     if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.query) {
-      let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-      if (!tab || !tab.id || !tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) {
-        const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-        tab = tabs[0];
+      if (this.options?.tabId) {
+        try {
+          const tab = await chrome.tabs.get(this.options.tabId);
+          if (tab && tab.id) return tab;
+        } catch {}
       }
-      return tab;
+      const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (tab && tab.id) return tab;
+      const allTabs = await chrome.tabs.query({ active: true });
+      return allTabs[0];
     }
     return null;
   }
@@ -390,33 +398,21 @@ export class AutonomousAgentLoop {
       return await this._customCaptureHandler(options);
     }
 
-    return new Promise((resolve) => {
-      if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
-        // Timeout guard: OWL-ViT first-run can take up to 60s for model download
-        const timer = setTimeout(() => {
-          console.warn("[AgentLoop] CAPTURE_AND_REDACT timed out after 90s");
-          resolve({ ok: false, error: "Capture timed out (90s) — offscreen may be loading models" });
-        }, 90000);
-
-        chrome.runtime.sendMessage({ type: "CAPTURE_AND_REDACT", options }, (response) => {
-          clearTimeout(timer);
-          if (chrome.runtime.lastError) {
-            console.warn("[AgentLoop] Capture sendMessage error:", chrome.runtime.lastError.message);
-            resolve({ ok: false, error: chrome.runtime.lastError.message });
-          } else {
-            resolve(response || { ok: false, error: "Empty capture response" });
-          }
-        });
-      } else {
-        resolve({
-          ok: true,
-          sanitizedImageUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
-          redactionList: [],
-          resolution: { width: 1280, height: 720 },
-          tabUrl: "http://localhost:8000/demo.html"
-        });
+    if (typeof chrome !== "undefined" && chrome.runtime && chrome.runtime.sendMessage) {
+      try {
+        return await chrome.runtime.sendMessage({ type: "CAPTURE_AND_REDACT", options });
+      } catch (err) {
+        return { ok: false, error: err.message };
       }
-    });
+    }
+
+    return {
+      ok: true,
+      sanitizedImageUrl: "data:image/jpeg;base64,/9j/4AAQSkZJRg==",
+      redactionList: [],
+      resolution: { width: 1280, height: 720 },
+      tabUrl: "http://localhost:8000/demo.html"
+    };
   }
 }
 

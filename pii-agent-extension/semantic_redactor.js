@@ -84,10 +84,26 @@ export class SemanticRedactor {
     return placeholder;
   }
 
+  _mapCategoryToType(cat) {
+    if (!cat || typeof cat !== "string") return REDACTION_TYPES.GENERIC_PII;
+    const lower = cat.toLowerCase();
+    if (lower.includes("name") || lower.includes("person")) return REDACTION_TYPES.PERSON;
+    if (lower.includes("email")) return REDACTION_TYPES.EMAIL;
+    if (lower.includes("phone") || lower.includes("tel") || lower.includes("mobile") || lower.includes("contact")) return REDACTION_TYPES.PHONE;
+    if (lower.includes("card") || lower.includes("credit") || lower.includes("debit")) return REDACTION_TYPES.CARD;
+    if (lower.includes("pass") || lower.includes("secret") || lower.includes("pin") || lower.includes("otp")) return REDACTION_TYPES.PASSWORD;
+    if (lower.includes("gov") || lower.includes("id") || lower.includes("ssn") || lower.includes("pan") || lower.includes("aadhaar")) return REDACTION_TYPES.GOV_ID;
+    if (lower.includes("address") || lower.includes("zip") || lower.includes("postal") || lower.includes("pincode")) return REDACTION_TYPES.ADDRESS;
+    if (lower.includes("face")) return REDACTION_TYPES.FACE;
+    if (lower.includes("salary") || lower.includes("financial") || lower.includes("income") || lower.includes("bank")) return REDACTION_TYPES.FINANCIAL;
+    return REDACTION_TYPES[cat.toUpperCase()] || REDACTION_TYPES.GENERIC_PII;
+  }
+
   /**
    * Alias for getOrCreatePlaceholder to cleanly anonymize a value.
    */
-  anonymize(rawValue, type = REDACTION_TYPES.GENERIC_PII) {
+  anonymize(rawValue, typeOrCategory = REDACTION_TYPES.GENERIC_PII) {
+    const type = this._mapCategoryToType(typeOrCategory);
     return this.getOrCreatePlaceholder(rawValue, type);
   }
 

@@ -13,6 +13,8 @@
 import { pipeline, env, RawImage } from "./lib/transformers.min.js";
 import { buildUnifiedPerceptionState } from "./perception.js";
 import { defaultPrivacyEngine } from "./privacy_engine.js";
+import { defaultPrivacyReasoner } from "./local_reasoner.js";
+import { logEvent } from "./telemetry.js";
 
 
 // ── Window Error Telemetry ──────────────────────────────────────────────────
@@ -34,7 +36,7 @@ env.localModelPath    = chrome.runtime.getURL("models/");
 if (!env.backends) env.backends = {};
 if (!env.backends.onnx) env.backends.onnx = {};
 if (!env.backends.onnx.wasm) env.backends.onnx.wasm = {};
-env.backends.onnx.wasm.numThreads = Math.min(4, (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 4);
+env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.wasmPaths  = chrome.runtime.getURL("lib/");
 
 // ── Canvas elements ──────────────────────────────────────────────────────────
@@ -81,12 +83,13 @@ async function initOWLViT() {
   if (owlvitLoadPromise) return owlvitLoadPromise;
 
   owlvitLoadPromise = (async () => {
-    console.log("[Offscreen] OWL-ViT: initialising zero-shot detector (WASM SIMD CPU) …");
-    // In Transformers.js v3, WebAssembly execution provider is specified as device: "cpu"
+    logEvent("offscreen", "OWL-ViT: Initialising zero-shot detector (WASM SIMD)...");
+    // Force device: "wasm" (CPUExecutionProvider).
+    // Avoids ORT WebGPU EP's missing Cast node kernel (/class_head/Cast) in the OWL-ViT graph.
     owlvitPipeline = await pipeline("zero-shot-object-detection", OWL_VIT_MODEL, {
-      device: "cpu",
+      device: "wasm",
     });
-    console.log("[Offscreen] OWL-ViT ready (WASM SIMD CPU)");
+    logEvent("offscreen", "OWL-ViT zero-shot detector READY (WASM SIMD)");
     return owlvitPipeline;
   })();
 
@@ -109,7 +112,7 @@ async function initFaceDetector() {
       const mpBase = chrome.runtime.getURL("lib/mediapipe/");
       // Dynamically import the locally-bundled MediaPipe Vision ESM
       const { FaceDetector, FilesetResolver } = await import(
-        "./lib/mediapipe/vision_bundle.mjs"
+        chrome.runtime.getURL("lib/mediapipe/vision_bundle.mjs")
       );
 
       const vision = await FilesetResolver.forVisionTasks(mpBase);
@@ -307,7 +310,9 @@ function iou(a, b) {
   return inter / union;
 }
 
-// ── Models are loaded lazily on-demand only if deepVision audit is requested ──
+// ── Pre-warm vision models immediately on offscreen document boot ─────────────
+initOWLViT().catch((e) => console.warn("[Offscreen] OWL-ViT pre-init error:", e.message));
+initFaceDetector().catch((e) => console.warn("[Offscreen] BlazeFace pre-init error:", e.message));
 
 // ── Main Processing Function ──────────────────────────────────────────────────
 
@@ -331,29 +336,30 @@ async function processAndRedactFrame(payload) {
   const failClosed   = options.failClosed   ?? true;
 
   const t0 = performance.now();
+  logEvent("offscreen", "Step 1/6: processAndRedactFrame payload received");
 
-  // ── 1. Model Preparation ──────────────────────────────────────────────────
-  // If OWL-ViT is still loading (first run), we use a 25s race timeout.
-  // If it doesn't resolve in time, skip OWL-ViT and rely on DOM + MediaPipe.
+  // ── 1. Ensure OWL-ViT is initialised ────────────────────────────────────────
   let owlvitModel = null;
   try {
-    if (owlvitLoadPromise) {
-      const timeoutPromise = new Promise((resolve) => setTimeout(() => resolve(null), 25000));
-      owlvitModel = await Promise.race([owlvitLoadPromise, timeoutPromise]);
-    } else {
-      owlvitModel = await initOWLViT();
-    }
+    owlvitModel = await Promise.race([
+      initOWLViT(),
+      new Promise((res) => setTimeout(() => {
+        logEvent("offscreen", "OWL-ViT compiling in background; proceeding with DOM + BlazeFace + OCR for zero-hang capture", null, "warn");
+        res(null);
+      }, 15000))
+    ]);
+    logEvent("offscreen", `Step 2/6: OWL-ViT detector status: ${owlvitModel ? "READY" : "BACKGROUND_LOADING"}`);
   } catch (err) {
-    console.warn("[Offscreen] OWL-ViT init warning:", err.message);
+    logEvent("offscreen", `OWL-ViT init warning: ${err.message}`, null, "warn");
   }
-  const activeBackend = owlvitPipeline
-    ? "OWL-ViT + MediaPipe BlazeFace (On-Device WebGPU/WASM)"
-    : "MediaPipe BlazeFace + DOM Heuristics";
+  const activeBackend = owlvitPipeline ? "OWL-ViT-WASM" : "degraded";
 
   // ── 2. Decode screenshot ───────────────────────────────────────────────────
+  logEvent("offscreen", "Step 3/6: Decoding screenshot image...");
   const img    = await loadImage(screenshotUrl);
   const width  = img.naturalWidth  || img.width;
   const height = img.naturalHeight || img.height;
+  logEvent("offscreen", `Screenshot decoded: ${width}x${height}px`);
 
   canvas.width = rawCanvas.width  = width;
   canvas.height = rawCanvas.height = height;
@@ -383,6 +389,7 @@ async function processAndRedactFrame(payload) {
   });
 
   // ── L2 + L3: OWL-ViT and MediaPipe run in parallel ──────────────────────
+  logEvent("offscreen", "Step 4/6: Running parallel vision inference (OWL-ViT + MediaPipe BlazeFace)...");
   const tStartVision = performance.now();
 
   const [owlResult, faceResult] = await Promise.allSettled([
@@ -408,6 +415,7 @@ async function processAndRedactFrame(payload) {
   ]);
 
   const tEndVision = performance.now();
+  logEvent("offscreen", `Vision inference finished in ${Math.round(tEndVision - tStartVision)}ms`);
 
   // Fail-closed enforcement if required
   if (owlResult.status === "rejected" && failClosed && categories.govIds !== false) {
@@ -521,11 +529,9 @@ async function processAndRedactFrame(payload) {
   const integrityHash     = await computeHash(sanitizedImageUrl.substring(0, 1000));
   const totalTime         = performance.now() - t0;
 
-  console.log(
-    `[Offscreen] Redaction complete: DOM=${domRedactions.length} ` +
-    `OWL-ViT=${owlRedactions.length} Face=${faceRedactions.length} ` +
-    `OCR=${ocrRedactions.length} Total=${finalRedactionBoxes.length} ` +
-    `(${Math.round(totalTime)}ms)`
+  logEvent(
+    "offscreen",
+    `Step 6/6: Redaction complete in ${Math.round(totalTime)}ms! (DOM=${domRedactions.length}, OWL=${owlRedactions.length}, Face=${faceRedactions.length}, OCR=${ocrRedactions.length}, Total=${finalRedactionBoxes.length})`
   );
 
   // ── L7: Perception State (local engine only — no Ollama here) ────────────
@@ -541,13 +547,24 @@ async function processAndRedactFrame(payload) {
     url: payload.url || "",
   });
 
-  const privacyDecisionManifest = defaultPrivacyEngine.evaluatePerceptionState(
+  let privacyDecisionManifest = defaultPrivacyEngine.evaluatePerceptionState(
     unifiedPerceptionState,
     { url: payload.url || "", options: payload.options || {} }
   );
-  // Ambiguous elements are returned in manifest — agent_loop.js will resolve them
-  // with Ollama after receiving this payload, preventing redundant LLM calls.
 
+  // Ambiguity Resolution: If running in standalone capture mode and ambiguous elements exist,
+  // resolve them via local reasoning (Qwen / fastpath). When agent loop is running,
+  // agent_loop passes resolveAmbiguities: false to avoid redundant calls.
+  if (options.resolveAmbiguities !== false && privacyDecisionManifest.ambiguousElements?.length > 0) {
+    try {
+      privacyDecisionManifest = await defaultPrivacyReasoner.resolveManifestAmbiguities(
+        privacyDecisionManifest,
+        { url: payload.url || "", userTask: payload.userTask || "" }
+      );
+    } catch (e) {
+      console.warn("[Offscreen] Local reasoning warning:", e.message);
+    }
+  }
 
   return {
     ok: true,

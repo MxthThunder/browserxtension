@@ -5,6 +5,8 @@
  */
 
 import { getSettings, saveSettings } from "./storage.js";
+import { logEvent } from "./telemetry.js";
+
 
 const toggleProtection = document.getElementById("toggleProtection");
 const statusText = document.getElementById("statusText");
@@ -50,6 +52,7 @@ document.addEventListener("DOMContentLoaded", async () => {
   if (selModelProvider) selModelProvider.value = settings.modelProvider || "auto";
 
   await probeServerHealth();
+  logEvent("popup", "Privacy Agent UI initialized and connected");
   await loadBasicCount();
 
   // Rehydrate state from background session if popup was reopened
@@ -120,9 +123,9 @@ function restoreSessionState(session) {
 }
 
 async function getActiveWebTab() {
-  let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
+  let [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
   if (!tab || !tab.id || !tab.url || tab.url.startsWith("chrome://")) {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    const tabs = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
     tab = tabs[0];
   }
   if (!tab || !tab.url || tab.url.startsWith("chrome://")) {
@@ -313,36 +316,28 @@ function updateDetectedList(redactions = []) {
   });
 }
 
-// Capture & Redact
 btnCapture.addEventListener("click", async () => {
   btnCapture.disabled = true;
   btnCapture.textContent = "…";
-  appendLog("Capturing and redacting viewport…");
-
-  // Show a hint after 5s so the user knows model loading is normal
-  const loadHintTimer = setTimeout(() => {
-    appendLog("Loading vision models (first run may take 30-60s)…", "info");
-    btnCapture.textContent = "Loading…";
-  }, 5000);
+  logEvent("popup", "1/7: User clicked Capture button in Side Panel");
+  appendLog("Starting Viewport Capture & Redaction...");
 
   try {
-    // Use a promise wrapper with timeout so button never stays disabled forever
-    const result = await new Promise((resolve) => {
-      const timer = setTimeout(() => {
-        resolve({ ok: false, error: "Capture timed out — please try again" });
-      }, 90000);
+    const tab = await getActiveWebTab();
+    logEvent("popup", `2/7: Target tab detected: ID=${tab?.id}, Title="${tab?.title || ''}", URL="${tab?.url || ''}"`);
 
-      chrome.runtime.sendMessage({ type: "CAPTURE_AND_REDACT", options: {} }, (response) => {
-        clearTimeout(timer);
-        if (chrome.runtime.lastError) {
-          resolve({ ok: false, error: chrome.runtime.lastError.message });
-        } else {
-          resolve(response || { ok: false, error: "Empty response" });
-        }
-      });
-    });
-
-    clearTimeout(loadHintTimer);
+    const result = await Promise.race([
+      chrome.runtime.sendMessage({
+        type: "CAPTURE_AND_REDACT",
+        options: {
+          tabId: tab?.id,
+          windowId: tab?.windowId,
+          url: tab?.url,
+          title: tab?.title,
+        },
+      }),
+      new Promise((_, rej) => setTimeout(() => rej(new Error("Capture timed out after 35s")), 35000))
+    ]);
 
     if (!result || !result.ok) {
       throw new Error(result?.error || "Capture failed");
@@ -353,12 +348,16 @@ btnCapture.addEventListener("click", async () => {
     updateDetectedList(result.redactionList || []);
 
     const ms = result.timings?.totalRedactionLatencyMs;
+    logEvent(
+      "popup",
+      `7/7: Redaction complete: protected ${result.redactionList?.length || 0} sensitive elements in ${ms ? Math.round(ms) : "?"}ms`
+    );
     appendLog(
-      `${result.redactionList?.length || 0} region(s) redacted${ms ? ` in ${ms.toFixed(0)} ms` : ""}.`,
+      `Protected ${result.redactionList?.length || 0} sensitive elements (${ms ? Math.round(ms) : "?"}ms).`,
       "success"
     );
   } catch (err) {
-    clearTimeout(loadHintTimer);
+    logEvent("popup", `Capture error: ${err.message}`, null, "error");
     appendLog(`Capture error: ${err.message}`, "error");
   } finally {
     btnCapture.disabled = false;
@@ -432,14 +431,17 @@ btnDispatchTask.addEventListener("click", async () => {
   taskInput.disabled = true;
   stepFeed.innerHTML = "";
   setPendingRow("Reading the page…");
+  logEvent("popup", `User started agent task: "${task}"`);
   appendLog(`Running: "${task}"`);
 
   try {
+    const tab = await getActiveWebTab();
     const modelProvider = selModelProvider?.value || "auto";
+    logEvent("popup", `Dispatching START_AGENT_LOOP for tab ID=${tab?.id} (provider=${modelProvider})...`);
     const res = await chrome.runtime.sendMessage({
       type: "START_AGENT_LOOP",
       task,
-      options: { maxSteps: 8, modelProvider },
+      options: { maxSteps: 8, modelProvider, tabId: tab?.id, windowId: tab?.windowId },
     });
 
     if (!res || !res.ok) throw new Error(res?.error || "Agent loop failed");
@@ -458,8 +460,28 @@ btnDispatchTask.addEventListener("click", async () => {
   }
 });
 
-// Live step events from a running agent loop
+// Live step and telemetry events
 chrome.runtime.onMessage.addListener((msg) => {
+  if (msg.type === "TELEMETRY_LOG") {
+    appendLog(`[${msg.source}] ${msg.message}`, msg.level || "info");
+
+    // Redundant Relay: If background or offscreen emitted the log, popup forwards it
+    // directly to the FastAPI server terminal to guarantee terminal visibility
+    if (msg.source !== "popup") {
+      fetch("http://127.0.0.1:8001/api/log", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          source: msg.source,
+          level: msg.level || "info",
+          message: msg.message,
+          details: msg.details,
+        }),
+      }).catch(() => {});
+    }
+    return false;
+  }
+
   if (msg.type === "AGENT_LOOP_STEP_EVENT" && msg.step) {
     const s = msg.step;
     const act = s.action || {};

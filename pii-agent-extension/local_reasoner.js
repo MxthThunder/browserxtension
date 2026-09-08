@@ -56,7 +56,7 @@ export class LocalPrivacyReasoner {
   async getPreferredOllamaModel() {
     if (this._cachedOllamaModel) return this._cachedOllamaModel;
     try {
-      const resp = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(1500) });
+      const resp = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(1200) });
       if (resp.ok) {
         const data = await resp.json();
         const names = (data.models || []).map((m) => (m.name || "").toLowerCase());
@@ -74,9 +74,8 @@ export class LocalPrivacyReasoner {
         }
       }
     } catch {
-      // Ollama offline or unreachable
+      // Ollama offline or unreachable - don't cache so it retries when Ollama boots
     }
-    this._cachedOllamaModel = "qwen2.5:1.5b";
     return "qwen2.5:1.5b";
   }
 
@@ -352,7 +351,7 @@ Respond with ONLY a JSON object in this exact format:
 {"decisions": [{"id": "exact_element_id", "decision": "ALLOW" | "REDACT" | "BLOCK" | "LOCAL_ONLY", "reason": "short explanation"}]}`;
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
 
     try {
       const resp = await fetch(this.localOllamaUrl, {
@@ -400,7 +399,7 @@ Respond with ONLY a JSON object in this exact format:
       .replace("{TASK}", context.userTask || "General Web Navigation");
 
     const controller = new AbortController();
-    const timeoutId = setTimeout(() => controller.abort(), 8000);
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
 
     try {
       const resp = await fetch(this.localOllamaUrl, {
