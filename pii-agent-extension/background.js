@@ -43,18 +43,33 @@ function syncSessionState() {
 }
 
 // Ensure offscreen document exists for WebGPU inference and canvas redaction
+let creatingOffscreenPromise = null;
 async function ensureOffscreenDocument() {
   if (await chrome.offscreen.hasDocument()) {
     return;
   }
-  await chrome.offscreen.createDocument({
-    url: OFFSCREEN_DOCUMENT_PATH,
-    reasons: ["BLOBS"],
-    justification: "Client-side WebGPU vision inference and zero-leakage canvas redaction",
-  });
-  console.log("[Background] Offscreen WebGPU document initialized.");
-  // Give offscreen doc a moment to load its scripts before we send messages
-  await new Promise((r) => setTimeout(r, 300));
+  if (creatingOffscreenPromise) {
+    return creatingOffscreenPromise;
+  }
+  creatingOffscreenPromise = (async () => {
+    try {
+      await chrome.offscreen.createDocument({
+        url: OFFSCREEN_DOCUMENT_PATH,
+        reasons: ["BLOBS"],
+        justification: "Client-side WebGPU vision inference and zero-leakage canvas redaction",
+      });
+      console.log("[Background] Offscreen WebGPU document initialized.");
+      // Give offscreen doc a moment to load its scripts before we send messages
+      await new Promise((r) => setTimeout(r, 350));
+    } catch (err) {
+      if (!err.message?.includes("Only a single offscreen document")) {
+        console.warn("[Background] ensureOffscreenDocument warning:", err.message);
+      }
+    } finally {
+      creatingOffscreenPromise = null;
+    }
+  })();
+  return creatingOffscreenPromise;
 }
 
 /**
@@ -167,14 +182,23 @@ function updateBadge(enabled, piiCount = 0) {
 }
 
 async function getActiveTab() {
+  const isExcluded = (t) =>
+    !t ||
+    !t.id ||
+    !t.url ||
+    t.url.startsWith("chrome://") ||
+    (t.url.startsWith("chrome-extension://") &&
+      !t.url.includes("demo.html") &&
+      !t.url.includes("mission_console.html"));
+
   let [tab] = await chrome.tabs.query({ active: true, lastFocusedWindow: true });
-  if (!tab || !tab.id || !tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) {
+  if (isExcluded(tab)) {
     const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    tab = tabs.find((t) => t.url && !t.url.startsWith("chrome://") && !t.url.startsWith("chrome-extension://")) || tabs[0];
+    tab = tabs.find((t) => !isExcluded(t)) || tabs[0];
   }
-  if (!tab || !tab.url || tab.url.startsWith("chrome://") || tab.url.startsWith("chrome-extension://")) {
+  if (isExcluded(tab)) {
     const allTabs = await chrome.tabs.query({});
-    tab = allTabs.find((t) => t.url && (t.url.startsWith("http://") || t.url.startsWith("https://") || t.url.includes("demo.html"))) || tab;
+    tab = allTabs.find((t) => !isExcluded(t)) || tab;
   }
   return tab;
 }

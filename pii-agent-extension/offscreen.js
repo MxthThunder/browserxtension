@@ -10,7 +10,7 @@
  *   L6: Server (LLM)        — only sanitized image transmitted to FastAPI
  */
 
-import { pipeline, env, RawImage } from "./lib/transformers.min.js";
+import { pipeline, env } from "./lib/transformers.min.js";
 import { buildUnifiedPerceptionState } from "./perception.js";
 import { defaultPrivacyEngine } from "./privacy_engine.js";
 
@@ -34,7 +34,8 @@ env.localModelPath    = chrome.runtime.getURL("models/");
 if (!env.backends) env.backends = {};
 if (!env.backends.onnx) env.backends.onnx = {};
 if (!env.backends.onnx.wasm) env.backends.onnx.wasm = {};
-env.backends.onnx.wasm.numThreads = Math.min(4, (typeof navigator !== "undefined" && navigator.hardwareConcurrency) || 4);
+// Extensions run in non-cross-origin-isolated environments without SharedArrayBuffer, so set threads to 1
+env.backends.onnx.wasm.numThreads = 1;
 env.backends.onnx.wasm.wasmPaths  = chrome.runtime.getURL("lib/");
 
 // ── Canvas elements ──────────────────────────────────────────────────────────
@@ -398,8 +399,7 @@ async function processAndRedactFrame(payload) {
         categories.govIds !== false ||
         categories.creditCards !== false;
       if (!shouldRun) return [];
-      const rawImg = await (RawImage.read ? RawImage.read(screenshotUrl) : (RawImage.fromURL ? RawImage.fromURL(screenshotUrl) : screenshotUrl));
-      return owlvitModel(rawImg, PII_VISUAL_QUERIES, { threshold });
+      return owlvitModel(screenshotUrl, PII_VISUAL_QUERIES, { threshold });
     })(),
 
     // L3: MediaPipe BlazeFace (human face bounding boxes)
