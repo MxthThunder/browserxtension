@@ -3,315 +3,374 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PriviBrowse-X — Security Instrumentation &amp; Forensic Analytics</title>
+  <title>PriviBrowse — Analytics &amp; Privacy Assurance</title>
   <link rel="stylesheet" href="dashboard.css" />
 </head>
 <body>
-  <div class="instrument-shell">
+  <div class="dashboard-shell">
 
-    <!-- ── Top Status & Command Bar ────────────────────────────── -->
-    <header class="console-header">
-      <div class="console-identity">
-        <div class="status-pip" aria-hidden="true"></div>
-        <div>
-          <div class="identity-title-row">
-            <h1 class="console-title">PRIVIBROWSE-X</h1>
-            <span class="system-tag">SECURITY INSTRUMENTATION CONSOLE</span>
-            <span class="spec-tag">ISRO PS #26171</span>
-          </div>
-          <p class="console-meta">AIR-GAPPED ON-DEVICE PERCEPTION // ZERO-LEAKAGE TELEMETRY &amp; AUDIT LOG</p>
+    <!-- ── Topbar (Pixel-matched to popup header) ──────────────── -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="brand-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </span>
+        <div class="brand-title-wrap">
+          <h1>PriviBrowse</h1>
+          <span class="brand-badge">Dashboard</span>
         </div>
       </div>
 
-      <div class="console-controls">
-        <button id="btnRefresh" class="inst-btn" title="Re-query telemetry and audit database">
-          <span class="btn-icon">↺</span>
-          <span>SYNC TELEMETRY</span>
+      <div class="topbar-right">
+        <!-- Sync / Refresh -->
+        <button id="btnRefresh" class="btn-ghost" title="Re-query telemetry">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          <span>Sync</span>
         </button>
-        <button id="btnExportLogs" class="inst-btn" title="Export tamper-evident forensic audit report as JSON">
-          <span class="btn-icon">⤓</span>
-          <span>EXPORT AUDIT JSON</span>
+
+        <!-- Export JSON -->
+        <button id="btnExportLogs" class="btn-ghost" title="Export audit report as JSON">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          <span>Export</span>
         </button>
-        <button id="btnOpenOptions" class="inst-btn primary" title="Configure engine policies and model providers">
-          <span>CONFIG</span>
+
+        <!-- Light / Dark theme toggle (matches popup) -->
+        <button id="btnTheme" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">
+          <svg id="iconMoon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <svg id="iconSun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+        </button>
+
+        <!-- Settings link -->
+        <button id="btnOpenOptions" class="icon-btn" title="Open Settings" aria-label="Open Settings">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"></circle>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+          </svg>
         </button>
       </div>
     </header>
 
-    <!-- ── Forensic KPI Telemetry Rack ────────────────────────── -->
-    <section class="telemetry-rack" aria-label="Core Security Metrics">
-      <div class="telemetry-cell">
-        <div class="cell-head">
-          <span class="cell-mnemonic">ENT_SHIELDED</span>
-          <span class="cell-unit">COUNT</span>
-        </div>
-        <div class="cell-value" id="metricTotalShielded">21</div>
-        <div class="cell-foot">0 RAW PIXELS EXPORTED</div>
-      </div>
+    <!-- ── Tab Navigation Bar ──────────────────────────────────── -->
+    <nav class="tab-nav" aria-label="Dashboard views">
+      <button class="tab-btn active" data-tab="overview">Overview</button>
+      <button class="tab-btn" data-tab="categories">PII Categories</button>
+      <button class="tab-btn" data-tab="pipeline">Pipeline</button>
+      <button class="tab-btn" data-tab="stack">Security Stack</button>
+      <button class="tab-btn" data-tab="audit">Audit Log</button>
+    </nav>
 
-      <div class="telemetry-cell status-accent">
-        <div class="cell-head">
-          <span class="cell-mnemonic">LEAKAGE_ASSURANCE</span>
-          <span class="cell-unit">ENFORCED</span>
-        </div>
-        <div class="cell-value accent" id="metricAssuranceRate">100.0%</div>
-        <div class="cell-foot">FAIL-CLOSED AIR-GAP ACTIVE</div>
-      </div>
+    <!-- ── TAB CONTENT ─────────────────────────────────────────── -->
+    <main class="main-content">
 
-      <div class="telemetry-cell">
-        <div class="cell-head">
-          <span class="cell-mnemonic">LATENCY_MEAN</span>
-          <span class="cell-unit">MS / FRAME</span>
-        </div>
-        <div class="cell-value" id="metricAvgLatency">38<span class="val-sub">ms</span></div>
-        <div class="cell-foot">WEBGPU ACCELERATED</div>
-      </div>
-
-      <div class="telemetry-cell">
-        <div class="cell-head">
-          <span class="cell-mnemonic">LOCAL_QWEN_EVALS</span>
-          <span class="cell-unit">ARBITRATIONS</span>
-        </div>
-        <div class="cell-value" id="metricQwenDecisions">8</div>
-        <div class="cell-foot">SELECTIVE ON-DEVICE LLM</div>
-      </div>
-    </section>
-
-    <!-- ── Main Instrumentation Grid (2-Column) ───────────────── -->
-    <div class="instrument-grid">
-
-      <!-- Column Left: Interactive Pipeline & PII Spectrum -->
-      <div class="grid-col left">
-
-        <!-- 5-Stage Interactive Perception Pipeline -->
-        <section class="instrument-panel">
-          <div class="panel-header">
-            <div class="panel-title-group">
-              <span class="panel-index">01</span>
-              <h2>5-STAGE PERCEPTION PIPELINE LATENCY</h2>
+      <!-- ── TAB 1: OVERVIEW ───────────────────────────────────── -->
+      <div class="tab-pane active" id="pane-overview">
+        <!-- Hero status (matches popup hero) -->
+        <section class="card hero-card">
+          <div class="hero-left">
+            <div class="hero-toggle-display">
+              <svg class="hero-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+              </svg>
             </div>
-            <span class="panel-badge" id="lblTotalPipelineLatency">~42 ms TOTAL</span>
+            <div class="hero-text">
+              <p class="hero-status">Protected &amp; Air-Gapped</p>
+              <p class="hero-desc">Sensitive data, credentials, and faces are masked on-device before any AI or capture stream sees them.</p>
+              <p class="hero-count" id="lblHeroSubtitle">Continuous on-device perception active · 100% Zero-Leakage Assurance</p>
+            </div>
+          </div>
+          <div class="hero-right">
+            <button id="btnOpenDemo" class="btn-ghost">Open Demo Page</button>
+          </div>
+        </section>
+
+        <!-- Top-line Stats Grid (4 clean cards) -->
+        <div class="stats-grid">
+          <div class="card stat-card">
+            <span class="stat-label">SHIELDED ENTITIES</span>
+            <div class="stat-value" id="metricTotalShielded">21</div>
+            <span class="stat-desc">Sensitive tokens &amp; fields masked</span>
           </div>
 
-          <p class="panel-desc">Click or hover any pipeline stage to inspect forensic throughput and detection artifacts.</p>
-
-          <!-- Interactive Pipeline Sequencer -->
-          <div class="pipeline-stepper" id="pipelineStepper" role="tablist">
-            <button class="stage-step active" data-stage="dom" role="tab" aria-selected="true">
-              <div class="step-meta">
-                <span class="step-num">STAGE 01</span>
-                <span class="step-time" id="latDom">3ms</span>
-              </div>
-              <div class="step-bar"><div class="bar-fill" style="width: 12%;"></div></div>
-              <span class="step-name">DOM Scan</span>
-            </button>
-
-            <button class="stage-step" data-stage="face" role="tab" aria-selected="false">
-              <div class="step-meta">
-                <span class="step-num">STAGE 02</span>
-                <span class="step-time" id="latFace">24ms</span>
-              </div>
-              <div class="step-bar"><div class="bar-fill" style="width: 32%;"></div></div>
-              <span class="step-name">MediaPipe Face</span>
-            </button>
-
-            <button class="stage-step" data-stage="ocr" role="tab" aria-selected="false">
-              <div class="step-meta">
-                <span class="step-num">STAGE 03</span>
-                <span class="step-time" id="latOcr">45ms</span>
-              </div>
-              <div class="step-bar"><div class="bar-fill" style="width: 58%;"></div></div>
-              <span class="step-name">OCR Spotting</span>
-            </button>
-
-            <button class="stage-step" data-stage="qwen" role="tab" aria-selected="false">
-              <div class="step-meta">
-                <span class="step-num">STAGE 04</span>
-                <span class="step-time" id="latQwen">75ms</span>
-              </div>
-              <div class="step-bar"><div class="bar-fill" style="width: 78%;"></div></div>
-              <span class="step-name">Qwen Reasoner</span>
-            </button>
-
-            <button class="stage-step" data-stage="canvas" role="tab" aria-selected="false">
-              <div class="step-meta">
-                <span class="step-num">STAGE 05</span>
-                <span class="step-time" id="latCanvas">8ms</span>
-              </div>
-              <div class="step-bar"><div class="bar-fill" style="width: 18%;"></div></div>
-              <span class="step-name">Canvas Blackout</span>
-            </button>
+          <div class="card stat-card">
+            <span class="stat-label">LEAKAGE ASSURANCE</span>
+            <div class="stat-value text-green" id="metricAssuranceRate">100%</div>
+            <span class="stat-desc">Zero raw PII egress to network</span>
           </div>
 
-          <!-- Forensic Stage Inspector Box -->
+          <div class="card stat-card">
+            <span class="stat-label">MEAN LATENCY</span>
+            <div class="stat-value" id="metricAvgLatency">38 <span class="stat-unit">ms</span></div>
+            <span class="stat-desc">Per-frame WebGPU pipeline</span>
+          </div>
+
+          <div class="card stat-card">
+            <span class="stat-label">LOCAL EVALUATIONS</span>
+            <div class="stat-value" id="metricQwenDecisions">8</div>
+            <span class="stat-desc">Air-gapped Qwen 2.5 decisions</span>
+          </div>
+        </div>
+
+        <!-- Recent Completed Actions (matches popup checkmark feed) -->
+        <section class="card">
+          <div class="card-header">
+            <span class="card-label">RECENT ACTIONS</span>
+            <span class="card-meta">Live on-device audit feed</span>
+          </div>
+          <div class="step-feed" id="overviewFeed">
+            <div class="step-row"><span class="mark">✓</span><span>Redacted 1 sensitive item, then clicked an element on the page</span></div>
+            <div class="step-row"><span class="mark">✓</span><span>Redacted 2 sensitive items, then typed into a field</span></div>
+            <div class="step-row"><span class="mark">✓</span><span>Masked Aadhaar ID and password input fields</span></div>
+            <div class="step-row"><span class="mark">✓</span><span>Applied WebGPU canvas blackout on 1 face landmark</span></div>
+          </div>
+        </section>
+      </div>
+
+      <!-- ── TAB 2: PII CATEGORIES ─────────────────────────────── -->
+      <div class="tab-pane" id="pane-categories">
+        <section class="card">
+          <div class="card-header">
+            <span class="card-label">PII CATEGORY BREAKDOWN</span>
+            <span class="card-meta">Interception distribution across all sessions</span>
+          </div>
+
+          <!-- Proportional bar matching popup aesthetics -->
+          <div class="category-bar" id="categoryBar"></div>
+
+          <!-- Clean list rows matching popup -->
+          <div class="category-list" id="categoryList">
+            <!-- Rendered dynamically -->
+          </div>
+        </section>
+      </div>
+
+      <!-- ── TAB 3: PIPELINE ───────────────────────────────────── -->
+      <div class="tab-pane" id="pane-pipeline">
+        <section class="card">
+          <div class="card-header">
+            <span class="card-label">5-STAGE PERCEPTION PIPELINE</span>
+            <span class="card-meta" id="lblPipelineTotalLatency">~38 ms total per frame</span>
+          </div>
+
+          <p class="section-desc">Each frame is processed entirely on-device through 5 sequential air-gapped security layers.</p>
+
+          <div class="pipeline-list" id="pipelineList">
+            <div class="pipeline-row active" data-stage="dom">
+              <div class="pipeline-left">
+                <span class="mark">✓</span>
+                <div class="pipeline-text">
+                  <span class="pipeline-name">DOM Scan &amp; Microtasks</span>
+                  <span class="pipeline-detail">V8 microtask scanner parses input types, attributes, and DOM heuristics</span>
+                </div>
+              </div>
+              <span class="pipeline-time">3 ms</span>
+            </div>
+
+            <div class="pipeline-row" data-stage="face">
+              <div class="pipeline-left">
+                <span class="mark">✓</span>
+                <div class="pipeline-text">
+                  <span class="pipeline-name">MediaPipe Face &amp; Biometrics</span>
+                  <span class="pipeline-detail">BlazeFace WebGL shader tracks 128-dim biometric facial coordinates</span>
+                </div>
+              </div>
+              <span class="pipeline-time">24 ms</span>
+            </div>
+
+            <div class="pipeline-row" data-stage="ocr">
+              <div class="pipeline-left">
+                <span class="mark">✓</span>
+                <div class="pipeline-text">
+                  <span class="pipeline-name">OCR Text Spotting</span>
+                  <span class="pipeline-detail">Tesseract.js WASM + Regex lexer for printed IDs, cards, and phone numbers</span>
+                </div>
+              </div>
+              <span class="pipeline-time">45 ms</span>
+            </div>
+
+            <div class="pipeline-row" data-stage="qwen">
+              <div class="pipeline-left">
+                <span class="mark">✓</span>
+                <div class="pipeline-text">
+                  <span class="pipeline-name">Local Reasoner (Qwen 2.5)</span>
+                  <span class="pipeline-detail">Ollama 1.5B resolves contextual ambiguity in natural language data</span>
+                </div>
+              </div>
+              <span class="pipeline-time">75 ms</span>
+            </div>
+
+            <div class="pipeline-row" data-stage="canvas">
+              <div class="pipeline-left">
+                <span class="mark">✓</span>
+                <div class="pipeline-text">
+                  <span class="pipeline-name">WebGPU Canvas Redaction</span>
+                  <span class="pipeline-detail">Zero-copy hardware shader applies permanent cryptographic blackouts</span>
+                </div>
+              </div>
+              <span class="pipeline-time">8 ms</span>
+            </div>
+          </div>
+
+          <!-- Interactive stage details box -->
           <div class="stage-inspector" id="stageInspector">
-            <div class="inspector-head">
-              <span class="inspector-tag" id="inspStageTag">STAGE 01 // DOM SCANNER</span>
-              <span class="inspector-latency" id="inspStageLatency">3 ms execution budget</span>
+            <div class="inspector-header">
+              <span class="inspector-title" id="inspName">DOM Scan &amp; Microtasks</span>
+              <span class="inspector-time" id="inspLatency">3 ms</span>
             </div>
-            <div class="inspector-body">
-              <p class="inspector-text" id="inspStageDesc">High-speed hierarchical CSS selector inspection and iframe tree classification. Evaluates interactive inputs against sensitive lexical dictionaries.</p>
-              <div class="inspector-specs">
-                <div class="spec-row">
-                  <span class="spec-label">ACCELERATOR</span>
-                  <span class="spec-val" id="inspStageAccel">V8 Native Microtask (< 4ms)</span>
-                </div>
-                <div class="spec-row">
-                  <span class="spec-label">DETECTIONS</span>
-                  <span class="spec-val" id="inspStageDetections">6 Sensitive DOM Nodes Shielded</span>
-                </div>
-                <div class="spec-row">
-                  <span class="spec-label">CRYPTOGRAPHIC DIGEST</span>
-                  <span class="spec-val monospace" id="inspStageHash">SHA256: e3b0c44298fc1c149afbf4c8...</span>
-                </div>
+            <div class="inspector-grid">
+              <div class="inspector-item">
+                <span class="item-label">ENGINE</span>
+                <span class="item-val" id="inspEngine">V8 DOM Microtask Scanner (WASM Native)</span>
+              </div>
+              <div class="inspector-item">
+                <span class="item-label">ARTIFACTS</span>
+                <span class="item-val" id="inspArtifacts">Input Fields / Password Inputs / Metadata Tokens</span>
+              </div>
+              <div class="inspector-item">
+                <span class="item-label">THROUGHPUT</span>
+                <span class="item-val" id="inspThroughput">32,000 nodes/sec</span>
+              </div>
+              <div class="inspector-item full">
+                <span class="item-label">STATUS NOTE</span>
+                <span class="item-val" id="inspStats">Scanned 142 DOM nodes, flagged 4 input elements with type='password' or sensitive autocomplete attributes.</span>
               </div>
             </div>
           </div>
         </section>
-
-        <!-- Interactive PII Classification Spectrum & Filter Bar -->
-        <section class="instrument-panel">
-          <div class="panel-header">
-            <div class="panel-title-group">
-              <span class="panel-index">02</span>
-              <h2>CLASSIFICATION SPECTRUM // FILTER AUDIT LOG</h2>
-            </div>
-            <div class="filter-status-group">
-              <span class="active-filter-indicator" id="activeFilterLabel">SHOWING ALL</span>
-              <button class="clear-filter-btn hidden" id="btnClearFilter">RESET</button>
-            </div>
-          </div>
-
-          <p class="panel-desc">Click any category block below to filter the forensic compliance audit stream.</p>
-
-          <!-- Segmented Proportional Spectrum Bar -->
-          <div class="spectrum-bar" id="spectrumBar" aria-label="Proportional PII Distribution">
-            <!-- Injected by dashboard.js -->
-          </div>
-
-          <!-- Category Interactive Matrix -->
-          <div class="category-matrix" id="categoryMatrix">
-            <!-- Injected dynamically by dashboard.js -->
-          </div>
-        </section>
-
       </div>
 
-      <!-- Column Right: Hardware Architecture & Status -->
-      <div class="grid-col right">
-
-        <section class="instrument-panel">
-          <div class="panel-header">
-            <div class="panel-title-group">
-              <span class="panel-index">03</span>
-              <h2>ENGINE SUBSYSTEM INTEGRITY</h2>
-            </div>
-            <span class="system-live-pill">● SECURE</span>
+      <!-- ── TAB 4: SECURITY STACK ─────────────────────────────── -->
+      <div class="tab-pane" id="pane-stack">
+        <section class="card">
+          <div class="card-header">
+            <span class="card-label">SECURITY STACK</span>
+            <span class="card-meta">Subsystem verification &amp; hardware status</span>
           </div>
 
-          <div class="subsystem-list">
-            <div class="subsystem-item">
-              <div class="subsystem-header">
-                <span class="subsystem-code">MOD_01</span>
-                <span class="subsystem-name">DOM Sanitization Engine</span>
-                <span class="subsystem-status-tag green">ACTIVE</span>
+          <div class="stack-list">
+            <!-- Reasoner Row (matches Reasoner row in popup) -->
+            <div class="stack-row">
+              <div class="stack-row-left">
+                <span class="mark">✓</span>
+                <div>
+                  <span class="stack-title">Reasoner: Qwen 2.5</span>
+                  <span class="stack-desc">Local Ollama · 100% On-Device · Zero Egress</span>
+                </div>
               </div>
-              <p class="subsystem-detail">Top-frame DOM hierarchy scanner with shadow-root &amp; iframe recursion</p>
+              <span class="status-pill green" id="stackQwenStatus">Verified Active</span>
             </div>
 
-            <div class="subsystem-item">
-              <div class="subsystem-header">
-                <span class="subsystem-code">MOD_02</span>
-                <span class="subsystem-name">WebGPU Canvas Redactor</span>
-                <span class="subsystem-status-tag green" id="lblWebGPUStatus">READY</span>
+            <!-- WebGPU Row -->
+            <div class="stack-row">
+              <div class="stack-row-left">
+                <span class="mark">✓</span>
+                <div>
+                  <span class="stack-title">WebGPU Canvas Redactor</span>
+                  <span class="stack-desc">Direct hardware shader mutation · Zero-copy frame isolation</span>
+                </div>
               </div>
-              <p class="subsystem-detail">Zero-copy hardware blackout shader with SHA-256 integrity verification</p>
+              <span class="status-pill green" id="stackWebGPUStatus">Hardware Accelerated</span>
             </div>
 
-            <div class="subsystem-item">
-              <div class="subsystem-header">
-                <span class="subsystem-code">MOD_03</span>
-                <span class="subsystem-name">Qwen 2.5 Local Reasoner</span>
-                <span class="subsystem-status-tag green" id="lblQwenStatus">OLLAMA 1.5B</span>
+            <!-- DOM Engine Row -->
+            <div class="stack-row">
+              <div class="stack-row-left">
+                <span class="mark">✓</span>
+                <div>
+                  <span class="stack-title">DOM Sanitization Engine</span>
+                  <span class="stack-desc">V8 isolated world heuristic interceptor with fail-closed policy</span>
+                </div>
               </div>
-              <p class="subsystem-detail">On-device selective ambiguity resolver for high-sensitivity input context</p>
+              <span class="status-pill green">Enforced</span>
             </div>
 
-            <div class="subsystem-item">
-              <div class="subsystem-header">
-                <span class="subsystem-code">MOD_04</span>
-                <span class="subsystem-name">Prompt-Guard &amp; Vault</span>
-                <span class="subsystem-status-tag green">ENFORCING</span>
+            <!-- MediaPipe & OCR -->
+            <div class="stack-row">
+              <div class="stack-row-left">
+                <span class="mark">✓</span>
+                <div>
+                  <span class="stack-title">Vision &amp; Biometric Neural Models</span>
+                  <span class="stack-desc">MediaPipe BlazeFace + Tesseract OCR WASM (air-gapped local bundles)</span>
+                </div>
               </div>
-              <p class="subsystem-detail">PBKDF2-AES-GCM tokenized vault with fail-closed security boundary</p>
+              <span class="status-pill green">Active</span>
             </div>
-          </div>
 
-          <!-- Declassified Redaction Sample Interactive Preview -->
-          <div class="redaction-sample-box">
-            <div class="sample-head">
-              <span class="sample-label">DECLASSIFIED REDACTION REVEAL</span>
-              <span class="sample-hint">HOVER TO EXPOSE</span>
-            </div>
-            <div class="sample-content">
-              <span class="unredacted-text">CONFIDENTIAL TARGET:</span>
-              <span class="blackout-bar" data-revealed="[CREDIT_CARD_1: 4532-••••-••••-8921]" tabindex="0">
-                <span class="redaction-placeholder">████████████████████</span>
-                <span class="revealed-text">4532-••••-••••-8921 (REDACTED)</span>
-              </span>
+            <!-- Prompt Guard & Vault -->
+            <div class="stack-row">
+              <div class="stack-row-left">
+                <span class="mark">✓</span>
+                <div>
+                  <span class="stack-title">Prompt-Guard &amp; Audit Vault</span>
+                  <span class="stack-desc">Tamper-evident client-side log database with SHA-256 integrity</span>
+                </div>
+              </div>
+              <span class="status-pill green">Active</span>
             </div>
           </div>
         </section>
-
       </div>
-    </div>
 
-    <!-- ── Full-Width Forensic Compliance Audit Stream Table ────── -->
-    <section class="audit-section" aria-label="Forensic Compliance Log">
-      <div class="audit-header">
-        <div class="audit-title-group">
-          <span class="panel-index">04</span>
-          <div>
-            <h2>FORENSIC AUDIT STREAM // TAMPER-EVIDENT RECORD</h2>
-            <p class="audit-subtitle">Immutable chronological verification log of perception scans, redactions, and agent actions</p>
+      <!-- ── TAB 5: AUDIT LOG ──────────────────────────────────── -->
+      <div class="tab-pane" id="pane-audit">
+        <section class="card">
+          <div class="card-header">
+            <div class="card-header-left">
+              <span class="card-label">AUDIT LOG</span>
+              <span class="card-meta" id="auditCountLabel">0 events recorded</span>
+            </div>
+            <div class="card-header-right">
+              <!-- Filter dropdown -->
+              <select id="selAuditFilter" class="select-sm">
+                <option value="all">All Categories</option>
+                <option value="passwords">Passwords &amp; Tokens</option>
+                <option value="govIds">Identity &amp; Gov IDs</option>
+                <option value="contactInfo">Contact &amp; Addresses</option>
+                <option value="creditCards">Financial &amp; Cards</option>
+                <option value="faces">Faces &amp; Biometrics</option>
+                <option value="telemetry">Mission Telemetry</option>
+              </select>
+              <button id="btnClearLogs" class="btn-ghost" title="Clear local audit log">Clear</button>
+            </div>
           </div>
-        </div>
 
-        <div class="audit-actions">
-          <span class="log-count-tag" id="lblLogCount">0 RECORDS</span>
-          <button id="btnClearLogs" class="inst-btn danger">PURGE LOG</button>
-        </div>
+          <!-- Clean list feed matching popup action feed -->
+          <div class="audit-feed" id="auditFeed">
+            <!-- Dynamically populated -->
+          </div>
+        </section>
       </div>
 
-      <div class="table-frame">
-        <table class="forensic-table">
-          <thead>
-            <tr>
-              <th style="width: 110px;">TIMESTAMP</th>
-              <th style="width: 140px;">EVENT / TASK</th>
-              <th style="width: 120px;">ACTION TYPE</th>
-              <th style="width: 150px;">ENGINE / MODEL</th>
-              <th style="width: 110px;">SHIELDED</th>
-              <th style="width: 90px;">LATENCY</th>
-              <th style="width: 100px;">ASSURANCE</th>
-            </tr>
-          </thead>
-          <tbody id="auditTableBody">
-            <tr>
-              <td colspan="7" class="empty-state">INITIALIZING AUDIT DATABASE...</td>
-            </tr>
-          </tbody>
-        </table>
-      </div>
-    </section>
+    </main>
 
-    <!-- ── Console Footer ─────────────────────────────────────── -->
-    <footer class="console-footer">
+    <!-- ── Footer (matches popup footer) ───────────────────────── -->
+    <footer class="footer">
       <div class="footer-left">
-        <span>PRIVIBROWSE-X VERSION 2.0 // ISRO ISTRAC BENCHMARK SPECIFICATION #26171</span>
+        <span class="footer-dot"></span>
+        <span>100% on-device privacy protection</span>
       </div>
       <div class="footer-right">
-        <span class="footer-indicator">● AIR-GAPPED VERIFIED</span>
+        <span>ISRO PS #26171</span>
       </div>
     </footer>
 

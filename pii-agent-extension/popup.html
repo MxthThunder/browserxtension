@@ -2,206 +2,172 @@
 <html lang="en">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PriviBrowse-X</title>
+  <title>PriviBrowse</title>
   <link rel="stylesheet" href="popup.css" />
 </head>
 <body>
-  <div class="instrument-popup">
+  <div class="popup">
 
-    <!-- ── Header / Identity Console ────────────────────── -->
-    <header class="popup-header">
-      <div class="header-brand">
-        <div class="brand-pip" aria-hidden="true"></div>
-        <div class="brand-text">
-          <span class="brand-title">PRIVIBROWSE-X</span>
-          <span class="brand-sub">PII AIR-GAP INTERCEPTOR</span>
-        </div>
+    <!-- ── Topbar ────────────────────────────────────── -->
+    <header class="topbar">
+      <div class="topbar-left">
+        <span class="brand-icon" aria-hidden="true">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+          </svg>
+        </span>
+        <h1>PriviBrowse</h1>
       </div>
-      <div class="header-actions">
-        <button id="btnOpenSidePanel" class="icon-tool-btn" title="Dock to Chrome Side Panel" aria-label="Dock to side panel">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <rect x="3" y="3" width="18" height="18" rx="2"/>
-            <line x1="15" y1="3" x2="15" y2="21"/>
+      <div class="topbar-right">
+        <!-- Light / Dark toggle -->
+        <button id="btnTheme" class="icon-btn" title="Toggle theme" aria-label="Toggle theme">
+          <svg id="iconMoon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+          <svg id="iconSun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="display:none">
+            <circle cx="12" cy="12" r="5"/>
+            <line x1="12" y1="1" x2="12" y2="3"/>
+            <line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/>
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/>
+            <line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/>
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
           </svg>
         </button>
-        <button id="linkOpenDashboard" class="icon-tool-btn" title="Open Forensic Analytics Console" aria-label="Open Dashboard">
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 3v18h18"/>
-            <path d="M18 9l-5 5-4-4-6 6"/>
+        <!-- Side panel dock -->
+        <button id="btnOpenSidePanel" class="icon-btn" title="Dock to side panel" aria-label="Dock to side panel">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2"/>
+            <line x1="15" y1="3" x2="15" y2="21"/>
           </svg>
         </button>
       </div>
     </header>
 
-    <!-- ── Air-Gap Protection Status Block ──────────────── -->
-    <section class="status-rack" aria-label="Protection Status">
+    <!-- ── Hero — protection toggle ──────────────────── -->
+    <section class="hero">
       <button
         id="toggleProtection"
-        class="status-toggle-unit"
+        class="hero-toggle"
         data-state="on"
         aria-pressed="true"
-        aria-label="Toggle air-gap protection"
+        aria-label="Toggle protection"
       >
-        <div class="toggle-indicator">
-          <span class="indicator-glyph">🛡</span>
-        </div>
+        <svg class="hero-toggle-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/>
+        </svg>
       </button>
-
-      <div class="status-readout">
-        <div class="status-line">
-          <span class="status-label" id="statusText">AIR-GAP ENFORCED</span>
-          <span class="status-pill-subtle">FAIL-CLOSED</span>
-        </div>
-        <div class="status-counter-row">
-          <span class="counter-val" id="basicCount">PROBING DOM…</span>
-        </div>
+      <div class="hero-text">
+        <p class="hero-status" id="statusText">Protected</p>
+        <p class="hero-desc">Sensitive data &amp; faces are masked on-device before any AI sees them.</p>
+        <p class="hero-count" id="basicCount">Checking this page…</p>
       </div>
     </section>
 
-    <!-- ── Prompt Execution Terminal ────────────────────── -->
-    <section class="terminal-section" aria-label="Task Execution Terminal">
-      <div class="terminal-label-row">
-        <span class="terminal-label">EXECUTION PROMPT</span>
-        <span class="terminal-sub">ON-DEVICE REASONING</span>
-      </div>
-
-      <div class="terminal-input-row">
-        <div class="input-shell">
-          <span class="input-prompt-char">&gt;</span>
-          <input
-            type="text"
-            id="taskInput"
-            class="inst-input"
-            placeholder="e.g. Find laptops under 60k on Amazon"
-            autocomplete="off"
-            spellcheck="false"
-          />
-        </div>
-        <button id="btnDispatchTask" class="inst-btn-exec" title="Execute prompt on-device">EXEC</button>
-        <button id="btnStopTask" class="inst-btn-halt hidden" title="Abort current execution" aria-label="Abort task">
-          <span class="halt-box">■</span> HALT
+    <!-- ── Prompt — the primary action ───────────────── -->
+    <section class="prompt-section">
+      <p class="prompt-label">What do you want done?</p>
+      <div class="prompt-row">
+        <input
+          type="text"
+          id="taskInput"
+          class="input"
+          placeholder="e.g. Find ASUS laptops on Amazon"
+          autocomplete="off"
+          spellcheck="false"
+        />
+        <button id="btnDispatchTask" class="btn-primary" title="Execute prompt">Go</button>
+        <button id="btnStopTask" class="btn-stop hidden" title="Stop prompt execution" aria-label="Stop prompt execution">
+          <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
+            <rect x="4" y="4" width="16" height="16" rx="2" />
+          </svg>
+          <span>Stop</span>
         </button>
       </div>
-
-      <div id="lblServerStatus" class="server-status-bar hidden"></div>
-
-      <!-- Declassified Receipt Action Feed -->
-      <div id="stepFeed" class="receipt-feed" aria-live="polite"></div>
+      <p id="lblServerStatus" class="hint hidden"></p>
+      <div id="stepFeed" class="step-feed"></div>
     </section>
 
-    <!-- ── Trust Signal: Verified On-Device Reasoner ────── -->
-    <section class="trust-signal-box">
-      <div class="trust-header">
-        <span class="trust-pip">●</span>
-        <span class="trust-title">HARDWARE VERIFICATION</span>
-      </div>
-      <div class="trust-body">
-        <div class="trust-model-row">
-          <span class="trust-tag">[QWEN 2.5]</span>
-          <span class="trust-detail">LOCAL OLLAMA · 100% ON-DEVICE · ZERO EGRESS</span>
-        </div>
-      </div>
-    </section>
+    <!-- ── Advanced toggle ────────────────────────────── -->
+    <label class="advanced-row" for="chkAdvanced">
+      <span class="advanced-row-label">Advanced</span>
+      <span class="switch">
+        <input type="checkbox" id="chkAdvanced" />
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </span>
+    </label>
 
-    <!-- ── Primary Controls Rack (4 Semantic Buttons) ───── -->
-    <section class="controls-rack" aria-label="Perception Controls">
-      <button id="btnCapture" class="ctrl-btn primary" title="Execute single-frame perception and redaction">
-        <span class="ctrl-code">F1</span>
-        <span class="ctrl-name">CAPTURE</span>
-      </button>
+    <!-- ── Advanced panel ─────────────────────────────── -->
+    <div class="advanced-panel" id="advancedPanel">
+      <div class="advanced-inner">
 
-      <button id="btnHighlightDOM" class="ctrl-btn inspect" title="Highlight all intercepted PII DOM bounding boxes">
-        <span class="ctrl-code">F2</span>
-        <span class="ctrl-name">HIGHLIGHT</span>
-      </button>
-
-      <button id="btnAutoSync" class="ctrl-btn toggle" title="Continuous frame-by-frame live masking">
-        <span class="ctrl-code">F3</span>
-        <span class="ctrl-name" id="lblLiveState">LIVE</span>
-      </button>
-
-      <button id="btnClearOverlays" class="ctrl-btn destructive" title="Clear all screen highlights and overlays">
-        <span class="ctrl-code">CLR</span>
-        <span class="ctrl-name">CLEAR</span>
-      </button>
-    </section>
-
-    <!-- ── Advanced Configuration & Diagnostics ────────── -->
-    <div class="advanced-container">
-      <div class="advanced-toggle-bar">
-        <label class="adv-label" for="chkAdvanced">
-          <input type="checkbox" id="chkAdvanced" />
-          <span class="adv-custom-check"></span>
-          <span class="adv-text">DIAGNOSTICS &amp; ENGINE OVERRIDES</span>
-        </label>
-      </div>
-
-      <div class="advanced-panel" id="advancedPanel">
-        <div class="advanced-inner">
-
-          <!-- Reasoner Selector Override -->
-          <div class="adv-field-group">
-            <span class="adv-field-label">REASONER CORE</span>
-            <select id="selModelProvider" class="adv-select">
-              <option value="ollama_qwen" selected>Qwen 2.5 (Local Ollama · Air-Gapped)</option>
+        <!-- Reasoner selector -->
+        <section class="panel">
+          <div class="field-row">
+            <span class="field-label-inline">Reasoner</span>
+            <select id="selModelProvider" class="select">
+              <option value="ollama_qwen" selected>Qwen 2.5 (Local Ollama · 100% On-Device)</option>
               <option value="auto">Auto Adaptive (Qwen Local ➔ Gemini Fallback)</option>
-              <option value="gemini">Google Gemini 2.5 Flash (Cloud)</option>
-              <option value="openai">OpenAI GPT-4o / Mini</option>
+              <option value="gemini">Google Gemini 2.5 Flash (Cloud Multi-Modal)</option>
+              <option value="openai">OpenAI GPT-4o / GPT-4o-mini</option>
               <option value="nlp">Deterministic Offline NLP (Rule-Based)</option>
             </select>
           </div>
+        </section>
 
-          <!-- Direct Viewport Mask Inspection -->
-          <details class="adv-disclosure">
-            <summary class="adv-summary">
-              <span>VIEWPORT REDACTION MASK</span>
-              <span id="redactionCountPill" class="adv-pill">0 MASKED</span>
-            </summary>
-            <div class="adv-disclosure-body">
-              <div class="seg-controller">
-                <button id="btnViewSanitized" class="seg-btn active">SANITIZED</button>
-                <button id="btnViewRaw" class="seg-btn">RAW FRAME</button>
-              </div>
-              <div class="viewport-box">
-                <img id="displayImage" class="viewport-img" alt="Captured Frame" />
-                <div id="viewportPlaceholder" class="viewport-placeholder">NO ACTIVE FRAME CAPTURED</div>
-              </div>
-              <div id="visualRedactionList" class="detected-audit-list">
-                <div class="empty-hint">NO SENSITIVE ENTITIES CAUGHT IN LAST FRAME</div>
-              </div>
+        <!-- Quick actions -->
+        <section class="panel actions-row">
+          <button id="btnCapture"       class="btn-ghost">Capture</button>
+          <button id="btnHighlightDOM"  class="btn-ghost">Highlight</button>
+          <button id="btnClearOverlays" class="btn-ghost">Clear</button>
+          <button id="btnAutoSync"      class="btn-ghost">Live</button>
+        </section>
+
+        <!-- Preview -->
+        <details class="panel disclosure">
+          <summary>
+            <span>Preview</span>
+            <span id="redactionCountPill" class="muted">0 masked</span>
+          </summary>
+          <div class="disclosure-body">
+            <div class="segmented">
+              <button id="btnViewSanitized" class="seg active">Sanitized</button>
+              <button id="btnViewRaw"       class="seg">Raw</button>
             </div>
-          </details>
-
-          <!-- Raw Activity Stream -->
-          <details class="adv-disclosure">
-            <summary class="adv-summary">
-              <span>INTERNAL TELEMETRY LOG</span>
-            </summary>
-            <div class="adv-disclosure-body">
-              <div id="agentStatusLog" class="raw-agent-log">
-                <div class="log-row">READY // SUBSYSTEMS NOMINAL</div>
-              </div>
+            <div class="viewport">
+              <img id="displayImage" class="viewport-img" alt="Captured viewport" />
+              <div id="viewportPlaceholder" class="placeholder">No capture yet</div>
             </div>
-          </details>
-
-          <div class="adv-links-row">
-            <span id="linkOpenDemo" class="adv-link">LAUNCH TEST BENCH</span>
-            <span class="link-sep">/</span>
-            <span id="linkOpenOptions" class="adv-link">SETTINGS</span>
+            <div id="visualRedactionList" class="detected-list">
+              <div class="muted">Nothing detected yet.</div>
+            </div>
           </div>
+        </details>
 
+        <!-- Activity log -->
+        <details class="panel disclosure">
+          <summary><span>Activity log</span></summary>
+          <div class="disclosure-body">
+            <div id="agentStatusLog" class="log">
+              <div class="log-entry">Ready.</div>
+            </div>
+          </div>
+        </details>
+
+        <div class="footer-inline">
+          <span id="linkOpenDemo" class="link">Open demo page</span>
         </div>
+
       </div>
     </div>
 
-    <!-- ── Compact Footer ──────────────────────────────── -->
-    <footer class="popup-footer">
-      <div class="footer-status-pill">
-        <span class="footer-dot"></span>
-        <span class="footer-assurance">100% ZERO-LEAKAGE ASSURANCE</span>
-      </div>
-      <span class="footer-spec">ISRO PS #26171</span>
+    <!-- ── Footer ─────────────────────────────────────── -->
+    <footer class="footer">
+      <span id="linkOpenDashboard" class="link">Dashboard</span>
+      <span class="footer-dot">·</span>
+      <span id="linkOpenOptions" class="link">Settings</span>
     </footer>
 
   </div>

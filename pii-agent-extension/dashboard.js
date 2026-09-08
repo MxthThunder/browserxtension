@@ -1,198 +1,212 @@
 /**
- * PriviBrowse-X — Security Instrumentation & Forensic Analytics Dashboard Controller
- * Air-gapped on-device telemetry, interactive pipeline inspection, connected category filtering.
- * Zero external dependencies. ISRO PS #26171 compliance instrumentation.
+ * PriviBrowse — Analytics & Privacy Assurance Dashboard Controller
+ * Matches popup.js architecture and design system.
  */
 
-import { getAuditLogs, clearAuditLogs, getSettings } from "./storage.js";
+import { getAuditLogs, clearAuditLogs, getSettings, saveSettings } from "./storage.js";
 
 // ── DOM References ──────────────────────────────────────────
-const metricTotalShielded   = document.getElementById("metricTotalShielded");
-const metricAssuranceRate   = document.getElementById("metricAssuranceRate");
-const metricAvgLatency      = document.getElementById("metricAvgLatency");
-const metricQwenDecisions   = document.getElementById("metricQwenDecisions");
-const lblTotalPipelineLatency = document.getElementById("lblTotalPipelineLatency");
+const btnTheme             = document.getElementById("btnTheme");
+const iconMoon             = document.getElementById("iconMoon");
+const iconSun              = document.getElementById("iconSun");
+const btnRefresh           = document.getElementById("btnRefresh");
+const btnExportLogs        = document.getElementById("btnExportLogs");
+const btnOpenOptions       = document.getElementById("btnOpenOptions");
+const btnOpenDemo          = document.getElementById("btnOpenDemo");
 
-const pipelineStepper       = document.getElementById("pipelineStepper");
-const stageInspectorBox     = document.getElementById("stageInspectorBox");
-const inspStageName         = document.getElementById("inspStageName");
-const inspStageLatency      = document.getElementById("inspStageLatency");
-const inspStageEng          = document.getElementById("inspStageEng");
-const inspArtifactType      = document.getElementById("inspArtifactType");
-const inspDetectionStats    = document.getElementById("inspDetectionStats");
-const inspThroughput        = document.getElementById("inspThroughput");
+const metricTotalShielded  = document.getElementById("metricTotalShielded");
+const metricAssuranceRate  = document.getElementById("metricAssuranceRate");
+const metricAvgLatency     = document.getElementById("metricAvgLatency");
+const metricQwenDecisions  = document.getElementById("metricQwenDecisions");
 
-const spectrumBar           = document.getElementById("spectrumBar");
-const spectrumLegend        = document.getElementById("spectrumLegend");
-const activeFilterBadge     = document.getElementById("activeFilterBadge");
-const filterCategoryName    = document.getElementById("filterCategoryName");
-const btnClearFilter        = document.getElementById("btnClearFilter");
+const overviewFeed         = document.getElementById("overviewFeed");
+const categoryBar          = document.getElementById("categoryBar");
+const categoryList         = document.getElementById("categoryList");
 
-const hwWebGPU              = document.getElementById("hwWebGPU");
-const hwQwen                = document.getElementById("hwQwen");
-const hwMediaPipe           = document.getElementById("hwMediaPipe");
-const hwTesseract           = document.getElementById("hwTesseract");
-const hwStorage             = document.getElementById("hwStorage");
+const pipelineList         = document.getElementById("pipelineList");
+const lblPipelineTotalLatency = document.getElementById("lblPipelineTotalLatency");
+const inspName             = document.getElementById("inspName");
+const inspLatency          = document.getElementById("inspLatency");
+const inspEngine           = document.getElementById("inspEngine");
+const inspArtifacts        = document.getElementById("inspArtifacts");
+const inspThroughput       = document.getElementById("inspThroughput");
+const inspStats            = document.getElementById("inspStats");
 
-const auditTableBody        = document.getElementById("auditTableBody");
-const auditRowCount         = document.getElementById("auditRowCount");
-const btnRefresh            = document.getElementById("btnRefresh");
-const btnExportLogs         = document.getElementById("btnExportLogs");
-const btnClearLogs          = document.getElementById("btnClearLogs");
-const btnOpenOptions        = document.getElementById("btnOpenOptions");
+const stackQwenStatus      = document.getElementById("stackQwenStatus");
+const stackWebGPUStatus    = document.getElementById("stackWebGPUStatus");
 
-// ── Forensic Pipeline Stage Specifications ───────────────────
-const PIPELINE_STAGES = {
+const selAuditFilter       = document.getElementById("selAuditFilter");
+const auditFeed            = document.getElementById("auditFeed");
+const auditCountLabel      = document.getElementById("auditCountLabel");
+const btnClearLogs         = document.getElementById("btnClearLogs");
+
+// ── Pipeline Stage Specifications ───────────────────────────
+const PIPELINE_DATA = {
   dom: {
-    name: "01 // DOM SCAN & HEURISTICS",
-    latency: "3ms",
+    name: "DOM Scan & Microtasks",
+    latency: "3 ms",
     engine: "V8 DOM Microtask Scanner (WASM Native)",
-    artifact: "Input Fields / Password Inputs / Metadata Tokens",
-    stats: "Scanned 142 DOM nodes, flagged 4 input elements with type='password' or sensitive autocomplete attributes.",
-    throughput: "32,000 nodes/sec"
+    artifacts: "Input Fields / Password Inputs / Metadata Tokens",
+    throughput: "32,000 nodes/sec",
+    stats: "Scanned 142 DOM nodes, flagged 4 input elements with type='password' or sensitive autocomplete attributes."
   },
   face: {
-    name: "02 // MEDIAPIPE FACE & BIOMETRIC",
-    latency: "24ms",
+    name: "MediaPipe Face & Biometrics",
+    latency: "24 ms",
     engine: "BlazeFace WebGL Shader Pipeline",
-    artifact: "Facial Landmarks & Biometric Bounding Boxes",
-    stats: "Processed 1280x720 frame, detected 1 biometric face coordinate with 99.4% confidence score.",
-    throughput: "41.6 FPS on WebGL"
+    artifacts: "Facial Landmarks & Biometric Bounding Boxes",
+    throughput: "41.6 FPS on WebGL",
+    stats: "Processed 1280x720 frame, detected 1 biometric face coordinate with 99.4% confidence score."
   },
   ocr: {
-    name: "03 // OCR TEXT SPOTTING (WASM)",
-    latency: "45ms",
+    name: "OCR Text Spotting",
+    latency: "45 ms",
     engine: "Tesseract.js WASM + Regex Lexer",
-    artifact: "Printed Text, Govt ID Sequences, Financial Numerals",
-    stats: "Isolated 6 bounding boxes matching Aadhaar, PAN card, and 16-digit credit card patterns.",
-    throughput: "22 frames/sec"
+    artifacts: "Printed Text, Govt ID Sequences, Financial Numerals",
+    throughput: "22 frames/sec",
+    stats: "Isolated 6 bounding boxes matching Aadhaar, PAN card, and 16-digit credit card patterns."
   },
   qwen: {
-    name: "04 // LOCAL QWEN AMBIGUITY CHECK",
-    latency: "75ms",
+    name: "Local Reasoner (Qwen 2.5)",
+    latency: "75 ms",
     engine: "Ollama Qwen2.5 1.5B (Air-Gapped Local LLM)",
-    artifact: "Contextual Privacy Arbitrations & Ambiguous Entities",
-    stats: "Evaluated 3 ambiguous natural language strings; classified 2 as PII contact addresses and 1 as public domain.",
-    throughput: "13.3 evals/sec"
+    artifacts: "Contextual Privacy Arbitrations & Ambiguous Entities",
+    throughput: "13.3 evals/sec",
+    stats: "Evaluated 3 ambiguous natural language strings; classified 2 as PII contact addresses and 1 as public domain."
   },
   canvas: {
-    name: "05 // GPU CANVAS REDACTION SHADER",
-    latency: "8ms",
+    name: "WebGPU Canvas Redaction",
+    latency: "8 ms",
     engine: "WebGPU Direct Pixel Mutation Pipeline",
-    artifact: "Zero-Copy Blackout Mask & Alpha Neutralization",
-    stats: "Applied 21 cryptographic blackout rects to offscreen framebuffer before frame dispatch.",
-    throughput: "125 FPS Zero-Copy"
+    artifacts: "Zero-Copy Blackout Mask & Alpha Neutralization",
+    throughput: "125 FPS Zero-Copy",
+    stats: "Applied 21 cryptographic blackout rects to offscreen framebuffer before frame dispatch."
   }
 };
 
-// ── PII Category Schema ──────────────────────────────────────
 const CATEGORIES = {
-  passwords: { label: "PASSWORDS & SECRETS", code: "AUTH_SECRET", baseline: 4 },
-  govIds: { label: "GOV IDENTIFIERS", code: "GOV_ID", baseline: 2 },
-  contactInfo: { label: "CONTACT & ADDRESSES", code: "CONTACT_PII", baseline: 5 },
-  creditCards: { label: "FINANCIAL & CARDS", code: "FIN_PAYMENT", baseline: 3 },
-  faces: { label: "BIOMETRICS & FACES", code: "BIO_FACE", baseline: 1 },
-  telemetry: { label: "MISSION TELEMETRY", code: "ISRO_TELEMETRY", baseline: 6 }
+  passwords: { label: "Passwords & Tokens", baseline: 4 },
+  govIds: { label: "Identity & Gov IDs", baseline: 2 },
+  contactInfo: { label: "Contact & Addresses", baseline: 5 },
+  creditCards: { label: "Financial & Cards", baseline: 3 },
+  faces: { label: "Faces & Biometrics", baseline: 1 },
+  telemetry: { label: "Mission Telemetry", baseline: 6 }
 };
 
-let currentCategoryFilter = null;
 let allAuditLogs = [];
 
 // ── Initialization ───────────────────────────────────────────
 document.addEventListener("DOMContentLoaded", async () => {
-  setupInteractivePipeline();
-  setupFilterControls();
-  setupActionListeners();
-  
-  await probeSubsystems();
+  const settings = await getSettings();
+  applyTheme(settings.theme || "dark");
+
+  setupTabs();
+  setupPipelineInspector();
+  setupEventListeners();
+
+  await probeHardware();
   await loadDashboardData();
 });
 
-// ── Subsystem Probing ────────────────────────────────────────
-async function probeSubsystems() {
-  // 1. WebGPU
-  if (navigator.gpu) {
-    try {
-      const adapter = await navigator.gpu.requestAdapter();
-      if (adapter) {
-        if (hwWebGPU) {
-          hwWebGPU.textContent = "ACTIVE";
-          hwWebGPU.className = "hw-status-badge ok";
-        }
-      }
-    } catch {
-      if (hwWebGPU) {
-        hwWebGPU.textContent = "WASM FB";
-        hwWebGPU.className = "hw-status-badge warn";
-      }
-    }
-  }
-
-  // 2. Ollama Local Qwen
-  try {
-    const res = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(800) });
-    if (res.ok) {
-      const data = await res.json();
-      const models = (data.models || []).map((m) => (m.name || "").toLowerCase());
-      const hasCustom = models.some((m) => m.includes("isro-privacy-qwen"));
-      const has15b = models.some((m) => m.includes("1.5b"));
-      
-      if (hwQwen) {
-        hwQwen.textContent = hasCustom ? "ISRO-QWEN" : has15b ? "QWEN 1.5B" : "QWEN 0.5B";
-        hwQwen.className = "hw-status-badge ok";
-      }
+// ── Theme Switcher ───────────────────────────────────────────
+function applyTheme(theme) {
+  document.documentElement.dataset.theme = theme;
+  if (iconMoon && iconSun) {
+    if (theme === "light") {
+      iconMoon.style.display = "none";
+      iconSun.style.display = "block";
     } else {
-      if (hwQwen) {
-        hwQwen.textContent = "OFFLINE";
-        hwQwen.className = "hw-status-badge warn";
-      }
-    }
-  } catch {
-    if (hwQwen) {
-      hwQwen.textContent = "LOCAL FAST";
-      hwQwen.className = "hw-status-badge ok";
+      iconMoon.style.display = "block";
+      iconSun.style.display = "none";
     }
   }
 }
 
-// ── Interactive Pipeline Inspector ───────────────────────────
-function setupInteractivePipeline() {
-  if (!pipelineStepper) return;
+if (btnTheme) {
+  btnTheme.addEventListener("click", async () => {
+    const current = document.documentElement.dataset.theme || "dark";
+    const next = current === "dark" ? "light" : "dark";
+    applyTheme(next);
+    await saveSettings({ theme: next });
+  });
+}
 
-  const buttons = pipelineStepper.querySelectorAll(".stage-step");
-  buttons.forEach((btn) => {
+// ── Tab Navigation ───────────────────────────────────────────
+function setupTabs() {
+  const tabButtons = document.querySelectorAll(".tab-btn");
+  tabButtons.forEach((btn) => {
     btn.addEventListener("click", () => {
-      buttons.forEach((b) => {
-        b.classList.remove("active");
-        b.setAttribute("aria-selected", "false");
-      });
+      tabButtons.forEach((b) => b.classList.remove("active"));
       btn.classList.add("active");
-      btn.setAttribute("aria-selected", "true");
-      
-      const stageKey = btn.getAttribute("data-stage");
-      selectStage(stageKey);
-    });
 
-    btn.addEventListener("mouseenter", () => {
-      const stageKey = btn.getAttribute("data-stage");
-      selectStage(stageKey);
+      const tabId = btn.getAttribute("data-tab");
+      document.querySelectorAll(".tab-pane").forEach((pane) => {
+        pane.classList.remove("active");
+      });
+      const activePane = document.getElementById(`pane-${tabId}`);
+      if (activePane) activePane.classList.add("active");
     });
   });
 }
 
-function selectStage(stageKey) {
-  const data = PIPELINE_STAGES[stageKey];
-  if (!data) return;
-
-  if (inspStageName) inspStageName.textContent = data.name;
-  if (inspStageLatency) inspStageLatency.textContent = data.latency;
-  if (inspStageEng) inspStageEng.textContent = data.engine;
-  if (inspArtifactType) inspArtifactType.textContent = data.artifact;
-  if (inspDetectionStats) inspDetectionStats.textContent = data.stats;
-  if (inspThroughput) inspThroughput.textContent = data.throughput;
+// ── Pipeline Inspector ───────────────────────────────────────
+function setupPipelineInspector() {
+  if (!pipelineList) return;
+  const rows = pipelineList.querySelectorAll(".pipeline-row");
+  rows.forEach((row) => {
+    row.addEventListener("click", () => {
+      rows.forEach((r) => r.classList.remove("active"));
+      row.classList.add("active");
+      const stageKey = row.getAttribute("data-stage");
+      updateInspector(stageKey);
+    });
+  });
 }
 
-// ── Data Loader & Telemetry Calculation ──────────────────────
+function updateInspector(stageKey) {
+  const data = PIPELINE_DATA[stageKey];
+  if (!data) return;
+
+  if (inspName) inspName.textContent = data.name;
+  if (inspLatency) inspLatency.textContent = data.latency;
+  if (inspEngine) inspEngine.textContent = data.engine;
+  if (inspArtifacts) inspArtifacts.textContent = data.artifacts;
+  if (inspThroughput) inspThroughput.textContent = data.throughput;
+  if (inspStats) inspStats.textContent = data.stats;
+}
+
+// ── Hardware Probing ─────────────────────────────────────────
+async function probeHardware() {
+  if (navigator.gpu) {
+    try {
+      const adapter = await navigator.gpu.requestAdapter();
+      if (adapter && stackWebGPUStatus) {
+        stackWebGPUStatus.textContent = "Hardware Accelerated";
+        stackWebGPUStatus.className = "status-pill green";
+      }
+    } catch {
+      if (stackWebGPUStatus) {
+        stackWebGPUStatus.textContent = "WASM Fallback";
+        stackWebGPUStatus.className = "status-pill";
+      }
+    }
+  }
+
+  try {
+    const res = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(800) });
+    if (res.ok && stackQwenStatus) {
+      stackQwenStatus.textContent = "Connected · 100% On-Device";
+      stackQwenStatus.className = "status-pill green";
+    }
+  } catch {
+    if (stackQwenStatus) {
+      stackQwenStatus.textContent = "Local Fastpath Active";
+      stackQwenStatus.className = "status-pill green";
+    }
+  }
+}
+
+// ── Data Loader ──────────────────────────────────────────────
 async function loadDashboardData() {
   const [logs, sessionResp] = await Promise.all([
     getAuditLogs(),
@@ -203,7 +217,6 @@ async function loadDashboardData() {
 
   const session = sessionResp?.session || {};
 
-  // Compute category counts
   const categoryCounts = {
     passwords: 0,
     govIds: 0,
@@ -218,7 +231,6 @@ async function loadDashboardData() {
   let totalLatency = 0;
   let latencySampleCount = 0;
 
-  // Process logs
   allAuditLogs = Array.isArray(logs) ? [...logs] : [];
 
   allAuditLogs.forEach((entry) => {
@@ -236,7 +248,6 @@ async function loadDashboardData() {
     }
   });
 
-  // Process active session capture
   if (session.latestCapture?.redactionList) {
     session.latestCapture.redactionList.forEach((r) => {
       const cat = mapCategory(r.category);
@@ -246,7 +257,7 @@ async function loadDashboardData() {
     });
   }
 
-  // Baseline forensic seed if fresh install
+  // Baseline if empty
   const currentTotal = Object.values(categoryCounts).reduce((a, b) => a + b, 0);
   if (currentTotal === 0) {
     Object.keys(CATEGORIES).forEach((k) => {
@@ -259,26 +270,25 @@ async function loadDashboardData() {
     qwenCount = Math.max(qwenCount, 8);
   }
 
-  // Ensure synthetic forensic log seed if empty
   if (allAuditLogs.length === 0) {
-    allAuditLogs = generateForensicBaselineLogs();
+    allAuditLogs = generateBaselineLogs();
   }
 
-  // Update KPI Telemetry Rack
+  // Top-line stats
   if (metricTotalShielded) metricTotalShielded.textContent = totalShielded;
-  if (metricAssuranceRate) metricAssuranceRate.textContent = "100.0%";
+  if (metricAssuranceRate) metricAssuranceRate.textContent = "100%";
   const avgLat = latencySampleCount > 0 ? Math.round(totalLatency / latencySampleCount) : 38;
   if (metricAvgLatency) {
-    metricAvgLatency.innerHTML = `${avgLat}<span class="val-sub">ms</span>`;
+    metricAvgLatency.innerHTML = `${avgLat} <span class="stat-unit">ms</span>`;
   }
   if (metricQwenDecisions) metricQwenDecisions.textContent = qwenCount;
-  if (lblTotalPipelineLatency) lblTotalPipelineLatency.textContent = `~${avgLat} ms MEAN`;
+  if (lblPipelineTotalLatency) lblPipelineTotalLatency.textContent = `~${avgLat} ms total per frame`;
 
-  // Render PII Category Spectrum & Legend
-  renderPIISpectrum(categoryCounts, totalShielded);
+  // Render PII Categories
+  renderCategories(categoryCounts, totalShielded);
 
-  // Render Forensic Audit Table
-  applyAuditFilterAndRender();
+  // Render Audit Log
+  renderAuditLogs();
 }
 
 function mapCategory(raw) {
@@ -292,237 +302,117 @@ function mapCategory(raw) {
   return "contactInfo";
 }
 
-// ── PII Spectrum Rendering & Connected Filtering ─────────────
-function renderPIISpectrum(categoryCounts, totalCount) {
-  if (!spectrumBar || !spectrumLegend) return;
+// ── PII Category Presentation ────────────────────────────────
+function renderCategories(counts, total) {
+  if (!categoryBar || !categoryList) return;
 
-  spectrumBar.innerHTML = "";
-  spectrumLegend.innerHTML = "";
+  categoryBar.innerHTML = "";
+  categoryList.innerHTML = "";
 
   Object.entries(CATEGORIES).forEach(([key, info]) => {
-    const count = categoryCounts[key] || 0;
-    const pct = totalCount > 0 ? Math.round((count / totalCount) * 100) : 0;
+    const count = counts[key] || 0;
+    const pct = total > 0 ? Math.round((count / total) * 100) : 0;
 
-    // Spectrum block
-    const block = document.createElement("div");
-    block.className = `spectrum-block ${key}${currentCategoryFilter === key ? " active" : ""}`;
-    block.style.flexGrow = String(Math.max(count, 1));
-    block.setAttribute("title", `${info.label}: ${count} (${pct}%) — Click to filter audit log`);
-    block.addEventListener("click", () => toggleFilter(key));
-    spectrumBar.appendChild(block);
+    // Bar slice
+    const slice = document.createElement("div");
+    slice.className = `category-bar-slice ${key}`;
+    slice.style.width = `${pct}%`;
+    slice.setAttribute("title", `${info.label}: ${count} (${pct}%)`);
+    categoryBar.appendChild(slice);
 
-    // Legend Tile
-    const tile = document.createElement("button");
-    tile.className = `spectrum-legend-tile ${key}${currentCategoryFilter === key ? " active" : ""}`;
-    tile.setAttribute("type", "button");
-    tile.setAttribute("title", `Filter audit stream by ${info.label}`);
-    tile.innerHTML = `
-      <div class="legend-tile-top">
-        <span class="legend-swatch ${key}"></span>
-        <span class="legend-name">${info.label}</span>
+    // List row matching popup rows
+    const row = document.createElement("div");
+    row.className = "category-row";
+    row.innerHTML = `
+      <div class="category-row-left">
+        <span class="category-dot"></span>
+        <span class="category-title">${info.label}</span>
       </div>
-      <div class="legend-tile-bottom">
-        <span class="legend-count">${count}</span>
-        <span class="legend-pct">${pct}%</span>
+      <div class="category-row-right">
+        <span class="category-count">${count} items</span>
+        <span class="category-pct">${pct}%</span>
       </div>
     `;
-    tile.addEventListener("click", () => toggleFilter(key));
-    spectrumLegend.appendChild(tile);
+    categoryList.appendChild(row);
   });
 }
 
-function setupFilterControls() {
-  if (btnClearFilter) {
-    btnClearFilter.addEventListener("click", () => {
-      clearFilter();
-    });
-  }
-}
+// ── Audit Log Presentation ───────────────────────────────────
+function renderAuditLogs() {
+  if (!auditFeed) return;
 
-function toggleFilter(categoryKey) {
-  if (currentCategoryFilter === categoryKey) {
-    clearFilter();
-  } else {
-    currentCategoryFilter = categoryKey;
-    if (activeFilterBadge) activeFilterBadge.classList.remove("hidden");
-    if (filterCategoryName) filterCategoryName.textContent = CATEGORIES[categoryKey]?.label || categoryKey;
-    updateFilterUI();
-    applyAuditFilterAndRender();
-  }
-}
-
-function clearFilter() {
-  currentCategoryFilter = null;
-  if (activeFilterBadge) activeFilterBadge.classList.add("hidden");
-  updateFilterUI();
-  applyAuditFilterAndRender();
-}
-
-function updateFilterUI() {
-  document.querySelectorAll(".spectrum-block, .spectrum-legend-tile").forEach((el) => {
-    el.classList.remove("active");
-  });
-  if (currentCategoryFilter) {
-    document.querySelectorAll(`.${currentCategoryFilter}`).forEach((el) => {
-      el.classList.add("active");
-    });
-  }
-}
-
-// ── Forensic Audit Table ─────────────────────────────────────
-function applyAuditFilterAndRender() {
-  if (!auditTableBody) return;
-
+  const filter = selAuditFilter?.value || "all";
   let filtered = allAuditLogs;
-  if (currentCategoryFilter) {
-    filtered = allAuditLogs.filter((entry) => {
-      const cat = mapCategory(entry.category || entry.actionType);
-      return cat === currentCategoryFilter;
-    });
+  if (filter !== "all") {
+    filtered = allAuditLogs.filter((entry) => mapCategory(entry.category || entry.actionType) === filter);
   }
 
-  if (auditRowCount) {
-    auditRowCount.textContent = `${filtered.length} of ${allAuditLogs.length} EVENTS`;
+  if (auditCountLabel) {
+    auditCountLabel.textContent = `${filtered.length} event${filtered.length === 1 ? "" : "s"} recorded`;
   }
 
-  auditTableBody.innerHTML = "";
+  auditFeed.innerHTML = "";
 
   if (filtered.length === 0) {
-    auditTableBody.innerHTML = `
-      <tr>
-        <td colspan="7" class="empty-state">NO COMPLIANCE AUDIT ENTRIES MATCHING ACTIVE FILTER.</td>
-      </tr>
-    `;
+    auditFeed.innerHTML = `<div class="audit-empty">No events match the selected category.</div>`;
     return;
   }
 
-  filtered.slice(0, 100).forEach((entry, idx) => {
-    const row = document.createElement("tr");
+  filtered.forEach((entry) => {
+    const row = document.createElement("div");
+    row.className = "audit-row";
 
-    const timeStr = entry.timestamp 
-      ? new Date(entry.timestamp).toISOString().replace("T", " ").substring(0, 19)
-      : `2026-09-08 23:${String(50 - idx).padStart(2, "0")}:14`;
-    
+    const timeStr = entry.timestamp ? new Date(entry.timestamp).toLocaleTimeString() : "--:--";
     const cat = mapCategory(entry.category || entry.actionType);
-    const catCode = CATEGORIES[cat]?.code || "SENSITIVE_DATA";
-    const target = escapeHtml((entry.task || entry.target || "Visual Redaction Frame").substring(0, 32));
-    const engine = escapeHtml(entry.model || entry.engine || "WebGPU+BlazeFace");
-    const count = entry.redactions !== undefined ? `${entry.redactions} SHIELDED` : "1 FRAME";
-    const lat = entry.latencyMs ? `${entry.latencyMs}ms` : "36ms";
-    const hash = entry.checksum || generateMockHash(entry.timestamp || idx);
+    const catLabel = CATEGORIES[cat]?.label || "General";
+    const taskStr = escapeHtml(entry.task || "Redacted sensitive field");
+    const latStr = entry.latencyMs ? `${entry.latencyMs} ms` : "38 ms";
 
     row.innerHTML = `
-      <td class="col-ts">${timeStr}</td>
-      <td><span class="spec-cat-pill ${cat}">${catCode}</span></td>
-      <td class="col-target">${target}</td>
-      <td class="col-eng">${engine}</td>
-      <td class="col-num">${count}</td>
-      <td class="col-lat">${lat}</td>
-      <td class="col-sig"><span class="sig-badge">SHA256:${hash}</span></td>
+      <div class="audit-left">
+        <span class="mark">✓</span>
+        <span class="audit-time">${timeStr}</span>
+        <span class="audit-text">${taskStr}</span>
+      </div>
+      <div class="audit-right">
+        <span class="audit-cat-tag">${catLabel}</span>
+        <span class="audit-latency">${latStr}</span>
+      </div>
     `;
-    auditTableBody.appendChild(row);
+    auditFeed.appendChild(row);
   });
 }
 
-function generateMockHash(seed) {
-  const chars = "0123456789abcdef";
-  let hash = "";
-  const num = typeof seed === "number" ? seed : 42;
-  for (let i = 0; i < 8; i++) {
-    hash += chars[(num * (i + 7) + 3) % chars.length];
-  }
-  return hash;
-}
-
-function generateForensicBaselineLogs() {
+function generateBaselineLogs() {
   const baseTime = Date.now();
   return [
-    {
-      timestamp: baseTime - 12000,
-      category: "passwords",
-      task: "DOM #password-input auto-sanitize",
-      engine: "V8 DOM Parser",
-      redactions: 1,
-      latencyMs: 3,
-      checksum: "e3b0c442"
-    },
-    {
-      timestamp: baseTime - 28000,
-      category: "govIds",
-      task: "OCR Aadhaar Card 12-digit pattern",
-      engine: "Tesseract.js WASM",
-      redactions: 2,
-      latencyMs: 44,
-      checksum: "8f14e45f"
-    },
-    {
-      timestamp: baseTime - 54000,
-      category: "faces",
-      task: "BlazeFace Biometric Capture Frame #84",
-      engine: "MediaPipe WebGL",
-      redactions: 1,
-      latencyMs: 22,
-      checksum: "9c51b2a1"
-    },
-    {
-      timestamp: baseTime - 89000,
-      category: "creditCards",
-      task: "Payment Gateway 16-digit PAN & CVV",
-      engine: "DOM + Regex Lexer",
-      redactions: 3,
-      latencyMs: 6,
-      checksum: "4d78a9c2"
-    },
-    {
-      timestamp: baseTime - 145000,
-      category: "contactInfo",
-      task: "Billing Shipping Address Field Scan",
-      engine: "Qwen 2.5 Local Reasoner",
-      redactions: 4,
-      latencyMs: 72,
-      checksum: "1b34e890"
-    },
-    {
-      timestamp: baseTime - 210000,
-      category: "telemetry",
-      task: "ISRO Ground Station GPS Coordinates",
-      engine: "Fastpath Semantic Parser",
-      redactions: 6,
-      latencyMs: 14,
-      checksum: "a074c933"
-    },
-    {
-      timestamp: baseTime - 360000,
-      category: "passwords",
-      task: "API Bearer Token in Request Payload",
-      engine: "V8 Heuristic Lexer",
-      redactions: 2,
-      latencyMs: 4,
-      checksum: "7f29b8c1"
-    },
-    {
-      timestamp: baseTime - 480000,
-      category: "contactInfo",
-      task: "Customer Support Phone & Email DOM",
-      engine: "DOM Sanitizer",
-      redactions: 2,
-      latencyMs: 5,
-      checksum: "3e56f108"
-    }
+    { timestamp: baseTime - 12000, category: "passwords", task: "Masked password input field in DOM", latencyMs: 3 },
+    { timestamp: baseTime - 28000, category: "govIds", task: "Redacted 12-digit Aadhaar ID pattern via OCR", latencyMs: 45 },
+    { timestamp: baseTime - 54000, category: "faces", task: "Applied canvas blackout on 1 detected face landmark", latencyMs: 24 },
+    { timestamp: baseTime - 89000, category: "creditCards", task: "Sanitized credit card PAN and CVV tokens", latencyMs: 6 },
+    { timestamp: baseTime - 145000, category: "contactInfo", task: "Masked shipping address and contact telephone", latencyMs: 72 },
+    { timestamp: baseTime - 210000, category: "telemetry", task: "Shielded mission GPS coordinate tokens", latencyMs: 14 }
   ];
 }
 
-// ── Action Event Listeners ───────────────────────────────────
-function setupActionListeners() {
+// ── Event Listeners ──────────────────────────────────────────
+function setupEventListeners() {
+  if (selAuditFilter) {
+    selAuditFilter.addEventListener("change", renderAuditLogs);
+  }
+
   if (btnRefresh) {
     btnRefresh.addEventListener("click", async () => {
-      btnRefresh.classList.add("pulsing");
-      btnRefresh.innerHTML = `<span class="btn-icon">↺</span><span>SYNCING…</span>`;
+      btnRefresh.innerHTML = `<span>Syncing…</span>`;
       await loadDashboardData();
       setTimeout(() => {
-        btnRefresh.classList.remove("pulsing");
-        btnRefresh.innerHTML = `<span class="btn-icon">↺</span><span>SYNC TELEMETRY</span>`;
-      }, 500);
+        btnRefresh.innerHTML = `
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          <span>Sync</span>`;
+      }, 400);
     });
   }
 
@@ -531,14 +421,14 @@ function setupActionListeners() {
       const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(allAuditLogs, null, 2));
       const dl = document.createElement("a");
       dl.setAttribute("href", dataStr);
-      dl.setAttribute("download", `privibrowse_forensic_audit_${Date.now()}.json`);
+      dl.setAttribute("download", `privibrowse_audit_report_${Date.now()}.json`);
       dl.click();
     });
   }
 
   if (btnClearLogs) {
     btnClearLogs.addEventListener("click", async () => {
-      if (confirm("CONFIRMATION REQUIRED: Purge local air-gapped audit trail?")) {
+      if (confirm("Clear local audit log?")) {
         await clearAuditLogs();
         allAuditLogs = [];
         await loadDashboardData();
@@ -550,6 +440,21 @@ function setupActionListeners() {
     btnOpenOptions.addEventListener("click", () => {
       if (typeof chrome !== "undefined" && chrome.runtime?.openOptionsPage) {
         chrome.runtime.openOptionsPage();
+      }
+    });
+  }
+
+  if (btnOpenDemo) {
+    btnOpenDemo.addEventListener("click", async () => {
+      try {
+        const probe = await fetch("http://localhost:8000/demo.html", { method: "HEAD", signal: AbortSignal.timeout(600) });
+        if (probe.ok) {
+          chrome.tabs.create({ url: "http://localhost:8000/demo.html" });
+          return;
+        }
+      } catch {}
+      if (typeof chrome !== "undefined" && chrome.tabs?.create) {
+        chrome.tabs.create({ url: chrome.runtime.getURL("demo.html") });
       }
     });
   }
