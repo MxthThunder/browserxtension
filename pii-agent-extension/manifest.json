@@ -64,7 +64,7 @@
     }
   ],
   "content_security_policy": {
-    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'"
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self'; connect-src 'self' http://127.0.0.1:* http://localhost:* https://generativelanguage.googleapis.com https://api.openai.com"
   },
   "web_accessible_resources": [
     {
@@ -76,32 +76,8 @@
         "lib/tesseract/*",
         "icons/*",
         "offscreen.html",
-        "perception.js",
-        "privacy_engine.js",
-        "local_reasoner.js",
-        "vault.js",
-        "semantic_redactor.js",
-        "telemetry.js",
-        "agent_client.js",
-        "action_engine.js",
-        "permission_engine.js",
-        "prompt_guard.js",
-        "data_adapter.js",
-        "agent_loop.js",
-        "popup.html",
-        "popup.js",
-        "popup.css",
-        "options.html",
-        "options.js",
-        "options.css",
         "demo.html",
-        "dashboard.html",
-        "dashboard.js",
-        "dashboard.css",
-        "mission_console.html",
-        "openmct_telemetry_plugin.js",
-        "demo-photo.jpg",
-        "benchmark_results.json"
+        "demo-photo.jpg"
       ],
       "matches": ["<all_urls>"]
     }

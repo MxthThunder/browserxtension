@@ -366,18 +366,11 @@ async function executeTaskWithServer(task, options = {}) {
     throw new Error("Client canvas redaction failed: " + (captureResult?.error || "Unknown"));
   }
 
-  // 2. Fetch interactive DOM elements from active tab
-  let domElements = [];
-  try {
-    const tab = await getActiveTab();
-    if (tab && tab.id) {
-      const domResponse = await sendTabMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
-      if (domResponse?.interactiveElements) {
-        domElements = domResponse.interactiveElements;
-      }
-    }
-  } catch (e) {
-    console.warn("[Background] Could not fetch interactive elements:", e);
+  // 2. Reuse interactive DOM elements already fetched inside captureAndRedactActiveTab
+  // (#4 FIX: eliminated redundant second GET_DOM_PII_BOXES message — captureResult already contains them)
+  let domElements = captureResult.interactiveElements || [];
+  if (domElements.length === 0 && captureResult.unifiedPerceptionState?.domBoxes) {
+    domElements = captureResult.unifiedPerceptionState.domBoxes;
   }
 
   // 3. Prepare sanitized payload for FastAPI server (Zero-Leakage)
@@ -579,6 +572,32 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     executeTaskWithServer(message.task, message.options)
       .then((res) => sendResponse(res))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
+    return true;
+  }
+
+  // #23: Audit log export to CSV
+  if (message.type === "EXPORT_AUDIT_LOG") {
+    chrome.storage.local.get(["auditLog"], (result) => {
+      const entries = result.auditLog || [];
+      if (entries.length === 0) {
+        sendResponse({ ok: false, error: "No audit entries to export" });
+        return;
+      }
+      const header = ["timestamp", "url", "tabTitle", "actionType", "model", "redactions", "latencyMs", "backend"].join(",");
+      const rows = entries.map((e) => [
+        e.timestamp || e.ts || new Date().toISOString(),
+        JSON.stringify(e.url || ""),
+        JSON.stringify(e.tabTitle || ""),
+        e.actionType || e.type || "",
+        e.model || "",
+        e.redactions || e.redactionsCount || 0,
+        Math.round(e.latencyMs || 0),
+        e.backend || ""
+      ].join(","));
+      const csv = [header, ...rows].join("\n");
+      const b64 = btoa(unescape(encodeURIComponent(csv)));
+      sendResponse({ ok: true, csv, dataUrl: "data:text/csv;base64," + b64, count: entries.length });
+    });
     return true;
   }
 

@@ -129,6 +129,54 @@ export class AgentClient {
       const elapsedMs = performance.now() - startTime;
       console.warn("[AgentClient] Server action request failed:", err.message);
 
+      // #27: Full offline mode — if the server is down (network error, not HTTP error),
+      // attempt a direct Ollama /api/generate call as a last-resort local fallback.
+      const isNetworkError = err.name === "TypeError" || err.name === "AbortError" || err.message?.includes("fetch") || err.message?.includes("network") || err.message?.includes("ECONNREFUSED");
+      if (isNetworkError && !settings.failClosed) {
+        try {
+          console.log("[AgentClient] Server unreachable — attempting direct Ollama offline fallback...");
+          const ollamaResp = await fetch("http://127.0.0.1:11434/api/generate", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: AbortSignal.timeout(20000),
+            body: JSON.stringify({
+              model: "isro-privacy-qwen:latest",
+              prompt: [
+                "You are an offline browser agent. User goal: " + (params.task || ""),
+                "Respond with JSON: {\"type\": \"wait\"|\"scroll\"|\"finish\", \"explanation\": \"brief reason\", \"confidence\": 0.5}",
+              ].join("\n"),
+              stream: false,
+              format: "json",
+              keep_alive: -1
+            })
+          });
+          if (ollamaResp.ok) {
+            const ollamaData = await ollamaResp.json();
+            let raw = (ollamaData.response || "{}").trim().replace(/^```json\s*/i, "").replace(/\s*```$/, "");
+            const parsed = JSON.parse(raw);
+            if (parsed.type) {
+              console.log("[AgentClient] Offline Ollama fallback succeeded:", parsed.type);
+              return {
+                ok: true,
+                action: {
+                  type: parsed.type || "wait",
+                  selector: parsed.selector || null,
+                  value: parsed.value || null,
+                  explanation: "[Offline/Qwen] " + (parsed.explanation || "Local model fallback."),
+                  confidence: parseFloat(parsed.confidence || 0.5)
+                },
+                audit: {},
+                latencyMs: Math.round(performance.now() - startTime),
+                serverLatencyMs: 0,
+                modelUsed: "ollama-offline-direct"
+              };
+            }
+          }
+        } catch (ollamaErr) {
+          console.warn("[AgentClient] Direct Ollama offline fallback also failed:", ollamaErr.message);
+        }
+      }
+
       // Check Fail-Closed setting
       if (settings.failClosed) {
         throw new Error(`Agent Execution Blocked (Fail-Closed enabled): ${err.message}`);

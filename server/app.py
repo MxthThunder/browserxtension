@@ -161,6 +161,45 @@ FIELD_SYNONYMS = {
 }
 
 
+
+# ── #19: URL & Title Sanitizer (prompt injection prevention) ─────────────────
+_SUSPICIOUS_CHARS = re.compile(r'[\x00-\x1f\x7f<>{}|\\^`"]')
+_PII_QUERY_PARAMS = re.compile(
+    r'(?:token|auth|session|key|secret|password|pwd|otp|code|access_token|id_token|api_key)',
+    re.I
+)
+
+def sanitize_url_for_vlm(url: Optional[str], title: Optional[str] = None) -> tuple:
+    """
+    Sanitize a page URL and title before including them in LLM prompts.
+    - Strips auth/session query params (prompt injection via URL)
+    - Removes suspicious control characters
+    - Truncates excessively long URLs
+    Returns (safe_url, safe_title)
+    """
+    safe_url = ""
+    if url:
+        try:
+            from urllib.parse import urlparse, urlencode, parse_qs
+            parsed = urlparse(url)
+            # Strip PII-bearing query params
+            params = {k: v for k, v in parse_qs(parsed.query).items()
+                      if not _PII_QUERY_PARAMS.search(k)}
+            # Rebuild clean URL (scheme + netloc + path only if params stripped)
+            safe_url = f"{parsed.scheme}://{parsed.netloc}{parsed.path}"
+            if params:
+                safe_url += "?" + urlencode(params, doseq=True)
+            safe_url = _SUSPICIOUS_CHARS.sub('', safe_url)[:256]
+        except Exception:
+            safe_url = str(url)[:128]
+
+    safe_title = ""
+    if title:
+        safe_title = _SUSPICIOUS_CHARS.sub('', str(title))[:100]
+
+    return safe_url, safe_title
+
+
 @app.get("/health")
 def health_check():
     ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
@@ -892,6 +931,11 @@ def universal_nlp_reasoner(
 @app.post("/api/act", response_model=ActResponse)
 async def act_endpoint(payload: ActRequest):
     start_time = time.perf_counter()
+
+    # #19: Sanitize URL and task before passing to any LLM (prevent prompt injection via page URL/title)
+    safe_url, _ = sanitize_url_for_vlm(payload.url)
+    if safe_url:
+        payload.url = safe_url
 
     # Zero-Leakage Privacy Audit
     has_image = bool(payload.sanitized_image_base64 and len(payload.sanitized_image_base64) > 100)

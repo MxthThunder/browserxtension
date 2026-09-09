@@ -70,7 +70,7 @@ export const AGENT_LOOP_STATUS = {
 export class AutonomousAgentLoop {
   constructor(options = {}) {
     this.maxSteps = options.maxSteps || 10;
-    this.settleDelayMs = options.settleDelayMs || 350;
+    this.settleDelayMs = options.settleDelayMs || 200; // #2: minimum settle, adaptive wait handles the rest
     this.status = AGENT_LOOP_STATUS.IDLE;
     this._abortController = null;
     this.currentStep = 0;
@@ -318,9 +318,9 @@ export class AutonomousAgentLoop {
           onStepCallback(stepRecord);
         }
 
-        // Settle delay before next observation
+        // #2+#3: Adaptive page-quiet wait — polls tab loading state instead of fixed delay
         if (this.status === AGENT_LOOP_STATUS.RUNNING) {
-          await new Promise((res) => setTimeout(res, this.settleDelayMs));
+          await this._waitForPageQuiet(action, options);
         }
       }
     } catch (err) {
@@ -347,6 +347,54 @@ export class AutonomousAgentLoop {
    */
   setCaptureHandler(fn) {
     this._customCaptureHandler = fn;
+  }
+
+  /**
+   * #2+#3: Adaptive page-quiet wait.
+   * After an action (especially navigate/click that triggers page load), waits
+   * for the tab to reach 'complete' loading state with a debounce, rather than
+   * sleeping a fixed amount. Falls back to settleDelayMs minimum.
+   *
+   * - scroll/wait/finish: short flat delay (no navigation expected)
+   * - click/submit/navigate/type: polls tab.status until 'complete' (up to 2s)
+   */
+  async _waitForPageQuiet(action, options = {}) {
+    const actionType = action?.type || "";
+    const MIN_MS = this.settleDelayMs; // always wait at least this
+    const MAX_POLL_MS = 2000;
+    const POLL_INTERVAL = 80;
+
+    // For non-navigating actions, just use minimum delay
+    if (["scroll", "wait", "finish", "select"].includes(actionType)) {
+      await new Promise((r) => setTimeout(r, MIN_MS));
+      return;
+    }
+
+    // For click/type/submit/navigate — poll tab loading state
+    const tabId = options?.tabId;
+    const deadline = performance.now() + MAX_POLL_MS;
+
+    if (typeof chrome !== "undefined" && chrome.tabs && tabId) {
+      // Brief initial pause before polling (page may not have started loading yet)
+      await new Promise((r) => setTimeout(r, MIN_MS));
+
+      while (performance.now() < deadline) {
+        try {
+          const tab = await chrome.tabs.get(tabId);
+          if (tab && tab.status === "complete") {
+            // Page quiet — add a tiny debounce for JS to settle
+            await new Promise((r) => setTimeout(r, 80));
+            return;
+          }
+        } catch {
+          break; // Tab closed or inaccessible
+        }
+        await new Promise((r) => setTimeout(r, POLL_INTERVAL));
+      }
+    } else {
+      // No tabId available — use flat minimum delay
+      await new Promise((r) => setTimeout(r, Math.max(MIN_MS, 400)));
+    }
   }
 
   // ── Private Helpers ─────────────────────────────────────────────────────────
