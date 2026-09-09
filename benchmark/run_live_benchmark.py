@@ -1,4 +1,4 @@
-﻿"""
+"""
 Live Benchmark Evaluation for ISRO PS #26171
 Calls the real FastAPI /api/classify endpoint and measures actual Qwen+rule-based
 classification accuracy against ground truth annotations.
@@ -17,6 +17,13 @@ import time
 import sys
 import urllib.request
 import urllib.error
+
+# Ensure stdout handles unicode characters safely on Windows consoles
+if hasattr(sys.stdout, "reconfigure"):
+    try:
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
+    except Exception:
+        pass
 
 SERVER_URL = "http://127.0.0.1:8001"
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))

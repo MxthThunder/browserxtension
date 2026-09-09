@@ -139,6 +139,28 @@ class ActResponse(BaseModel):
     audit: Dict[str, Any]
     server_latency_ms: float
     model_used: str
+    privacy_feedback: Optional[Dict[str, Any]] = None
+
+
+def extract_privacy_feedback(explanation: str, model_used: str, redactions_count: int) -> Dict[str, Any]:
+    """Analyzes model reasoning to assess privacy compliance and sensitivity signals."""
+    exp_lower = explanation.lower()
+    redacted_acknowledged = any(k in exp_lower for k in ["redact", "mask", "black", "hidden", "obscured", "protect", "privacy", "sanitized"])
+    leak_concern = any(k in exp_lower for k in ["unmasked", "unredacted", "leak", "exposed", "visible card", "visible password", "visible pin", "plain text"])
+
+    # Adaptive threshold recommendation for the client
+    threshold_multiplier = 1.0
+    if leak_concern:
+        threshold_multiplier = 0.85  # Tighten threshold (more sensitive)
+    elif redacted_acknowledged and redactions_count > 0:
+        threshold_multiplier = 1.0  # Confirmed good balance
+
+    return {
+        "redacted_regions_acknowledged": redacted_acknowledged,
+        "leak_concern_detected": leak_concern,
+        "adaptive_threshold_multiplier": threshold_multiplier,
+        "model_used": model_used,
+    }
 
 
 # Common field synonyms for flexible natural language matching
@@ -201,8 +223,9 @@ def sanitize_url_for_vlm(url: Optional[str], title: Optional[str] = None) -> tup
 
 
 @app.get("/health")
-def health_check():
+async def health_check():
     ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+    online = await is_ollama_available(ollama_host)
     return {
         "status": "healthy",
         "service": "ISRO PS #26171 VLM Reasoning Server",
@@ -217,8 +240,7 @@ def health_check():
             "gemini": bool(os.getenv("GEMINI_API_KEY")),
             "gemini_model": os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
             "openai": bool(os.getenv("OPENAI_API_KEY")),
-            # FIX §5E: Report actual discovered Ollama model, not just True/False
-            "ollama_online": _ollama_online,
+            "ollama_online": online,
             "ollama_model": _ollama_best_model or os.getenv("OLLAMA_MODEL", "isro-privacy-qwen:latest"),
             "ollama_host": ollama_host,
             "universal_nlp_engine": True,
@@ -509,23 +531,54 @@ async def try_gemini(
         if fallback not in candidate_models:
             candidate_models.append(fallback)
 
+    # Structured output schema ensures deterministic ActionOutput JSON without formatting anomalies
+    structured_schema = {
+        "type": "OBJECT",
+        "properties": {
+            "type": {
+                "type": "STRING",
+                "enum": ["click", "type", "scroll", "select", "submit", "wait", "finish", "navigate"]
+            },
+            "selector": {"type": "STRING"},
+            "value": {"type": "STRING"},
+            "explanation": {"type": "STRING"},
+            "confidence": {"type": "NUMBER"}
+        },
+        "required": ["type", "explanation", "confidence"]
+    }
+
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
             "response_mime_type": "application/json",
+            "response_schema": structured_schema,
             "temperature": 0.2
         }
     }
 
-    async with httpx.AsyncClient(timeout=45.0) as client:
+    async with httpx.AsyncClient(timeout=15.0) as client:
         for model in candidate_models:
-            url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/{model}:generateContent?key={api_key}"
             try:
                 resp = await client.post(url, json=payload)
+
+                # Fallback to standard json mode if specific model rejects response_schema
+                if resp.status_code == 400 and "response_schema" in resp.text:
+                    fallback_payload = {
+                        "contents": [{"parts": parts}],
+                        "generationConfig": {
+                            "response_mime_type": "application/json",
+                            "temperature": 0.2
+                        }
+                    }
+                    resp = await client.post(url, json=fallback_payload)
+
                 if resp.status_code == 200:
                     data = resp.json()
-                    text_response = data["candidates"][0]["content"]["parts"][0]["text"]
-                    raw_json = json.loads(text_response)
+                    text_response = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    clean_text = re.sub(r'^```(?:json)?\s*', '', text_response, flags=re.I)
+                    clean_text = re.sub(r'\s*```$', '', clean_text).strip()
+                    raw_json = json.loads(clean_text)
                     if "type" in raw_json:
                         return ActionOutput(
                             type=raw_json.get("type", "finish"),
@@ -1011,13 +1064,20 @@ async def act_endpoint(payload: ActRequest):
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
 
+    privacy_feedback = extract_privacy_feedback(
+        action.explanation if action else "",
+        model_used,
+        len(payload.redaction_manifest or []),
+    )
+
     return ActResponse(
         status="success",
         task=payload.task,
         action=action,
         audit=audit_report,
         server_latency_ms=round(elapsed_ms, 2),
-        model_used=model_used
+        model_used=model_used,
+        privacy_feedback=privacy_feedback,
     )
 
 
@@ -1058,12 +1118,12 @@ PRIVACY_CLASSIFY_SYSTEM = (
 def _fallback_classify_element(el: DOMElement) -> ClassifyDecision:
     """Rule-based fallback classifier when Ollama is unavailable."""
     text = f"{el.name} {el.id} {el.text} {el.type} {el.role}".lower()
-    if el.type == "password" or any(k in text for k in ["password", "secret", "pin", "cvv", "otp", "token", "private key"]):
+    if el.type == "password" or any(k in text for k in ["password", "secret", "pin", "cvv", "otp", "token", "private key", "launch_code", "telecommand"]):
         return ClassifyDecision(element_id=el.id, decision="BLOCK", reason="Credential/auth field", confidence=0.99)
-    if any(k in text for k in ["aadhaar", "pan", "email", "phone", "mobile", "address", "ssn", "passport", "gov"]):
-        return ClassifyDecision(element_id=el.id, decision="REDACT", reason="Personal identifier field", confidence=0.92)
-    if el.type in ["text", "email", "tel", "number"] and any(k in text for k in ["name", "first", "last", "full"]):
-        return ClassifyDecision(element_id=el.id, decision="REDACT", reason="Name field", confidence=0.88)
+    if any(k in text for k in ["aadhaar", "pan", "email", "phone", "mobile", "address", "ssn", "passport", "gov", "dob", "birth", "card", "cc-", "cvv", "exp", "biometric", "webcam", "document", "file", "face"]):
+        return ClassifyDecision(element_id=el.id, decision="REDACT", reason="Personal identifier / KYC field", confidence=0.92)
+    if el.type in ["text", "email", "tel", "number", "date"] and any(k in text for k in ["name", "first", "last", "full", "user"]):
+        return ClassifyDecision(element_id=el.id, decision="REDACT", reason="Name / user field", confidence=0.88)
     return ClassifyDecision(element_id=el.id, decision="ALLOW", reason="Non-sensitive field", confidence=0.80)
 
 

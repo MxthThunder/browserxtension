@@ -1,17 +1,17 @@
 {
-  "timestamp": "2026-09-09T14:56:40Z",
+  "timestamp": "2026-09-09T15:58:26Z",
   "server": "http://127.0.0.1:8001",
   "model_used_distribution": {
     "ollama-isro-privacy-qwen:latest": 15
   },
   "total_test_cases": 15,
   "total_ground_truth_pii": 32,
-  "total_true_positives": 34,
+  "total_true_positives": 33,
   "total_false_positives": 2,
-  "total_false_negatives": 0,
-  "overall_precision": 94.44,
-  "overall_recall": 100.0,
-  "overall_f1": 97.14,
+  "total_false_negatives": 1,
+  "overall_precision": 94.29,
+  "overall_recall": 97.06,
+  "overall_f1": 95.65,
   "case_by_case": [
     {
       "id": "case_01",
@@ -66,12 +66,12 @@
       "name": "Medical Patient Intake",
       "category": "form_pii",
       "ground_truth_pii": 3,
-      "tp": 3,
+      "tp": 2,
       "fp": 0,
-      "fn": 0,
+      "fn": 1,
       "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "recall": 66.7,
+      "f1_score": 80.0
     },
     {
       "id": "case_06",

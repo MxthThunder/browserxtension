@@ -186,94 +186,132 @@ function isBlockElement(el) {
 }
 
 /**
- * C1: Walks all visible text nodes and flags those matching INLINE_PII_PATTERNS.
- * Activates the previously dead-code INLINE_PII_PATTERNS constant.
- * Returns DOM box entries pointing at the text's nearest block-level ancestor.
+ * Helper to walk visible text nodes within any DOM root (document body, shadow root, or iframe).
+ */
+function walkTextInRoot(rootNode, seenAncestors, results, limit = 120) {
+  if (!rootNode) return;
+  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "IFRAME", "TEMPLATE", "SVG"]);
+
+  try {
+    const walker = document.createTreeWalker(rootNode, NodeFilter.SHOW_TEXT, {
+      acceptNode(node) {
+        const parent = node.parentElement;
+        if (!parent) return NodeFilter.FILTER_REJECT;
+        if (SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
+        if (parent.closest && parent.closest(`#${OVERLAY_ID}, #${FLOATING_BADGE_ID}`)) {
+          return NodeFilter.FILTER_REJECT;
+        }
+        if (node.textContent.trim().length < 5) return NodeFilter.FILTER_SKIP;
+        return NodeFilter.FILTER_ACCEPT;
+      },
+    });
+
+    let node;
+    let count = 0;
+    while ((node = walker.nextNode()) && count < limit) {
+      count++;
+      const text = node.textContent;
+      for (const [patternName, re] of Object.entries(INLINE_PII_PATTERNS)) {
+        if (!re.test(text)) continue;
+
+        let ancestor = node.parentElement;
+        let depth = 0;
+        while (ancestor && ancestor !== document.body && depth < 6) {
+          if (isBlockElement(ancestor) && depth >= 1) break;
+          ancestor = ancestor.parentElement;
+          depth++;
+        }
+        if (!ancestor || ancestor === document.body) ancestor = node.parentElement;
+        if (!ancestor || seenAncestors.has(ancestor)) break;
+        seenAncestors.add(ancestor);
+
+        const rect = ancestor.getBoundingClientRect();
+        if (rect.width <= 1 || rect.height <= 1) break;
+        if (rect.bottom < 0 || rect.top > window.innerHeight) break;
+        if (rect.right < 0 || rect.left > window.innerWidth) break;
+
+        let category = "contactInfo";
+        if (patternName === "CREDIT_CARD") category = "creditCards";
+        else if (patternName === "SSN" || patternName === "AADHAAR" || patternName === "PAN") category = "govIds";
+        else if (patternName === "INTERNAL_IP" || patternName === "OPERATOR_ID" || patternName === "CONSOLE_ID" || patternName === "GEO_COORDINATES") category = "opsSecurity";
+
+        results.push({
+          el: ancestor,
+          category,
+          reason: `visible text: ${patternName}`,
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        });
+        break; // one match per text node
+      }
+    }
+  } catch {}
+}
+
+/**
+ * C1: Walks all visible text nodes across main document, open Shadow DOM roots,
+ * and accessible same-origin iframes, flagging those matching INLINE_PII_PATTERNS.
  */
 function scanVisibleTextNodes() {
   const results = [];
   const seenAncestors = new WeakSet();
-  const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "IFRAME", "TEMPLATE", "CANVAS", "SVG"]);
 
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
-    acceptNode(node) {
-      const parent = node.parentElement;
-      if (!parent) return NodeFilter.FILTER_REJECT;
-      if (SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
-      // Skip our own injected overlay elements
-      if (parent.closest && parent.closest(`#${OVERLAY_ID}, #${FLOATING_BADGE_ID}`)) {
-        return NodeFilter.FILTER_REJECT;
+  // 1. Primary document body
+  walkTextInRoot(document.body, seenAncestors, results, 120);
+
+  // 2. Open Shadow DOM roots
+  try {
+    document.querySelectorAll("*").forEach((el) => {
+      if (el.shadowRoot) {
+        walkTextInRoot(el.shadowRoot, seenAncestors, results, 40);
       }
-      if (node.textContent.trim().length < 5) return NodeFilter.FILTER_SKIP;
-      return NodeFilter.FILTER_ACCEPT;
-    },
-  });
+    });
+  } catch {}
 
-  let node;
-  let textNodeCount = 0;
-  while ((node = walker.nextNode()) && textNodeCount < 100) {
-    textNodeCount++;
-    const text = node.textContent;
-    for (const [patternName, re] of Object.entries(INLINE_PII_PATTERNS)) {
-      if (!re.test(text)) continue;
+  // 3. Accessible same-origin iframes
+  try {
+    document.querySelectorAll("iframe").forEach((iframe) => {
+      try {
+        const doc = iframe.contentDocument || iframe.contentWindow?.document;
+        if (doc && doc.body) {
+          walkTextInRoot(doc.body, seenAncestors, results, 40);
+        }
+      } catch {}
+    });
+  } catch {}
 
-      // Walk up to find the nearest meaningful block ancestor for bounding box
-      let ancestor = node.parentElement;
-      let depth = 0;
-      while (ancestor && ancestor !== document.body && depth < 6) {
-        if (isBlockElement(ancestor) && depth >= 1) break;
-        ancestor = ancestor.parentElement;
-        depth++;
-      }
-      if (!ancestor || ancestor === document.body) ancestor = node.parentElement;
-      if (!ancestor || seenAncestors.has(ancestor)) break;
-      seenAncestors.add(ancestor);
-
-      const rect = ancestor.getBoundingClientRect();
-      if (rect.width <= 1 || rect.height <= 1) break;
-      if (rect.bottom < 0 || rect.top > window.innerHeight) break;
-      if (rect.right < 0 || rect.left > window.innerWidth) break;
-
-      let category = "contactInfo";
-      if (patternName === "CREDIT_CARD") category = "creditCards";
-      else if (patternName === "SSN" || patternName === "AADHAAR" || patternName === "PAN") category = "govIds";
-      else if (patternName === "INTERNAL_IP" || patternName === "OPERATOR_ID" || patternName === "CONSOLE_ID" || patternName === "GEO_COORDINATES") category = "opsSecurity";
-
-      results.push({
-        el: ancestor,
-        category,
-        reason: `visible text: ${patternName}`,
-        x: Math.round(rect.left),
-        y: Math.round(rect.top),
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
-      });
-      break; // one match per text node
-    }
-  }
   return results;
 }
 
 /**
- * C6: Recursively collects inputs inside open Shadow DOM roots.
- * Handles nested shadow roots up to depth 4.
+ * C6: Recursively collects elements matching a CSS selector inside all open Shadow DOM roots.
+ * Handles nested custom Web Components up to depth 5.
  */
-function collectShadowInputs(root, depth = 0) {
-  if (depth > 4) return [];
-  const inputs = [];
+function collectShadowNodes(root, selector, depth = 0) {
+  if (depth > 5 || !root) return [];
+  const nodes = [];
   try {
-    root.querySelectorAll("*").forEach((el) => {
+    const scope = root.querySelectorAll ? root : (root.documentElement || root.body);
+    if (!scope) return nodes;
+    scope.querySelectorAll("*").forEach((el) => {
       if (el.shadowRoot) {
-        el.shadowRoot
-          .querySelectorAll("input, textarea, select, [contenteditable='true']")
-          .forEach((input) => inputs.push(input));
-        inputs.push(...collectShadowInputs(el.shadowRoot, depth + 1));
+        try {
+          el.shadowRoot.querySelectorAll(selector).forEach((n) => nodes.push(n));
+          nodes.push(...collectShadowNodes(el.shadowRoot, selector, depth + 1));
+        } catch {}
       }
     });
-  } catch {
-    // Closed shadow roots are inaccessible by design — silently skip
-  }
-  return inputs;
+  } catch {}
+  return nodes;
+}
+
+/**
+ * Recursively collects sensitive inputs inside open Shadow DOM roots.
+ */
+function collectShadowInputs(root, depth = 0) {
+  return collectShadowNodes(root, "input, textarea, select, [contenteditable='true'], [role='textbox'], [role='combobox']", depth);
 }
 
 /** C5: Regex to identify <img> tags that are likely displaying a government ID document. */
@@ -430,8 +468,13 @@ function scanPageForSensitiveElements() {
     scanIframeElement(iframeEl, matches);
   });
 
-  // C5: <img> elements displaying likely ID documents
-  document.querySelectorAll("img").forEach((imgEl) => {
+  // C5: <img> elements displaying likely ID documents (document + shadow DOM)
+  const allCandidateImgs = [
+    ...document.querySelectorAll("img"),
+    ...collectShadowNodes(document.body, "img"),
+  ];
+
+  allCandidateImgs.forEach((imgEl) => {
     const rect = imgEl.getBoundingClientRect();
     if (rect.width < 100 || rect.height < 80) return; // too small to be a document image
     if (rect.bottom < 0 || rect.top > window.innerHeight) return;
@@ -462,8 +505,13 @@ function scanPageForSensitiveElements() {
     }
   });
 
-  // Webcam <video> feeds or camera viewports (biometric visual capture)
-  document.querySelectorAll("video").forEach((vid) => {
+  // Webcam <video> feeds or camera viewports (biometric visual capture - document + shadow DOM)
+  const allCandidateVideos = [
+    ...document.querySelectorAll("video"),
+    ...collectShadowNodes(document.body, "video"),
+  ];
+
+  allCandidateVideos.forEach((vid) => {
     const rect = vid.getBoundingClientRect();
     if (rect.width <= 20 || rect.height <= 20) return;
     if (rect.bottom < 0 || rect.top > window.innerHeight) return;
@@ -504,6 +552,71 @@ function scanPageForSensitiveElements() {
     }
   });
 
+  // C7: Sensitive <canvas> element detection (Digital Signatures, KYC uploads, Document viewers)
+  const allCandidateCanvases = [
+    ...document.querySelectorAll("canvas"),
+    ...collectShadowNodes(document.body, "canvas"),
+  ];
+
+  allCandidateCanvases.forEach((canvasEl) => {
+    const rect = canvasEl.getBoundingClientRect();
+    if (rect.width <= 10 || rect.height <= 10) return;
+    if (rect.bottom < 0 || rect.top > window.innerHeight) return;
+    if (rect.right < 0 || rect.left > window.innerWidth) return;
+
+    const canvasHaystack = [
+      canvasEl.id,
+      canvasEl.className,
+      canvasEl.getAttribute("data-purpose"),
+      canvasEl.getAttribute("aria-label"),
+      canvasEl.getAttribute("title"),
+    ].filter(Boolean).join(" ").toLowerCase();
+
+    // 1. Digital Signature Pads (e.g., signature-pad, e-sign)
+    const isSignaturePad = /sign|signature|pad|draw|sketch|autograph/i.test(canvasHaystack);
+    if (isSignaturePad) {
+      matches.push({
+        el: canvasEl,
+        category: "govIds",
+        reason: `digital signature canvas: ${canvasHaystack.substring(0, 30) || "signature-pad"}`,
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+      return;
+    }
+
+    // 2. Sensitive document / KYC / banking statement canvas renderers
+    const isDocCanvas = /pdf|document|kyc|statement|chart|finance|report|card|biometric/i.test(canvasHaystack);
+    if (isDocCanvas) {
+      matches.push({
+        el: canvasEl,
+        category: "govIds",
+        reason: `sensitive document/data canvas: ${canvasHaystack.substring(0, 30)}`,
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+      });
+      return;
+    }
+
+    // 3. Mark large canvas surfaces as visual inspection candidates
+    if (rect.width >= 200 && rect.height >= 120) {
+      matches.push({
+        el: canvasEl,
+        category: "canvasCandidate",
+        reason: `canvas surface (${Math.round(rect.width)}x${Math.round(rect.height)})`,
+        x: Math.round(rect.left),
+        y: Math.round(rect.top),
+        width: Math.round(rect.width),
+        height: Math.round(rect.height),
+        isCanvasCandidate: true,
+      });
+    }
+  });
+
   // Delivery location & user address widgets (e.g. Amazon 'Delivering to Chennai 600040', Flipkart, food apps)
   document.querySelectorAll(
     '#nav-global-location-slot, #glow-ingress-block, [id*="location-slot" i], [id*="delivery-location" i], [class*="delivery-location" i], [class*="user-location" i], [class*="user-address" i], [id*="user-address" i], [aria-label*="deliver to" i], [aria-label*="delivery location" i]'
@@ -532,13 +645,22 @@ function scanPageForSensitiveElements() {
 
 /**
  * Extracts interactive DOM element digest for the VLM agent.
- * Recursively inspects both the primary document and accessible same-origin iframes.
+ * Recursively inspects primary document, accessible same-origin iframes, and open Shadow DOM roots.
  */
 function extractInteractiveElements() {
   const elements = [];
   const rawNodes = Array.from(document.querySelectorAll(
     "button, a, input, select, textarea, [role='button'], [role='textbox'], [role='link'], [contenteditable='true'], [onclick], [tabindex]"
   ));
+
+  // Support Shadow DOM interactive Web Components
+  try {
+    const shadowNodes = collectShadowNodes(
+      document.body,
+      "button, a, input, select, textarea, [role='button'], [role='textbox'], [role='link'], [contenteditable='true'], [onclick], [tabindex]"
+    );
+    shadowNodes.forEach((node) => rawNodes.push(node));
+  } catch {}
 
   // Support same-origin accessible iframes (e.g. embedded ops widgets, dashboards)
   document.querySelectorAll("iframe").forEach((iframe) => {
