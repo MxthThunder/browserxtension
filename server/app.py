@@ -176,7 +176,7 @@ def health_check():
         },
         "api_providers": {
             "gemini": bool(os.getenv("GEMINI_API_KEY")),
-            "gemini_model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
+            "gemini_model": os.getenv("GEMINI_MODEL", "gemini-3.6-flash"),
             "openai": bool(os.getenv("OPENAI_API_KEY")),
             # FIX §5E: Report actual discovered Ollama model, not just True/False
             "ollama_online": _ollama_online,
@@ -463,10 +463,10 @@ async def try_gemini(
             }
         })
 
-    # FIX §5A: Use verified available Gemini model names only
-    primary_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
+    # Updated to currently available models (verified via /v1/models API)
+    primary_model = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
     candidate_models = [primary_model]
-    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]:
+    for fallback in ["gemini-3.6-flash", "gemini-3.5-flash", "gemini-3.1-flash-lite", "gemini-3.7-flash", "gemini-2.5-flash"]:
         if fallback not in candidate_models:
             candidate_models.append(fallback)
 
@@ -702,12 +702,37 @@ def universal_nlp_reasoner(
     elements: List[DOMElement],
     redactions: List[RedactionItem],
     has_image: bool,
+    history: Optional[List[Dict[str, Any]]] = None,
+    step: int = 1,
 ) -> ActionOutput:
     """
     Universal NLP Reasoner capable of understanding any free-form prompt.
+    Uses history to prevent infinite repeat-click loops.
     """
     task_clean = task.strip()
     task_lower = task_clean.lower()
+
+    # Build a set of selectors already clicked in this session (loop prevention)
+    already_clicked: set = set()
+    already_typed_values: set = set()
+    if history:
+        for h in history:
+            sel = h.get("selector", "")
+            if sel:
+                already_clicked.add(sel.strip())
+            val = h.get("value", "")
+            if val:
+                already_typed_values.add(val.strip())
+
+    # If we've clicked the same selector 2+ times, the task is likely done or stuck
+    click_counts: Dict[str, int] = {}
+    if history:
+        for h in history:
+            if h.get("action", "").lower() in ["click", "submit"]:
+                sel = h.get("selector", "")
+                if sel:
+                    click_counts[sel] = click_counts.get(sel, 0) + 1
+    stuck_selectors = {sel for sel, cnt in click_counts.items() if cnt >= 2}
 
     # 1. Navigation intents (e.g. "go to amazon.com", "open cart", "visit checkout")
     nav_match = re.search(r"(?:navigate to|open url|go to|goto|visit)\s+([^\s]+)", task_clean, re.I)
@@ -788,18 +813,23 @@ def universal_nlp_reasoner(
                 )
 
     # 6. Button / Link / Item Clicking
-    # Matches explicit clicks ("click continue", "press submit", "add to cart", "proceed", "log in")
+    # Matches explicit clicks or fallback click when no fields extracted
     click_keywords = ["click", "press", "submit", "continue", "login", "sign in", "checkout", "add to cart", "next", "confirm", "buy", "pay", "proceed", "apply"]
     if any(kw in task_lower for kw in click_keywords) or not extracted_fields:
         best_btn = None
         best_btn_score = 0
 
-        # Extract target label words
+        # Extract target label words — filter common stopwords
         task_words = [w for w in re.findall(r"\b\w{2,}\b", task_lower) if w not in ["the", "button", "link", "and", "please", "with", "now", "on"]]
 
         for el in elements:
             score = 0
             haystack = f"{el.text} {el.id} {el.name} {el.selector} {el.role}".lower().replace("-", " ").replace("_", " ")
+            sel = el.selector or (f"#{el.id}" if el.id else (f"[name='{el.name}']" if el.name else el.tag))
+
+            # LOOP PREVENTION: Skip elements clicked 2+ times (stuck selector)
+            if sel in stuck_selectors:
+                continue
 
             for word in task_words:
                 if word in haystack:
@@ -832,15 +862,26 @@ def universal_nlp_reasoner(
     # 7. Default to primary submission button if on page
     for el in elements:
         if el.tag == "button" or el.type == "submit":
+            sel = el.selector or (f"#{el.id}" if el.id else "button")
+            if sel in stuck_selectors:
+                continue
             if any(k in (el.text or el.name or el.id or "").lower() for k in ["continue", "submit", "next", "login", "confirm", "checkout"]):
                 return ActionOutput(
                     type="click",
-                    selector=el.selector or (f"#{el.id}" if el.id else "button"),
+                    selector=sel,
                     explanation=f"Proceeding with primary page action button '{el.text or el.id}'.",
                     confidence=0.85,
                 )
 
-    # 8. Completed / Finish
+    # 8. If stuck (all candidates exhausted due to repeat guard), finish
+    if stuck_selectors:
+        return ActionOutput(
+            type="finish",
+            explanation=f"Task likely completed — repeated all available actions for '{task}'. Check page result.",
+            confidence=0.72,
+        )
+
+    # 9. No matches — finish
     return ActionOutput(
         type="finish",
         explanation=f"Task completed or no further actionable elements matching '{task}'.",
@@ -912,6 +953,8 @@ async def act_endpoint(payload: ActRequest):
             elements=payload.dom_elements or [],
             redactions=payload.redaction_manifest or [],
             has_image=has_image,
+            history=payload.history or [],
+            step=payload.step or 1,
         )
 
     elapsed_ms = (time.perf_counter() - start_time) * 1000
