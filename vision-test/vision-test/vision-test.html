@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8" />
+  <title>Vision Model Test Harness</title>
+  <style>
+    body { font-family: -apple-system, Segoe UI, sans-serif; padding: 20px; max-width: 900px; margin: auto; }
+    #dropzone {
+      border: 2px dashed #999; border-radius: 8px; padding: 30px;
+      text-align: center; color: #666; margin-bottom: 16px; cursor: pointer;
+    }
+    #dropzone.hover { border-color: #ff3b3b; color: #ff3b3b; }
+    #canvasWrap { position: relative; display: inline-block; }
+    canvas { max-width: 100%; border: 1px solid #ddd; }
+    #stats { font-family: monospace; font-size: 13px; background: #f5f5f5; padding: 10px; border-radius: 6px; margin-top: 12px; white-space: pre-wrap; }
+    #backendBadge { display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 12px; margin-left: 8px; }
+    .webgpu { background: #d4f4dd; color: #1a7f37; }
+    .wasm { background: #fff3cd; color: #7a5c00; }
+  </style>
+</head>
+<body>
+  <h2>Day 2: Vision Model Test <span id="backendBadge"></span></h2>
+  <p>Loading <code>Xenova/yolos-tiny</code> (ViT-based detector) via Transformers.js / ONNX Runtime Web.</p>
+
+  <div style="display: flex; gap: 12px; align-items: center; margin-bottom: 16px; flex-wrap: wrap;">
+    <div id="dropzone" style="flex: 1; margin-bottom: 0;">Drop an image here, or click to choose one</div>
+    <button id="btnSample" type="button" style="padding: 12px 18px; border-radius: 8px; background: #2563eb; color: #fff; border: none; font-size: 14px; font-weight: 500; cursor: pointer; height: fit-content;">⚡ Test sample.jpg</button>
+  </div>
+  <div style="margin-bottom: 12px;">
+    <label style="font-size: 14px; cursor: pointer; user-select: none; display: inline-flex; align-items: center; gap: 6px;">
+      <input type="checkbox" id="faceBlurCheck" checked />
+      <strong>Enable Step 5 Face-Region Proxy Blur</strong> (Blackout upper ~30% of 'person' bounding box)
+    </label>
+  </div>
+  <input type="file" id="fileInput" accept="image/*" style="display:none" />
+
+  <div id="canvasWrap">
+    <canvas id="canvas"></canvas>
+  </div>
+  <div id="stats">Model loading...</div>
+
+  <script type="module">
+    import { pipeline, env } from "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.0.0";
+
+    const statsEl = document.getElementById("stats");
+    const badgeEl = document.getElementById("backendBadge");
+    const canvas = document.getElementById("canvas");
+    const ctx = canvas.getContext("2d");
+    const faceBlurCheck = document.getElementById("faceBlurCheck");
+    const btnSample = document.getElementById("btnSample");
+
+    let detector;
+    let usingWebGPU = false;
+    let currentImageUrl = null;
+
+    async function loadModel() {
+      // Try WebGPU first (this is the whole point — real GPU acceleration
+      // in-browser). Fall back to WASM if the device/browser doesn't
+      // support it, which you should expect on some judge laptops.
+      try {
+        if (!navigator.gpu) throw new Error("navigator.gpu not available");
+        detector = await pipeline("object-detection", "Xenova/yolos-tiny", { device: "webgpu" });
+        usingWebGPU = true;
+      } catch (err) {
+        console.warn("WebGPU unavailable, falling back to WASM:", err.message);
+        detector = await pipeline("object-detection", "Xenova/yolos-tiny", { device: "wasm" });
+        usingWebGPU = false;
+      }
+      badgeEl.textContent = usingWebGPU ? "WebGPU" : "WASM (fallback)";
+      badgeEl.className = usingWebGPU ? "webgpu" : "wasm";
+      statsEl.textContent = "Model ready. Drop an image or click 'Test sample.jpg'.";
+
+      const urlParams = new URLSearchParams(window.location.search);
+      if (urlParams.get("img")) {
+        runDetection(urlParams.get("img"));
+      }
+    }
+
+    async function runDetection(imageUrl) {
+      currentImageUrl = imageUrl;
+      statsEl.textContent = `Running detection on ${imageUrl}...`;
+      const img = new Image();
+      img.crossOrigin = "anonymous";
+      img.src = imageUrl;
+      await img.decode();
+
+      canvas.width = img.width;
+      canvas.height = img.height;
+      ctx.drawImage(img, 0, 0);
+
+      const start = performance.now();
+      const output = await detector(imageUrl, { threshold: 0.5 });
+      const elapsedMs = performance.now() - start;
+
+      // Draw boxes on top of the image
+      output.forEach((det) => {
+        const { xmin, ymin, xmax, ymax } = det.box;
+        ctx.strokeStyle = det.label === "person" ? "#ff3b3b" : "#3b82f6";
+        ctx.lineWidth = 3;
+        ctx.strokeRect(xmin, ymin, xmax - xmin, ymax - ymin);
+        ctx.fillStyle = ctx.strokeStyle;
+        ctx.font = "bold 14px monospace";
+        ctx.fillText(`${det.label} ${(det.score * 100).toFixed(0)}%`, xmin, ymin - 4);
+
+        // Step 5: Face-blur proxy (upper ~30% of 'person' bounding box)
+        if (det.label === "person" && faceBlurCheck?.checked) {
+          const faceH = (ymax - ymin) * 0.30;
+          const faceW = xmax - xmin;
+
+          ctx.save();
+          ctx.fillStyle = "rgba(0, 0, 0, 0.85)";
+          ctx.fillRect(xmin, ymin, faceW, faceH);
+
+          ctx.strokeStyle = "#eab308";
+          ctx.lineWidth = 2;
+          ctx.setLineDash([4, 4]);
+          ctx.strokeRect(xmin, ymin, faceW, faceH);
+
+          ctx.fillStyle = "#ffffff";
+          ctx.font = "bold 12px sans-serif";
+          ctx.fillText("FACE PROXY (~30%)", xmin + 6, ymin + 16);
+          ctx.restore();
+        }
+      });
+
+      const backendLabel = usingWebGPU ? "WebGPU" : "WASM";
+      const lines = [
+        `Backend: ${backendLabel}`,
+        `Inference time: ${elapsedMs.toFixed(1)} ms`,
+        `Detections: ${output.length}`,
+        ...output.map((d) => `  - ${d.label} (${(d.score * 100).toFixed(1)}%)`),
+      ];
+      statsEl.textContent = lines.join("\n");
+    }
+
+    // --- file input / drag-drop wiring ---
+    const dropzone = document.getElementById("dropzone");
+    const fileInput = document.getElementById("fileInput");
+
+    btnSample.addEventListener("click", () => runDetection("./sample.jpg"));
+    faceBlurCheck.addEventListener("change", () => {
+      if (currentImageUrl) runDetection(currentImageUrl);
+    });
+
+    dropzone.addEventListener("click", () => fileInput.click());
+    fileInput.addEventListener("change", (e) => {
+      if (e.target.files[0]) runDetection(URL.createObjectURL(e.target.files[0]));
+    });
+    dropzone.addEventListener("dragover", (e) => { e.preventDefault(); dropzone.classList.add("hover"); });
+    dropzone.addEventListener("dragleave", () => dropzone.classList.remove("hover"));
+    dropzone.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzone.classList.remove("hover");
+      if (e.dataTransfer.files[0]) runDetection(URL.createObjectURL(e.dataTransfer.files[0]));
+    });
+
+    loadModel();
+  </script>
+</body>
+</html>

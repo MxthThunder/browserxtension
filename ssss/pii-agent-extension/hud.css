@@ -1,0 +1,674 @@
+/* Privacy Agent — telemetry HUD. Same tokens as popup.css and options.css.
+   Colour is meaning here, not decoration: green is sanitized, red is raw,
+   amber is a fallback path. Nothing else is tinted. */
+
+@font-face {
+  font-family: "Inter var";
+  src: url("lib/fonts/Inter.woff2") format("woff2");
+  font-weight: 100 900;
+  font-style: normal;
+  font-display: swap;
+}
+
+:root {
+  color-scheme: dark;
+
+  --font-sans: "Inter var", ui-sans-serif, -apple-system, BlinkMacSystemFont,
+    "Segoe UI Variable Text", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+
+  --bg: #131313;
+  --bg-elevated: #1a1a1a;
+  --bg-inset: #0e0e0e;
+  --border: rgba(255, 255, 255, 0.09);
+  --border-strong: rgba(255, 255, 255, 0.18);
+
+  --text: #f2f2f0;
+  --text-secondary: #a3a3a1;
+  --text-muted: #6b6b69;
+
+  --accent-on: #7dd6a0;
+  --danger: #e0776b;
+  --caution: #d9b26b;
+
+  --radius: 10px;
+  --radius-sm: 6px;
+
+  --ease-out: cubic-bezier(0.23, 1, 0.32, 1);
+}
+
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  font-family: var(--font-sans);
+  font-feature-settings: "cv11", "ss01";
+  -webkit-font-smoothing: antialiased;
+  background: var(--bg);
+  color: var(--text);
+  font-size: 13px;
+  line-height: 1.5;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 40px 28px 72px;
+}
+
+::selection { background: rgba(125, 214, 160, 0.22); }
+
+:focus-visible {
+  outline: 2px solid var(--border-strong);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: #2a2a2a; border-radius: 999px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition-duration: 0.01ms !important; animation: none !important; }
+}
+
+/* ── Header ──────────────────────────────────────────────────────────────── */
+
+.hud-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 20px;
+  flex-wrap: wrap;
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 24px;
+}
+
+.brand { min-width: 0; }
+
+/* The old shield emoji is gone: the page title is the brand. */
+.logo-icon { display: none; }
+
+.brand h1 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+
+.ps-badge {
+  font-size: 11px;
+  font-weight: 400;
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+
+.subtitle {
+  font-size: 12px;
+  color: var(--text-muted);
+  margin-top: 4px;
+  max-width: 66ch;
+}
+
+.header-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+/* ── Buttons ─────────────────────────────────────────────────────────────── */
+
+.btn {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 12px;
+  padding: 7px 12px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: border-color 150ms ease, color 150ms ease,
+    background 150ms ease, transform 120ms var(--ease-out);
+}
+
+.btn:hover { border-color: var(--border-strong); color: var(--text); }
+.btn:active { transform: scale(0.97); }
+.btn:disabled { opacity: 0.5; cursor: default; transform: none; }
+
+/* One filled button on the page: the thing you came here to press. */
+.btn-primary {
+  background: var(--text);
+  border-color: var(--text);
+  color: #111;
+  font-weight: 600;
+}
+
+.btn-primary:hover { opacity: 0.85; color: #111; border-color: var(--text); }
+
+.btn-secondary,
+.btn-outline {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+}
+
+.btn-secondary:hover,
+.btn-outline:hover { border-color: var(--border-strong); color: var(--text); }
+
+/* Live streaming is a state, so it holds colour while it runs. */
+.btn-secondary.active {
+  border-color: rgba(125, 214, 160, 0.35);
+  background: rgba(125, 214, 160, 0.1);
+  color: var(--accent-on);
+}
+
+.btn-sm { padding: 5px 10px; font-size: 11.5px; }
+
+/* ── Badges ──────────────────────────────────────────────────────────────── */
+
+.badge {
+  font-size: 11.5px;
+  padding: 4px 9px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+.badge-webgpu {
+  border-color: rgba(125, 214, 160, 0.3);
+  color: var(--accent-on);
+}
+
+.badge-wasm {
+  border-color: rgba(217, 178, 107, 0.3);
+  color: var(--caution);
+}
+
+/* Left column: raw pixels. Red means this must not leave the machine. */
+.badge-warning {
+  border-color: rgba(224, 119, 107, 0.3);
+  color: var(--danger);
+}
+
+/* Right column: cleared for the server. */
+.badge-success {
+  border-color: rgba(125, 214, 160, 0.3);
+  color: var(--accent-on);
+}
+
+/* ── Telemetry ───────────────────────────────────────────────────────────── */
+
+.telemetry-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 26px;
+}
+
+/* Not four cards. Four columns of one strip, split by hairlines. */
+.metric-card {
+  padding: 16px 20px;
+  border-left: 1px solid var(--border);
+}
+
+.metric-card:first-child { border-left: none; padding-left: 0; }
+
+.metric-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-bottom: 6px;
+}
+
+.metric-value {
+  font-size: 24px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  line-height: 1.15;
+}
+
+.metric-value .unit {
+  font-size: 13px;
+  font-weight: 400;
+  color: var(--text-muted);
+  letter-spacing: 0;
+}
+
+.text-success { color: var(--accent-on); }
+
+.metric-footer {
+  font-size: 11px;
+  color: var(--text-muted);
+  margin-top: 5px;
+}
+
+/* ── Split viewport ──────────────────────────────────────────────────────── */
+
+.split-viewport {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 16px;
+  margin-bottom: 26px;
+}
+
+.viewport-col {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+}
+
+.col-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 14px;
+  border-bottom: 1px solid var(--border);
+}
+
+.col-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+  color: var(--text);
+  min-width: 0;
+}
+
+.col-badge {
+  font-size: 11px;
+  padding: 3px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  color: var(--text-secondary);
+  white-space: nowrap;
+}
+
+/* A dot, not a glowing LED. */
+.status-indicator {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: var(--text-muted);
+}
+
+.live-client { background: var(--danger); }
+.live-server { background: var(--accent-on); }
+
+.viewport-canvas-wrap {
+  position: relative;
+  min-height: 360px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg-inset);
+  overflow: auto;
+}
+
+.viewport-display {
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.placeholder-msg {
+  position: absolute;
+  color: var(--text-muted);
+  font-size: 12px;
+  text-align: center;
+  padding: 24px;
+  max-width: 40ch;
+}
+
+/* ── Agent control ───────────────────────────────────────────────────────── */
+
+.agent-control-section,
+.audit-section {
+  border-top: 1px solid var(--border);
+  padding: 22px 0;
+}
+
+.agent-control-header,
+.audit-header {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 14px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.agent-control-header h3,
+.audit-header h3 {
+  font-size: 13px;
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.task-input-row {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+  margin-bottom: 10px;
+}
+
+.task-input {
+  flex: 1;
+  min-width: 260px;
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  font: inherit;
+  font-size: 12.5px;
+  padding: 8px 10px;
+  outline: none;
+  transition: border-color 150ms ease;
+}
+
+.task-input:focus { border-color: var(--border-strong); }
+.task-input::placeholder { color: var(--text-muted); }
+
+.quick-chips {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-bottom: 14px;
+}
+
+.chip-label {
+  font-size: 11.5px;
+  color: var(--text-muted);
+  margin-right: 2px;
+}
+
+.chip {
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text-secondary);
+  font: inherit;
+  font-size: 11.5px;
+  padding: 3px 10px;
+  cursor: pointer;
+  transition: border-color 150ms ease, color 150ms ease;
+}
+
+.chip:hover { border-color: var(--border-strong); color: var(--text); }
+
+/* The log is the one monospaced surface: it is a transcript, not a label. */
+.agent-log-box {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 11px 13px;
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: var(--text-secondary);
+  max-height: 150px;
+  overflow-y: auto;
+}
+
+.log-line + .log-line { margin-top: 2px; }
+.log-line.client { color: var(--caution); }
+.log-line.server { color: var(--text); }
+.log-line.error { color: var(--danger); }
+
+/* ── Audit trail ─────────────────────────────────────────────────────────── */
+
+.audit-grid {
+  display: grid;
+  grid-template-columns: 3fr 2fr;
+  gap: 16px;
+}
+
+.table-wrap { overflow-x: auto; }
+
+.audit-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  text-align: left;
+}
+
+.audit-table th {
+  font-weight: 500;
+  font-size: 11px;
+  color: var(--text-muted);
+  padding: 0 14px 8px 0;
+  border-bottom: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.audit-table td {
+  padding: 8px 14px 8px 0;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.045);
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+
+.audit-table th:last-child,
+.audit-table td:last-child { padding-right: 0; }
+
+.audit-table tr:last-child td { border-bottom: none; }
+.audit-table td strong { color: var(--text); font-weight: 500; }
+
+.audit-table code {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
+/* Source tags: where a detection came from, in one word of colour. */
+.tag-dom,
+.tag-vision,
+.tag-object {
+  font-size: 10.5px;
+  padding: 2px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--border);
+  white-space: nowrap;
+}
+
+.tag-dom { color: var(--danger); border-color: rgba(224, 119, 107, 0.28); }
+.tag-vision { color: var(--caution); border-color: rgba(217, 178, 107, 0.28); }
+.tag-object { color: var(--text-secondary); }
+
+/* Runtime writes this class for the "redacted" cell instead of a hex colour. */
+.cell-ok { color: var(--accent-on); }
+.cell-num { color: var(--text); text-align: center; }
+.cell-empty { color: var(--text-muted); text-align: center; padding: 18px 0; }
+
+.json-preview-wrap {
+  background: var(--bg-inset);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 12px;
+  max-height: 260px;
+  overflow: auto;
+}
+
+#jsonPreview {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+/* ── Metrics modal ───────────────────────────────────────────────────────── */
+
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.72);
+  z-index: 99999;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 24px;
+}
+
+.modal-dialog {
+  background: var(--bg-elevated);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  width: 100%;
+  max-width: 880px;
+  max-height: 88vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+
+.modal-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 18px 22px;
+  border-bottom: 1px solid var(--border);
+  position: sticky;
+  top: 0;
+  background: var(--bg-elevated);
+}
+
+.modal-header h2 {
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+
+.modal-body { padding: 20px 22px 24px; }
+
+.modal-body h4 {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--text-secondary);
+  margin: 22px 0 8px;
+}
+
+/* Rubric: five columns of one strip, same treatment as the telemetry row. */
+.rubric-summary-grid {
+  display: grid;
+  grid-template-columns: repeat(5, 1fr);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+
+.rubric-score-box {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 14px 16px;
+  border-left: 1px solid var(--border);
+}
+
+.rubric-score-box:first-child { border-left: none; padding-left: 0; }
+
+.r-weight { font-size: 10.5px; color: var(--text-muted); }
+.r-title { font-size: 11.5px; color: var(--text-secondary); }
+
+/* Scores are all one colour, so the numbers compete on size, not on hue. */
+.r-val {
+  font-size: 19px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+  margin-top: 2px;
+}
+
+.r-desc { font-size: 10.5px; color: var(--text-muted); }
+
+/* ── Latency waterfall ───────────────────────────────────────────────────── */
+
+.latency-bars {
+  border-top: 1px solid var(--border);
+  padding-top: 10px;
+  margin-bottom: 6px;
+}
+
+.latency-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  padding: 5px 0;
+  font-size: 12px;
+}
+
+.l-label {
+  width: 190px;
+  flex-shrink: 0;
+  color: var(--text-secondary);
+}
+
+.l-bar-outer {
+  flex: 1;
+  height: 6px;
+  background: rgba(255, 255, 255, 0.05);
+  border-radius: 999px;
+  overflow: hidden;
+}
+
+/* One fill colour for every stage: the width is the whole story. */
+.l-bar-inner {
+  height: 100%;
+  border-radius: 999px;
+  background: var(--text-secondary);
+}
+
+.latency-bar-row.is-dominant .l-bar-inner { background: var(--accent-on); }
+
+.l-val {
+  width: 74px;
+  flex-shrink: 0;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+
+/* ── Narrow ──────────────────────────────────────────────────────────────── */
+
+@media (max-width: 1000px) {
+  .telemetry-grid { grid-template-columns: repeat(2, 1fr); }
+  .metric-card { border-left: none; padding-left: 0; }
+  .metric-card:nth-child(2n) { border-left: 1px solid var(--border); padding-left: 20px; }
+  .rubric-summary-grid { grid-template-columns: repeat(2, 1fr); }
+  .rubric-score-box { border-left: none; padding-left: 0; }
+  .rubric-score-box:nth-child(2n) {
+    border-left: 1px solid var(--border);
+    padding-left: 16px;
+  }
+}
+
+@media (max-width: 900px) {
+  .split-viewport { grid-template-columns: 1fr; }
+  .audit-grid { grid-template-columns: 1fr; }
+}
+
+@media (max-width: 640px) {
+  body { padding: 28px 18px 56px; }
+  .telemetry-grid { grid-template-columns: 1fr; }
+  .metric-card:nth-child(2n) { border-left: none; padding-left: 0; }
+  .metric-card + .metric-card { border-top: 1px solid rgba(255, 255, 255, 0.045); }
+  .rubric-summary-grid { grid-template-columns: 1fr; }
+  .rubric-score-box:nth-child(2n) { border-left: none; padding-left: 0; }
+  .l-label { width: 130px; }
+}

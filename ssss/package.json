@@ -1,0 +1,27 @@
+{
+  "name": "isro-visual-privacy-agent-extension",
+  "version": "1.2.0",
+  "description": "On-Device Zero-Leakage Visual Perception Privacy Agent for Autonomous Browser Agents (ISRO Problem Statement #26171)",
+  "main": "pii-agent-extension/background.js",
+  "scripts": {
+    "package": "node scripts/package-extension.js",
+    "validate": "node scripts/validate-manifest.js",
+    "test": "node scripts/test-pipeline.js",
+    "server": "uvicorn server.app:app --host 127.0.0.1 --port 8001 --reload"
+  },
+  "keywords": [
+    "browser-extension",
+    "privacy",
+    "zero-leakage",
+    "webgpu",
+    "onnx-wasm",
+    "pii-redaction",
+    "vlm-agent",
+    "isro-hackathon"
+  ],
+  "author": "Visual Perception Privacy Team",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "archiver": "^6.0.1"
+  }
+}

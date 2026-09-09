@@ -1,0 +1,6 @@
+Placeholder. Populated by:
+
+    npm install @huggingface/transformers@3.7.6
+    node tools/vendor-deps.mjs
+
+The extension will NOT load its model until this is done.

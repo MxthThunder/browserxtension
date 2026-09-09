@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>ISTRAC MOX-3 · Mission Operations Telemetry Console</title>
+  <style>
+    :root {
+      --bg-dark: #07090e;
+      --panel-bg: #0d121f;
+      --panel-border: #1e293b;
+      --text-main: #e2e8f0;
+      --text-muted: #94a3b8;
+      --accent-cyan: #38bdf8;
+      --accent-amber: #f59e0b;
+      --accent-red: #ef4444;
+      --accent-green: #10b981;
+      --font-mono: "JetBrains Mono", "Courier New", monospace;
+      --font-sans: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      background: var(--bg-dark);
+      color: var(--text-main);
+      font-family: var(--font-sans);
+      height: 100vh;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* Top Classification Banner */
+    .classification-bar {
+      background: #7f1d1d;
+      color: #fecaca;
+      font-size: 11px;
+      font-weight: 800;
+      letter-spacing: 1.5px;
+      text-align: center;
+      padding: 3px 0;
+      text-transform: uppercase;
+      user-select: none;
+      border-bottom: 1px solid #991b1b;
+    }
+
+    /* Header */
+    header {
+      background: #090d16;
+      border-bottom: 1px solid var(--panel-border);
+      padding: 8px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .isro-badge {
+      background: #1e293b;
+      border: 1px solid #38bdf8;
+      color: #38bdf8;
+      border-radius: 50%;
+      width: 32px;
+      height: 32px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    .header-titles h1 {
+      font-size: 15px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+    }
+
+    .header-titles .subtitle {
+      font-size: 11px;
+      color: var(--text-muted);
+      font-family: var(--font-mono);
+    }
+
+    .header-right {
+      text-align: right;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      color: var(--text-muted);
+    }
+
+    .header-right .operator {
+      color: #f8fafc;
+      font-weight: 600;
+    }
+
+    /* Navigation Bar (Tabs) */
+    nav.tab-bar {
+      background: #0b101c;
+      border-bottom: 1px solid var(--panel-border);
+      display: flex;
+      gap: 2px;
+      padding: 0 16px;
+    }
+
+    .nav-tab {
+      padding: 8px 16px;
+      font-size: 12px;
+      font-weight: 600;
+      color: var(--text-muted);
+      background: transparent;
+      border: none;
+      cursor: pointer;
+      border-bottom: 2px solid transparent;
+      transition: all 0.15s ease;
+    }
+
+    .nav-tab:hover {
+      color: #f8fafc;
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .nav-tab.active {
+      color: var(--accent-cyan);
+      border-bottom-color: var(--accent-cyan);
+      background: rgba(56, 189, 248, 0.06);
+    }
+
+    /* Operator Intent Bar */
+    .operator-query-bar {
+      background: #111827;
+      border-bottom: 1px solid var(--panel-border);
+      padding: 6px 16px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      font-size: 11.5px;
+    }
+
+    .query-tag {
+      background: #374151;
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 700;
+      color: #93c5fd;
+      text-transform: uppercase;
+    }
+
+    .query-text {
+      color: #d1d5db;
+      font-style: italic;
+    }
+
+    .stream-status {
+      margin-left: auto;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .live-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--accent-green);
+      box-shadow: 0 0 8px var(--accent-green);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+
+    /* Main Console Layout */
+    main.console-content {
+      flex: 1;
+      display: grid;
+      grid-template-columns: 240px 1fr 280px;
+      overflow: hidden;
+      background: var(--bg-dark);
+    }
+
+    .panel {
+      border-right: 1px solid var(--panel-border);
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+    }
+
+    .panel:last-child {
+      border-right: none;
+    }
+
+    .panel-header {
+      background: #0f172a;
+      padding: 8px 12px;
+      font-size: 11px;
+      font-weight: 700;
+      letter-spacing: 0.5px;
+      text-transform: uppercase;
+      border-bottom: 1px solid var(--panel-border);
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: #94a3b8;
+    }
+
+    .badge-counter {
+      background: #1e293b;
+      color: var(--accent-cyan);
+      padding: 1px 6px;
+      border-radius: 4px;
+      font-size: 10px;
+    }
+
+    /* Parameter Tree */
+    .param-tree {
+      flex: 1;
+      overflow-y: auto;
+      padding: 8px 0;
+      font-family: var(--font-mono);
+      font-size: 11px;
+    }
+
+    .subsystem-group {
+      margin-bottom: 8px;
+    }
+
+    .subsystem-title {
+      padding: 4px 12px;
+      font-size: 10px;
+      font-weight: 800;
+      color: #64748b;
+      letter-spacing: 1px;
+    }
+
+    .param-row {
+      display: flex;
+      justify-content: space-between;
+      padding: 4px 12px;
+      cursor: pointer;
+      border-left: 2px solid transparent;
+      transition: background 0.1s;
+    }
+
+    .param-row:hover {
+      background: rgba(255, 255, 255, 0.03);
+    }
+
+    .param-row.active {
+      background: rgba(56, 189, 248, 0.1);
+      border-left-color: var(--accent-cyan);
+      color: #f8fafc;
+    }
+
+    .param-name {
+      color: #cbd5e1;
+    }
+
+    .param-val {
+      font-weight: 600;
+    }
+
+    .val-ok { color: var(--accent-green); }
+    .val-warn { color: var(--accent-amber); }
+    .val-alarm { color: var(--accent-red); }
+
+    /* Center Stage (Plot & Statistics) */
+    .center-stage {
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      border-right: 1px solid var(--panel-border);
+    }
+
+    .plot-container {
+      flex: 1;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      position: relative;
+    }
+
+    .plot-title-bar {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin-bottom: 8px;
+    }
+
+    .plot-title {
+      font-size: 12px;
+      font-weight: 700;
+      color: #f8fafc;
+      font-family: var(--font-mono);
+    }
+
+    .excursion-alert {
+      background: rgba(239, 68, 68, 0.2);
+      border: 1px solid var(--accent-red);
+      color: var(--accent-red);
+      padding: 2px 8px;
+      border-radius: 4px;
+      font-size: 10px;
+      font-weight: 800;
+    }
+
+    #stripChart {
+      width: 100%;
+      height: 100%;
+      background: #0a0e17;
+      border: 1px solid var(--panel-border);
+      border-radius: 4px;
+    }
+
+    /* Statistics Window */
+    .stats-tray {
+      height: 180px;
+      border-top: 1px solid var(--panel-border);
+      background: #090e18;
+      display: flex;
+      flex-direction: column;
+    }
+
+    .stats-table {
+      flex: 1;
+      overflow-y: auto;
+      width: 100%;
+      border-collapse: collapse;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    .stats-table th {
+      background: #0f172a;
+      padding: 6px 12px;
+      text-align: left;
+      font-size: 10px;
+      color: #64748b;
+      border-bottom: 1px solid var(--panel-border);
+    }
+
+    .stats-table td {
+      padding: 5px 12px;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.04);
+    }
+
+    /* Right Panel (Limits & Details) */
+    .detail-panel {
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .card-box {
+      background: #0a0f1d;
+      border: 1px solid var(--panel-border);
+      border-radius: 6px;
+      padding: 12px;
+    }
+
+    .card-box h3 {
+      font-size: 11px;
+      color: #94a3b8;
+      text-transform: uppercase;
+      letter-spacing: 0.5px;
+      margin-bottom: 8px;
+      display: flex;
+      justify-content: space-between;
+    }
+
+    .kv-row {
+      display: flex;
+      justify-content: space-between;
+      font-size: 11px;
+      font-family: var(--font-mono);
+      padding: 3px 0;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+    }
+
+    .kv-label { color: #64748b; }
+    .kv-val { color: #e2e8f0; font-weight: 600; }
+
+    /* Excursion Cards */
+    .excursion-item {
+      background: rgba(239, 68, 68, 0.08);
+      border-left: 3px solid var(--accent-red);
+      padding: 8px 10px;
+      margin-bottom: 8px;
+      border-radius: 0 4px 4px 0;
+      font-size: 11px;
+      font-family: var(--font-mono);
+    }
+
+    .excursion-header {
+      display: flex;
+      justify-content: space-between;
+      font-weight: 700;
+      color: #fca5a5;
+    }
+
+    .excursion-note {
+      font-size: 10px;
+      color: #94a3b8;
+      margin-top: 2px;
+    }
+
+    /* Action Buttons */
+    .btn-action {
+      background: #1e293b;
+      border: 1px solid #334155;
+      color: #e2e8f0;
+      padding: 6px 12px;
+      border-radius: 4px;
+      font-size: 11px;
+      font-weight: 600;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      gap: 6px;
+      transition: all 0.15s ease;
+    }
+
+    .btn-action:hover {
+      background: #334155;
+      border-color: var(--accent-cyan);
+    }
+
+    .btn-action.btn-danger {
+      background: rgba(239, 68, 68, 0.15);
+      border-color: var(--accent-red);
+      color: #fca5a5;
+    }
+
+    .btn-action.btn-danger:hover {
+      background: rgba(239, 68, 68, 0.3);
+    }
+
+    /* Tab Page Containers */
+    .tab-page {
+      display: none;
+      width: 100%;
+      height: 100%;
+    }
+
+    .tab-page.active {
+      display: grid;
+    }
+
+    /* Documents View (with Iframe) */
+    .document-page {
+      display: none;
+      width: 100%;
+      height: 100%;
+      grid-template-columns: 280px 1fr;
+    }
+
+    .document-page.active {
+      display: grid;
+    }
+
+    .doc-iframe-container {
+      width: 100%;
+      height: 100%;
+      background: #1e293b;
+      border: none;
+    }
+
+    /* Footer / Provenance Bar */
+    footer.provenance-bar {
+      background: #070a12;
+      border-top: 1px solid var(--panel-border);
+      padding: 6px 16px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10.5px;
+      font-family: var(--font-mono);
+      color: #64748b;
+    }
+
+    .source-chips {
+      display: flex;
+      gap: 8px;
+    }
+
+    .source-chip {
+      background: #0f172a;
+      border: 1px solid #1e293b;
+      padding: 1px 6px;
+      border-radius: 3px;
+      color: #94a3b8;
+    }
+  </style>
+</head>
+<body>
+
+  <!-- RESTRICTED CLASSIFICATION BANNER -->
+  <div class="classification-bar">
+    RESTRICTED · FOR OFFICIAL USE ONLY · ISTRAC / MOX-3
+  </div>
+
+  <!-- HEADER -->
+  <header>
+    <div class="header-left">
+      <div class="isro-badge">ISRO</div>
+      <div class="header-titles">
+        <h1 id="console-title">Telemetry Parameter Browser & Trend Analysis</h1>
+        <div class="subtitle">RESOURCESAT-2A (IRS-R2A) · S/C 41877 · MOX Bengaluru · Orbit 50318 · 2026-247T15:08:42Z</div>
+      </div>
+    </div>
+    <div class="header-right">
+      <div class="operator" id="operator-info">Operator A R Venkatesan · USRC/SCI-SE/20911</div>
+      <div id="console-network-info">MOX-CON-07 · 10.42.7.61 · offline island network</div>
+    </div>
+  </header>
+
+  <!-- NAVIGATION BAR (Client-side SPA Routing) -->
+  <nav class="tab-bar">
+    <button class="nav-tab active" data-tab="telemetry" id="tab-telemetry">Telemetry</button>
+    <button class="nav-tab" data-tab="events" id="tab-events">Events</button>
+    <button class="nav-tab" data-tab="planning" id="tab-planning">Planning</button>
+    <button class="nav-tab" data-tab="documents" id="tab-documents">Documents</button>
+    <button class="nav-tab" data-tab="reports" id="tab-reports">Reports</button>
+  </nav>
+
+  <!-- OPERATOR QUERY INTENT BAR -->
+  <div class="operator-query-bar">
+    <span class="query-tag">OPERATOR ASKS · VOICE + TEXT</span>
+    <span class="query-text">"Plot battery depth of discharge for the last 30 orbits, give me the statistics, and flag anything past the 35 % soft limit."</span>
+    <div class="stream-status">
+      <div class="live-dot" id="stream-dot"></div>
+      <span id="stream-label">WEBSOCKET: STREAMING (1 Hz)</span>
+      <button class="btn-action" id="btn-toggle-stream" style="padding: 2px 6px; font-size: 10px;">Pause</button>
+    </div>
+  </div>
+
+  <!-- TAB 1: TELEMETRY VIEW -->
+  <main class="console-content tab-page active" id="view-telemetry">
+    <!-- LEFT: Parameter Tree -->
+    <section class="panel">
+      <div class="panel-header">
+        <span>PARAMETER TREE</span>
+        <span class="badge-counter" id="param-count">4216 MNEMONICS</span>
+      </div>
+      <div class="param-tree">
+        <div class="subsystem-group">
+          <div class="subsystem-title">POWER</div>
+          <div class="param-row" data-param="BUS_V28"><span class="param-name">BUS_V28</span><span class="param-val val-ok" id="val-BUS_V28">28.42 V</span></div>
+          <div class="param-row" data-param="BAT1_SOC"><span class="param-name">BAT1_SOC</span><span class="param-val val-ok" id="val-BAT1_SOC">87.4 %</span></div>
+          <div class="param-row active" data-param="BAT1_DOD"><span class="param-name">BAT1_DOD</span><span class="param-val val-warn" id="val-BAT1_DOD">12.6 %</span></div>
+          <div class="param-row" data-param="BAT1_T"><span class="param-name">BAT1_T</span><span class="param-val val-ok" id="val-BAT1_T">18.7 degC</span></div>
+          <div class="param-row" data-param="SAA_I"><span class="param-name">SAA_I</span><span class="param-val val-ok" id="val-SAA_I">24.18 A</span></div>
+          <div class="param-row" data-param="SHNT_W"><span class="param-name">SHNT_W</span><span class="param-val val-ok" id="val-SHNT_W">118 W</span></div>
+        </div>
+        <div class="subsystem-group">
+          <div class="subsystem-title">AOCS</div>
+          <div class="param-row" data-param="RWA1_RPM"><span class="param-name">RWA1_RPM</span><span class="param-val val-ok" id="val-RWA1_RPM">3214 rpm</span></div>
+          <div class="param-row" data-param="RWA3_RPM"><span class="param-name">RWA3_RPM</span><span class="param-val val-warn" id="val-RWA3_RPM">4388 rpm</span></div>
+          <div class="param-row" data-param="STR2_STAT"><span class="param-name">STR2_STAT</span><span class="param-val val-alarm" id="val-STR2_STAT">NO TRACK</span></div>
+          <div class="param-row" data-param="GYR_X"><span class="param-name">GYR_X</span><span class="param-val val-ok" id="val-GYR_X">0.0021</span></div>
+        </div>
+        <div class="subsystem-group">
+          <div class="subsystem-title">THERMAL</div>
+          <div class="param-row"><span class="param-name">TZ1_T .. TZ8_T</span><span class="param-val val-ok">8 zones</span></div>
+          <div class="param-row"><span class="param-name">HTR_BAT1</span><span class="param-val val-ok">ON</span></div>
+        </div>
+        <div class="subsystem-group">
+          <div class="subsystem-title">PROPULSION</div>
+          <div class="param-row"><span class="param-name">PROP_P</span><span class="param-val val-ok">8.12 bar</span></div>
+          <div class="param-row"><span class="param-name">PROP_M</span><span class="param-val val-ok">11.34 kg</span></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- CENTER: Canvas Strip Chart & Statistics Window -->
+    <section class="center-stage">
+      <div class="plot-container">
+        <div class="plot-title-bar">
+          <div class="plot-title" id="plot-title">BAT1_DOD · PER-ORBIT PEAK · ORBITS 50289-50318</div>
+          <div class="excursion-alert" id="excursion-badge">2 EXCURSIONS FOUND</div>
+        </div>
+        <canvas id="stripChart"></canvas>
+      </div>
+
+      <!-- Bottom Statistics Tray -->
+      <div class="stats-tray">
+        <div class="panel-header">
+          <span>STATISTICS · WINDOW 30 ORBITS (2026-245 .. 247)</span>
+          <button class="btn-action" id="btn-export-stats" style="padding: 1px 8px; font-size: 10px;">Export CSV</button>
+        </div>
+        <table class="stats-table">
+          <thead>
+            <tr><th>STATISTIC</th><th>VALUE</th><th>CONTEXT</th><th>STATUS</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Samples</td><td id="stat-samples">182 430 raw / 30 orbit peaks</td><td>1 Hz decommutated</td><td class="val-ok">OK</td></tr>
+            <tr><td>Mean peak DOD</td><td id="stat-mean">25.9 %</td><td>vs 24.1 % previous 30 orbits</td><td class="val-ok">OK</td></tr>
+            <tr><td>Std deviation</td><td>3.8 %</td><td>sigma up from 2.2 %</td><td class="val-warn">WARN</td></tr>
+            <tr><td>Maximum</td><td id="stat-max">41.7 %</td><td>orbit 50308 — past hard limit</td><td class="val-alarm">ALARM</td></tr>
+            <tr><td>95th percentile</td><td>37.2 %</td><td>past soft limit</td><td class="val-warn">WARN</td></tr>
+            <tr><td>Excursions > 35 %</td><td id="stat-excursions">2 orbits (50308, 50309)</td><td>both eclipse-season peaks</td><td class="val-alarm">ALARM</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <!-- RIGHT: Limit Definitions & Excursions -->
+    <section class="panel detail-panel">
+      <div class="card-box">
+        <h3>LIMIT DEFINITION <span style="font-family: var(--font-mono); font-size: 9px; color: var(--accent-cyan);">limits_r2a.xml</span></h3>
+        <div class="kv-row"><span class="kv-label">Soft limit</span><span class="kv-val" style="color: var(--accent-amber);">35.0 %</span></div>
+        <div class="kv-row"><span class="kv-label">Hard limit</span><span class="kv-val" style="color: var(--accent-red);">40.0 %</span></div>
+        <div class="kv-row"><span class="kv-label">Persistence</span><span class="kv-val">3 consecutive frames</span></div>
+        <div class="kv-row"><span class="kv-label">Hysteresis</span><span class="kv-val">1.5 %</span></div>
+        <div class="kv-row"><span class="kv-label">Revision</span><span class="kv-val">rev 11 · 2026-198</span></div>
+        <div class="kv-row"><span class="kv-label">Owner</span><span class="kv-val">Power subsystem, URSC</span></div>
+      </div>
+
+      <div class="card-box">
+        <h3>EXCURSIONS LOG <button class="btn-action btn-danger" id="btn-ack-alarm" style="padding: 2px 6px; font-size: 9px;">Acknowledge</button></h3>
+        <div class="excursion-item">
+          <div class="excursion-header"><span>Orbit 50308</span><span>Peak 41.7 %</span></div>
+          <div class="excursion-note">Duration: 4 m 12 s · SOH breach above hard limit</div>
+        </div>
+        <div class="excursion-item">
+          <div class="excursion-header"><span>Orbit 50309</span><span>Peak 38.2 %</span></div>
+          <div class="excursion-note">Duration: 2 m 48 s · Exceeded 35% soft limit</div>
+        </div>
+      </div>
+
+      <div class="card-box" style="margin-top: auto;">
+        <h3>PRIVIBROWSE-X GUARANTEES</h3>
+        <p style="font-size: 10.5px; color: #94a3b8; line-height: 1.4;">
+          Real-time values stream directly to the local Telemetry Adapter over WebSockets. No visual OCR required on strip charts.
+        </p>
+      </div>
+    </section>
+  </main>
+
+  <!-- TAB 2: EVENTS VIEW -->
+  <div class="tab-page" id="view-events" style="height: calc(100vh - 125px); padding: 16px; overflow-y: auto;">
+    <div class="card-box" style="height: 100%;">
+      <h3>EVENT LOG & ANOMALY CORRELATION · 14:12:53Z</h3>
+      <table class="stats-table" style="margin-top: 12px;">
+        <thead>
+          <tr><th>TIMESTAMP</th><th>SUBSYSTEM</th><th>SEVERITY</th><th>DESCRIPTION</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>14:41:07</td><td>AOCS</td><td class="val-warn">WARN</td><td>RWA3 4388 rpm, momentum dump advised</td></tr>
+          <tr><td>14:19:44</td><td>AOCS</td><td class="val-ok">INFO</td><td>STR2 re-acquired, 3 stars matched</td></tr>
+          <tr><td>14:12:53</td><td>AOCS</td><td class="val-alarm">ALARM</td><td>STR2 no-track asserted. 42 s duration</td></tr>
+          <tr><td>14:12:11</td><td>OBC</td><td class="val-ok">INFO</td><td>SAA region entry flag set</td></tr>
+          <tr><td>14:02:00</td><td>POWER</td><td class="val-ok">INFO</td><td>Eclipse exit, charge mode entered</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+
+  <!-- TAB 4: DOCUMENTS VIEW (Accessible Same-Origin Iframe) -->
+  <div class="document-page" id="view-documents">
+    <div class="panel" style="padding: 12px;">
+      <div class="panel-header"><span>DOCUMENT INDEX</span></div>
+      <div style="font-size: 11px; padding: 8px 0;">
+        <div style="color: var(--accent-cyan); font-weight: 700; margin-bottom: 6px;">FOM-R2A rev 11</div>
+        <div style="color: #94a3b8; padding-left: 8px;">ch.5 Power management</div>
+        <div style="color: #38bdf8; padding-left: 8px; font-weight: 600;">ch.9 AOCS contingencies (Active)</div>
+        <div style="color: #94a3b8; padding-left: 8px;">MOP-R2A rev 6</div>
+      </div>
+    </div>
+    <div style="display: flex; flex-direction: column;">
+      <div class="panel-header">
+        <span>BROWSER PDF VIEWER (LEGACY EMBEDDED IFRAME)</span>
+        <span style="color: var(--accent-amber); font-size: 10px;">ACCESSIBLE VIA EXTENSION ALL_FRAMES</span>
+      </div>
+      <!-- Embedded Same-Origin Iframe -->
+      <iframe class="doc-iframe-container" id="doc-viewer-iframe" srcdoc="
+        <!DOCTYPE html>
+        <html>
+        <head>
+          <style>
+            body { background: #182030; color: #f8fafc; font-family: -apple-system, sans-serif; padding: 24px; }
+            h2 { color: #38bdf8; font-size: 16px; margin-bottom: 8px; }
+            .caution { background: #422006; border-left: 4px solid #f59e0b; padding: 8px 12px; margin: 16px 0; font-size: 12px; color: #fef08a; }
+            ol { padding-left: 20px; font-size: 12.5px; line-height: 1.6; }
+            button { background: #0284c7; color: white; border: none; padding: 6px 12px; border-radius: 4px; font-weight: 600; cursor: pointer; margin-top: 14px; }
+          </style>
+        </head>
+        <body>
+          <h2>9.2.4 Reaction wheel momentum saturation</h2>
+          <p style='font-size: 12px; color: #94a3b8;'>A wheel is declared approaching saturation when speed exceeds 95% of the rated 4 500 rpm for more than three consecutive telemetry frames.</p>
+          <div class='caution'>CAUTION: Do not dump momentum while the star tracker reference is degraded (see 9.2).</div>
+          <ol>
+            <li>Confirm the reading on the redundant tachometer channel (RWA3_RPM_B).</li>
+            <li>Verify magnetorquer availability and the magnetic field model validity.</li>
+            <li>Schedule the momentum dump in a non-imaging arc, not less than 10 minutes before any payload take.</li>
+            <li>Enable AOCS_MOM_DUMP with a dwell of two orbits. Two-operator authorization required.</li>
+          </ol>
+          <button id='btn-generate-guideline' data-agent-id='iframe-action-1'>Generate Operational Guideline Draft</button>
+        </body>
+        </html>
+      "></iframe>
+    </div>
+  </div>
+
+  <!-- FOOTER -->
+  <footer class="provenance-bar">
+    <div class="source-chips">
+      <span>DATA SOURCES:</span>
+      <span class="source-chip">tm_r2a_l0/*.h5 (PostgreSQL)</span>
+      <span class="source-chip">limits_r2a.xml</span>
+      <span class="source-chip">orbev_2026_247.txt</span>
+    </div>
+    <div>TELEMETRY REVISION: 11 · REPRODUCIBLE AUDIT TRAIL VERIFIED</div>
+  </footer>
+
+  <!-- SCRIPT: Real-time Telemetry Simulator & Visual Strip Chart -->
+  <script>
+    // Orbit data history for BAT1_DOD (orbits 50289 to 50318)
+    const orbitPoints = [
+      23.1, 23.4, 23.8, 24.1, 24.5, 24.8, 25.1, 25.4, 25.2, 24.9,
+      24.6, 24.8, 25.0, 25.3, 25.7, 26.0, 26.2, 26.5, 41.7, 38.2,
+      25.4, 25.1, 24.8, 25.2, 25.6, 26.1, 26.4, 26.8, 27.3, 28.0
+    ];
+
+    let currentDod = 12.6;
+    let isStreaming = true;
+
+    // Canvas drawing
+    const canvas = document.getElementById("stripChart");
+    const ctx = canvas.getContext("2d");
+
+    function resizeCanvas() {
+      const rect = canvas.getBoundingClientRect();
+      canvas.width = rect.width * (window.devicePixelRatio || 1);
+      canvas.height = rect.height * (window.devicePixelRatio || 1);
+      ctx.scale(window.devicePixelRatio || 1, window.devicePixelRatio || 1);
+      drawPlot();
+    }
+
+    function drawPlot() {
+      const w = canvas.getBoundingClientRect().width;
+      const h = canvas.getBoundingClientRect().height;
+      if (w <= 0 || h <= 0) return;
+
+      ctx.clearRect(0, 0, w, h);
+
+      // Draw Grid
+      ctx.strokeStyle = "#1e293b";
+      ctx.lineWidth = 1;
+      for (let y = 0; y <= 45; y += 9) {
+        const yPos = h - (y / 45) * (h - 40) - 20;
+        ctx.beginPath();
+        ctx.moveTo(40, yPos);
+        ctx.lineTo(w - 20, yPos);
+        ctx.stroke();
+
+        ctx.fillStyle = "#64748b";
+        ctx.font = "10px monospace";
+        ctx.fillText(`${y}%`, 10, yPos + 3);
+      }
+
+      // Draw Soft Limit (35%) in Amber
+      const softY = h - (35 / 45) * (h - 40) - 20;
+      ctx.strokeStyle = "#f59e0b";
+      ctx.setLineDash([4, 4]);
+      ctx.beginPath();
+      ctx.moveTo(40, softY);
+      ctx.lineTo(w - 20, softY);
+      ctx.stroke();
+      ctx.fillStyle = "#f59e0b";
+      ctx.fillText("soft 35 %", 45, softY - 4);
+
+      // Draw Hard Limit (40%) in Red
+      const hardY = h - (40 / 45) * (h - 40) - 20;
+      ctx.strokeStyle = "#ef4444";
+      ctx.setLineDash([2, 2]);
+      ctx.beginPath();
+      ctx.moveTo(40, hardY);
+      ctx.lineTo(w - 20, hardY);
+      ctx.stroke();
+      ctx.fillStyle = "#ef4444";
+      ctx.fillText("hard 40 %", 45, hardY - 4);
+
+      ctx.setLineDash([]); // reset dash
+
+      // Draw Data Curve
+      const stepX = (w - 70) / (orbitPoints.length - 1);
+      ctx.beginPath();
+      ctx.strokeStyle = "#f59e0b";
+      ctx.lineWidth = 2;
+
+      orbitPoints.forEach((val, i) => {
+        const x = 50 + i * stepX;
+        const y = h - (val / 45) * (h - 40) - 20;
+        if (i === 0) ctx.moveTo(x, y);
+        else ctx.lineTo(x, y);
+      });
+      ctx.stroke();
+
+      // Draw Excursion Highlighting Circles
+      orbitPoints.forEach((val, i) => {
+        const x = 50 + i * stepX;
+        const y = h - (val / 45) * (h - 40) - 20;
+
+        if (val > 35) {
+          ctx.beginPath();
+          ctx.arc(x, y, 6, 0, Math.PI * 2);
+          ctx.strokeStyle = "#ef4444";
+          ctx.lineWidth = 2;
+          ctx.stroke();
+        }
+
+        // Draw last point dot
+        if (i === orbitPoints.length - 1) {
+          ctx.beginPath();
+          ctx.arc(x, y, 4, 0, Math.PI * 2);
+          ctx.fillStyle = "#f59e0b";
+          ctx.fill();
+        }
+      });
+    }
+
+    // Telemetry Update Loop (1 Hz)
+    function broadcastTelemetry() {
+      if (!isStreaming) return;
+
+      // Small jitter around realistic values
+      currentDod = parseFloat((12.5 + Math.sin(Date.now() / 3000) * 0.4).toFixed(1));
+      document.getElementById("val-BAT1_DOD").textContent = `${currentDod} %`;
+
+      const frame = [
+        { mnemonic: "BAT1_DOD", value: currentDod, unit: "%", status: currentDod > 35 ? "ALARM" : "OK", limit_state: "Soft: 35%, Hard: 40%", subsystem: "POWER" },
+        { mnemonic: "BAT1_SOC", value: (87.4 + (Math.random() * 0.2 - 0.1)).toFixed(1), unit: "%", status: "OK", subsystem: "POWER" },
+        { mnemonic: "BUS_V28", value: (28.42 + (Math.random() * 0.04 - 0.02)).toFixed(2), unit: "V", status: "OK", subsystem: "POWER" },
+        { mnemonic: "RWA3_RPM", value: Math.round(4388 + (Math.random() * 10 - 5)), unit: "rpm", status: "WARN", limit_state: "Saturation 4500 rpm", subsystem: "AOCS" },
+        { mnemonic: "STR2_STAT", value: "NO TRACK", status: "ALARM", subsystem: "AOCS" },
+        { mnemonic: "CLASSIFIED_COORD", value: "13.03N 77.51E", status: "OK", subsystem: "PAYLOAD" }
+      ];
+
+      // Dispatch to window message bus for PriviBrowse-X Extension content script
+      window.postMessage({
+        type: "PRIVIBROWSE_TELEMETRY_FRAME",
+        payload: frame
+      }, "*");
+
+      // Also ingest directly into window adapter if extension injected it
+      if (window.__PRIVIBROWSE_TELEMETRY_ADAPTER__) {
+        window.__PRIVIBROWSE_TELEMETRY_ADAPTER__.ingestTelemetryFrame(frame);
+      }
+    }
+
+    // Try opening WebSocket to FastAPI backend if hosted
+    try {
+      const wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      const ws = new WebSocket(`${wsProtocol}//${window.location.host}/ws/telemetry`);
+      ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          window.postMessage({ type: "PRIVIBROWSE_TELEMETRY_FRAME", payload: data }, "*");
+        } catch {}
+      };
+    } catch {}
+
+    // Fallback timer loop (guarantees updates work even when opened as a static file)
+    setInterval(broadcastTelemetry, 1000);
+
+    // Client-side SPA Route Navigation
+    const tabs = document.querySelectorAll(".nav-tab");
+    const pages = document.querySelectorAll(".tab-page, .document-page");
+
+    tabs.forEach((tab) => {
+      tab.addEventListener("click", () => {
+        const targetTab = tab.getAttribute("data-tab");
+        window.location.hash = `#${targetTab}`;
+        switchTab(targetTab);
+      });
+    });
+
+    function switchTab(tabName) {
+      tabs.forEach(t => t.classList.toggle("active", t.getAttribute("data-tab") === tabName));
+      pages.forEach(p => {
+        p.classList.remove("active");
+        if (p.id === `view-${tabName}`) {
+          p.classList.add("active");
+        }
+      });
+
+      if (tabName === "telemetry") {
+        setTimeout(resizeCanvas, 50);
+      }
+    }
+
+    window.addEventListener("hashchange", () => {
+      const hash = window.location.hash.replace("#", "") || "telemetry";
+      switchTab(hash);
+    });
+
+    // Stream Pause/Resume Toggle
+    const btnToggleStream = document.getElementById("btn-toggle-stream");
+    const streamDot = document.getElementById("stream-dot");
+    const streamLabel = document.getElementById("stream-label");
+
+    btnToggleStream.addEventListener("click", () => {
+      isStreaming = !isStreaming;
+      if (isStreaming) {
+        btnToggleStream.textContent = "Pause";
+        streamDot.style.background = "#10b981";
+        streamDot.style.boxShadow = "0 0 8px #10b981";
+        streamLabel.textContent = "WEBSOCKET: STREAMING (1 Hz)";
+      } else {
+        btnToggleStream.textContent = "Resume";
+        streamDot.style.background = "#64748b";
+        streamDot.style.boxShadow = "none";
+        streamLabel.textContent = "STREAM: PAUSED";
+      }
+    });
+
+    // Alarm Acknowledgement
+    const btnAckAlarm = document.getElementById("btn-ack-alarm");
+    btnAckAlarm.addEventListener("click", () => {
+      btnAckAlarm.textContent = "Acknowledged";
+      btnAckAlarm.classList.remove("btn-danger");
+      btnAckAlarm.style.background = "#10b981";
+      btnAckAlarm.style.color = "#fff";
+      document.getElementById("excursion-badge").textContent = "EXCURSIONS ACKNOWLEDGED";
+      document.getElementById("excursion-badge").style.borderColor = "#10b981";
+      document.getElementById("excursion-badge").style.color = "#10b981";
+    });
+
+    window.addEventListener("resize", resizeCanvas);
+    window.addEventListener("load", resizeCanvas);
+    setTimeout(resizeCanvas, 100);
+  </script>
+</body>
+</html>

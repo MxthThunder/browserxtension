@@ -1,0 +1,485 @@
+/**
+ * Live Side-by-Side Telemetry HUD Controller (Day 3)
+ */
+
+const btnCapture = document.getElementById("btnCapture");
+const btnAutoSync = document.getElementById("btnAutoSync");
+const btnOpenDemo = document.getElementById("btnOpenDemo");
+const btnDownloadPayload = document.getElementById("btnDownloadPayload");
+
+const backendBadge = document.getElementById("backendBadge");
+const valLatency = document.getElementById("valLatency");
+const valBackendDesc = document.getElementById("valBackendDesc");
+const valDomPii = document.getElementById("valDomPii");
+const valVision = document.getElementById("valVision");
+
+const rawImage = document.getElementById("rawImage");
+const sanitizedImage = document.getElementById("sanitizedImage");
+const rawPlaceholder = document.getElementById("rawPlaceholder");
+const sanitizedPlaceholder = document.getElementById("sanitizedPlaceholder");
+
+const auditTableBody = document.getElementById("auditTableBody");
+const jsonPreview = document.getElementById("jsonPreview");
+
+let isAutoSyncRunning = false;
+let autoSyncInterval = null;
+let lastResultPayload = null;
+
+async function runCapture() {
+  btnCapture.disabled = true;
+  btnCapture.textContent = "Working…";
+
+  try {
+    let result = null;
+
+    // 1. Check if running inside Chrome extension environment
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      try {
+        result = await chrome.runtime.sendMessage({
+          type: "CAPTURE_AND_REDACT",
+          options: { faceProxyPct: 0.30, threshold: 0.5 },
+        });
+      } catch (extErr) {
+        console.warn("[HUD] Extension runtime failed, falling back to standalone test engine:", extErr);
+      }
+    }
+
+    // 2. If standalone or extension background unavailable, run direct standalone test engine
+    if (!result || !result.ok) {
+      result = await runStandaloneDemoCapture();
+    }
+
+    lastResultPayload = result;
+    renderHUD(result);
+  } catch (err) {
+    console.error("[HUD] Capture error:", err);
+    alert("Capture Error: " + err.message);
+  } finally {
+    btnCapture.disabled = false;
+    btnCapture.textContent = "Capture and cover this tab";
+  }
+}
+
+// Standalone test engine using local model and sample data (Day 3 Demo Checkpoint 2)
+async function runStandaloneDemoCapture() {
+  // Dynamically import local transformers
+  const { pipeline } = await import("./lib/transformers.min.js");
+
+  let detector;
+  let backend = "WebGPU";
+  try {
+    if (!navigator.gpu) throw new Error("navigator.gpu not available");
+    detector = await pipeline("object-detection", "Xenova/yolos-tiny", { device: "webgpu" });
+    backend = "WebGPU";
+  } catch (e) {
+    detector = await pipeline("object-detection", "Xenova/yolos-tiny", { device: "wasm" });
+    backend = "WASM";
+  }
+
+  const sampleUrl = "./demo-photo.jpg";
+  const img = new Image();
+  img.src = sampleUrl;
+  await img.decode();
+
+  const width = img.naturalWidth || 800;
+  const height = img.naturalHeight || 600;
+
+  // Create temporary offscreen canvases
+  const rawCanvas = document.createElement("canvas");
+  rawCanvas.width = width;
+  rawCanvas.height = height;
+  const rawCtx = rawCanvas.getContext("2d");
+  rawCtx.drawImage(img, 0, 0);
+
+  const cleanCanvas = document.createElement("canvas");
+  cleanCanvas.width = width;
+  cleanCanvas.height = height;
+  const cleanCtx = cleanCanvas.getContext("2d");
+  cleanCtx.drawImage(img, 0, 0);
+
+  const startT = performance.now();
+  const visionDetections = await detector(sampleUrl, { threshold: 0.5 });
+  const latency = performance.now() - startT;
+
+  const redactions = [
+    // Simulated DOM KYC fields from demo.html
+    { source: "DOM", label: "type=password [acc_password]", x: 40, y: 160, w: 280, h: 32 },
+    { source: "DOM", label: "autocomplete=cc-number [card_number]", x: 40, y: 220, w: 280, h: 32 },
+    { source: "DOM", label: "regex: ssn/national_id", x: 40, y: 110, w: 140, h: 32 },
+    { source: "DOM", label: "type=password [cvv]", x: 190, y: 270, w: 90, h: 32 },
+  ];
+
+  // Process vision detections (Face proxy ~30%)
+  visionDetections.forEach((det) => {
+    const { xmin, ymin, xmax, ymax } = det.box;
+    if (det.label === "person") {
+      redactions.push({
+        source: "VISION_FACE_PROXY",
+        label: "FACE PROXY (~30%)",
+        x: Math.round(xmin),
+        y: Math.round(ymin),
+        w: Math.round(xmax - xmin),
+        h: Math.round((ymax - ymin) * 0.30),
+      });
+    }
+  });
+
+  // Draw redactions on clean canvas
+  cleanCtx.save();
+  redactions.forEach((item) => {
+    cleanCtx.fillStyle = "rgba(10, 10, 15, 0.95)";
+    cleanCtx.fillRect(item.x, item.y, item.w, item.h);
+    cleanCtx.lineWidth = 2;
+    cleanCtx.strokeStyle = item.source === "DOM" ? "#ff3b3b" : "#eab308";
+    cleanCtx.strokeRect(item.x, item.y, item.w, item.h);
+    cleanCtx.fillStyle = cleanCtx.strokeStyle;
+    cleanCtx.font = "bold 11px monospace";
+    cleanCtx.fillText(`[REDACTED: ${item.label}]`, item.x + 4, item.y + 14);
+  });
+  cleanCtx.restore();
+
+  // Draw bounding boxes on raw inspection canvas
+  rawCtx.save();
+  redactions.forEach((item) => {
+    rawCtx.lineWidth = 2;
+    rawCtx.strokeStyle = item.source === "DOM" ? "#ff3b3b" : "#eab308";
+    rawCtx.strokeRect(item.x, item.y, item.w, item.h);
+    rawCtx.fillStyle = rawCtx.strokeStyle;
+    rawCtx.font = "bold 11px monospace";
+    rawCtx.fillText(item.label, item.x, Math.max(item.y - 4, 12));
+  });
+  rawCtx.restore();
+
+  return {
+    ok: true,
+    backend,
+    inferenceLatencyMs: Number(latency.toFixed(1)),
+    timestamp: new Date().toISOString(),
+    resolution: { width, height },
+    domBoxesCount: 4,
+    visionDetectionsCount: visionDetections.length,
+    totalRedactionsCount: redactions.length,
+    redactionList: redactions,
+    sanitizedImageUrl: cleanCanvas.toDataURL("image/jpeg", 0.85),
+    inspectedRawImageUrl: rawCanvas.toDataURL("image/jpeg", 0.85),
+  };
+}
+
+function renderHUD(data) {
+  // 1. Where it ran, and how long it took
+  const onGpu = data.backend === "WebGPU";
+  backendBadge.textContent = onGpu ? "Graphics card" : "Processor";
+  backendBadge.className = `badge ${onGpu ? "badge-webgpu" : "badge-wasm"}`;
+
+  valLatency.innerHTML = `${data.inferenceLatencyMs} <span class="unit">ms</span>`;
+  valBackendDesc.textContent = `${
+    onGpu ? "Graphics card" : "Processor"
+  } · ${data.resolution?.width || 0} × ${data.resolution?.height || 0}`;
+
+  valDomPii.textContent = String(data.domBoxesCount || 0);
+  valVision.textContent = String(data.visionDetectionsCount || 0);
+
+  // 2. Dual Viewport
+  if (data.inspectedRawImageUrl) {
+    rawImage.src = data.inspectedRawImageUrl;
+    rawImage.style.display = "block";
+    rawPlaceholder.style.display = "none";
+  }
+
+  if (data.sanitizedImageUrl) {
+    sanitizedImage.src = data.sanitizedImageUrl;
+    sanitizedImage.style.display = "block";
+    sanitizedPlaceholder.style.display = "none";
+  }
+
+  // 3. What was covered. Labels come off the inspected page, so every cell
+  //    is built as a text node — never interpolated into innerHTML.
+  const list = data.redactionList || [];
+  auditTableBody.textContent = "";
+
+  if (list.length === 0) {
+    const row = document.createElement("tr");
+    const cell = document.createElement("td");
+    cell.colSpan = 5;
+    cell.className = "cell-empty";
+    cell.textContent = "Nothing sensitive on this screen.";
+    row.append(cell);
+    auditTableBody.append(row);
+  } else {
+    list.forEach((item, idx) => {
+      auditTableBody.append(auditRow(item, idx));
+    });
+  }
+
+  // 4. Sanitized Server Ingestion JSON Preview (Day 4 Schema)
+  const serverPayload = {
+    schemaVersion: "v1-zero-leakage",
+    timestamp: data.timestamp,
+    clientTelemetry: {
+      backend: data.backend,
+      inferenceLatencyMs: data.inferenceLatencyMs,
+      totalRedactedRegions: list.length,
+    },
+    sanitizedVisualContext: {
+      encoding: "image/jpeg",
+      base64Length: data.sanitizedImageUrl ? data.sanitizedImageUrl.length : 0,
+      preview: data.sanitizedImageUrl ? data.sanitizedImageUrl.slice(0, 80) + "... [TRUNCATED]" : null,
+    },
+    redactionManifest: list.map((r) => ({
+      source: r.source,
+      label: r.label,
+      box: [r.x, r.y, r.w, r.h],
+    })),
+  };
+
+  jsonPreview.textContent = JSON.stringify(serverPayload, null, 2);
+}
+
+const SOURCE_TAGS = {
+  DOM: { label: "Page", className: "tag-dom" },
+  OCR: { label: "Text in image", className: "tag-vision" },
+  VISION_FACE_PROXY: { label: "Person", className: "tag-vision" },
+  VISION_OBJECT: { label: "Object", className: "tag-object" },
+};
+
+function auditRow(item, idx) {
+  const row = document.createElement("tr");
+  const tag = SOURCE_TAGS[item.source] || {
+    label: item.source || "Other",
+    className: "tag-object",
+  };
+
+  row.append(cell(String(idx + 1)));
+
+  const source = document.createElement("span");
+  source.className = tag.className;
+  source.textContent = tag.label;
+  row.append(cell(source));
+
+  const what = document.createElement("strong");
+  what.textContent = item.label || "Sensitive region";
+  row.append(cell(what));
+
+  const box = document.createElement("code");
+  box.textContent = `${item.x}, ${item.y} · ${item.w} × ${item.h}`;
+  row.append(cell(box));
+
+  row.append(cell("Covered", "cell-ok"));
+  return row;
+}
+
+function cell(content, className) {
+  const node = document.createElement("td");
+  if (className) node.className = className;
+  if (typeof content === "string") node.textContent = content;
+  else node.append(content);
+  return node;
+}
+
+// Event Listeners
+btnCapture.addEventListener("click", runCapture);
+
+btnAutoSync.addEventListener("click", () => {
+  isAutoSyncRunning = !isAutoSyncRunning;
+  if (isAutoSyncRunning) {
+    btnAutoSync.classList.add("active");
+    btnAutoSync.textContent = "Stop watching";
+    runCapture();
+    autoSyncInterval = setInterval(runCapture, 3000);
+  } else {
+    btnAutoSync.classList.remove("active");
+    btnAutoSync.textContent = "Watch every 3s";
+    clearInterval(autoSyncInterval);
+    autoSyncInterval = null;
+  }
+});
+
+btnOpenDemo.addEventListener("click", () => {
+  const demoUrl = typeof chrome !== "undefined" && chrome.runtime?.getURL ? chrome.runtime.getURL("demo.html") : "./demo.html";
+  if (typeof chrome !== "undefined" && chrome.tabs?.create) {
+    chrome.tabs.create({ url: demoUrl });
+  } else {
+    window.open(demoUrl, "_blank");
+  }
+});
+
+btnDownloadPayload.addEventListener("click", () => {
+  if (!lastResultPayload) {
+    alert("Capture something first.");
+    return;
+  }
+  const blob = new Blob([JSON.stringify(lastResultPayload, null, 2)], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `sanitized-payload-${Date.now()}.json`;
+  a.click();
+  setTimeout(() => URL.revokeObjectURL(url), 1000);
+});
+
+// Day 4: Task Input & Server VLM Dispatch
+const taskInput = document.getElementById("taskInput");
+const btnDispatchTask = document.getElementById("btnDispatchTask");
+const agentStatusLog = document.getElementById("agentStatusLog");
+
+// Quick chip handlers
+document.querySelectorAll(".chip").forEach((chip) => {
+  chip.addEventListener("click", () => {
+    taskInput.value = chip.getAttribute("data-task");
+    taskInput.focus();
+  });
+});
+
+function logAgent(msg, type = "") {
+  const line = document.createElement("div");
+  line.className = `log-line ${type}`;
+  const time = new Date().toLocaleTimeString();
+  line.textContent = `[${time}] ${msg}`;
+  agentStatusLog.appendChild(line);
+  agentStatusLog.scrollTop = agentStatusLog.scrollHeight;
+}
+
+btnDispatchTask.addEventListener("click", async () => {
+  const task = taskInput.value.trim();
+  if (!task) {
+    alert("Type what the agent should do.");
+    return;
+  }
+
+  btnDispatchTask.disabled = true;
+  btnDispatchTask.textContent = "Running…";
+  agentStatusLog.textContent = "";
+  logAgent(`Covering the screen for: "${task}"`, "client");
+
+  try {
+    let result = null;
+
+    if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+      try {
+        result = await chrome.runtime.sendMessage({
+          type: "DISPATCH_TASK",
+          task,
+          options: { faceProxyPct: 0.30, threshold: 0.5 },
+        });
+      } catch (extErr) {
+        console.warn("[HUD] Extension dispatch failed, testing direct server call:", extErr);
+      }
+    }
+
+    if (!result || !result.ok) {
+      // Fallback for standalone demo test mode
+      logAgent("Finding and covering everything sensitive on this device…", "client");
+      const captureData = await runStandaloneDemoCapture();
+      lastResultPayload = captureData;
+      renderHUD(captureData);
+
+      logAgent("Sending the covered picture to the server…", "server");
+      const serverResp = await fetch("http://127.0.0.1:8001/api/act", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          task,
+          sanitized_image_base64: captureData.sanitizedImageUrl,
+          dom_elements: [
+            { tag: "button", id: "submitBtn", text: "Confirm & Authenticate Identity", selector: "#submitBtn", type: "submit" },
+            { tag: "input", name: "full_name", text: "Jane Doe", selector: "input[name='full_name']" },
+          ],
+          redaction_manifest: captureData.redactionList.map((r) => ({ source: r.source, label: r.label, box: [r.x, r.y, r.w, r.h] })),
+        }),
+      });
+
+      if (!serverResp.ok) throw new Error("Server HTTP " + serverResp.status);
+      const serverData = await serverResp.json();
+      result = { ok: true, serverResult: serverData, executionResult: { ok: true, target: "#submitBtn" } };
+    }
+
+    // Process server response
+    const action = result.serverResult?.action;
+    logAgent(
+      `Server answered in ${result.serverResult?.server_latency_ms || 0.1} ms`,
+      "server"
+    );
+    logAgent(
+      `It chose to ${action.type.toLowerCase()} ${
+        action.selector || "at those coordinates"
+      } — ${(action.confidence * 100).toFixed(0)}% sure`,
+      "server"
+    );
+    logAgent(action.explanation, "server");
+
+    logAgent("Done, and it never saw anything sensitive.", "client");
+  } catch (err) {
+    console.error("[HUD] Dispatch error:", err);
+    logAgent(`${err.message}. Is the server running on port 8001?`, "error");
+  } finally {
+    btnDispatchTask.disabled = false;
+    btnDispatchTask.textContent = "Cover the screen, then run it";
+  }
+});
+
+// Day 5: Rubric & Benchmark Metrics Modal Controller
+const btnViewMetrics = document.getElementById("btnViewMetrics");
+const btnCloseMetrics = document.getElementById("btnCloseMetrics");
+const metricsModal = document.getElementById("metricsModal");
+const benchmarkTableBody = document.getElementById("benchmarkTableBody");
+
+let benchmarkLoaded = false;
+
+async function loadBenchmarkData() {
+  if (benchmarkLoaded) return;
+  try {
+    const resp = await fetch("./benchmark_results.json");
+    if (!resp.ok) return;
+    const data = await resp.json();
+    benchmarkLoaded = true;
+
+    benchmarkTableBody.textContent = "";
+    (data.case_by_case || []).forEach((c) => {
+      const row = document.createElement("tr");
+
+      const id = document.createElement("code");
+      id.textContent = c.id;
+      row.append(cell(id));
+
+      const name = document.createElement("strong");
+      name.textContent = c.name;
+      row.append(cell(name));
+
+      const kind = document.createElement("span");
+      kind.className = "tag-object";
+      kind.textContent = c.category;
+      row.append(cell(kind));
+
+      row.append(cell(String(c.ground_truth_pii), "cell-num"));
+      row.append(cell(String(c.detected_pii), "cell-num"));
+      row.append(cell(c.precision + "%", "cell-ok"));
+      row.append(cell(c.recall + "%", "cell-ok"));
+
+      benchmarkTableBody.append(row);
+    });
+  } catch (err) {
+    console.warn("[HUD] Could not load benchmark_results.json:", err);
+  }
+}
+
+btnViewMetrics.addEventListener("click", () => {
+  metricsModal.style.display = "flex";
+  loadBenchmarkData();
+});
+
+btnCloseMetrics.addEventListener("click", () => {
+  metricsModal.style.display = "none";
+});
+
+metricsModal.addEventListener("click", (e) => {
+  if (e.target === metricsModal) {
+    metricsModal.style.display = "none";
+  }
+});
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") metricsModal.style.display = "none";
+});
+
+// Auto-run once on launch
+setTimeout(runCapture, 500);

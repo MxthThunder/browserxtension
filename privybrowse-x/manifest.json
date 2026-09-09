@@ -1,0 +1,53 @@
+{
+  "manifest_version": 3,
+  "name": "PrivyBrowse X — Privacy-First Browser Agent",
+  "version": "0.3.0",
+  "description": "On-device visual perception with local PII redaction. Nothing sensitive leaves the browser unredacted.",
+
+  "minimum_chrome_version": "116",
+
+  "permissions": [
+    "activeTab",
+    "scripting",
+    "tabs",
+    "offscreen",
+    "storage"
+  ],
+
+  "host_permissions": ["<all_urls>"],
+
+  "background": {
+    "service_worker": "src/background.js",
+    "type": "module"
+  },
+
+  "action": {
+    "default_popup": "src/popup.html",
+    "default_title": "PrivyBrowse X"
+  },
+
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/content.js"],
+      "run_at": "document_idle",
+      "all_frames": true
+    }
+  ],
+
+  "content_security_policy": {
+    "extension_pages": "script-src 'self' 'wasm-unsafe-eval'; object-src 'self'; worker-src 'self' blob:"
+  },
+
+  "web_accessible_resources": [
+    {
+      "resources": [
+        "models/*",
+        "wasm/*",
+        "vendor/*",
+        "src/hud.html"
+      ],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}

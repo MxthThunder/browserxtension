@@ -1,0 +1,151 @@
+[
+  {
+    "id": "case_01",
+    "category": "form_pii",
+    "name": "Standard Login Screen",
+    "description": "Username and password inputs on enterprise portal",
+    "ground_truth_pii": [
+      { "type": "password", "label": "type=password", "box": [120, 220, 320, 36] }
+    ]
+  },
+  {
+    "id": "case_02",
+    "category": "financial",
+    "name": "E-Commerce Checkout Flow",
+    "description": "Credit card number, exp date, CVV security code, and billing email",
+    "ground_truth_pii": [
+      { "type": "card_number", "label": "autocomplete=cc-number", "box": [80, 150, 340, 36] },
+      { "type": "card_exp", "label": "autocomplete=cc-exp", "box": [80, 200, 160, 36] },
+      { "type": "cvv", "label": "name=cvv", "box": [260, 200, 160, 36] },
+      { "type": "email", "label": "autocomplete=email", "box": [80, 100, 340, 36] }
+    ]
+  },
+  {
+    "id": "case_03",
+    "category": "mixed_kyc",
+    "name": "Banking KYC Portal with Webcam Video",
+    "description": "Full legal name, SSN/Aadhaar, password, credit card, and live webcam video feed",
+    "ground_truth_pii": [
+      { "type": "name", "label": "autocomplete=name", "box": [40, 120, 320, 36] },
+      { "type": "national_id", "label": "regex: ssn/aadhaar", "box": [40, 180, 150, 36] },
+      { "type": "dob", "label": "autocomplete=bday", "box": [210, 180, 150, 36] },
+      { "type": "password", "label": "type=password", "box": [40, 240, 320, 36] },
+      { "type": "card_number", "label": "autocomplete=cc-number", "box": [40, 300, 320, 36] },
+      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [480, 140, 260, 90] }
+    ]
+  },
+  {
+    "id": "case_04",
+    "category": "visual_face",
+    "name": "Single Person Video Call Feed",
+    "description": "Full-screen webcam video feed of remote operator",
+    "ground_truth_pii": [
+      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [240, 150, 480, 140] }
+    ]
+  },
+  {
+    "id": "case_05",
+    "category": "form_pii",
+    "name": "Medical Patient Intake",
+    "description": "Date of birth, social security number, insurance policy ID, emergency phone",
+    "ground_truth_pii": [
+      { "type": "national_id", "label": "regex: ssn", "box": [100, 160, 280, 34] },
+      { "type": "dob", "label": "autocomplete=bday", "box": [100, 210, 280, 34] },
+      { "type": "phone", "label": "autocomplete=tel", "box": [100, 260, 280, 34] }
+    ]
+  },
+  {
+    "id": "case_06",
+    "category": "financial",
+    "name": "Tax / Income Filing Statement",
+    "description": "Annual gross salary, bank account number, IFSC / routing code, PAN card",
+    "ground_truth_pii": [
+      { "type": "salary", "label": "regex: salary", "box": [140, 130, 240, 32] },
+      { "type": "account_number", "label": "regex: account.number", "box": [140, 180, 240, 32] },
+      { "type": "ifsc", "label": "regex: ifsc", "box": [140, 230, 240, 32] },
+      { "type": "pan", "label": "regex: pan", "box": [140, 280, 240, 32] }
+    ]
+  },
+  {
+    "id": "case_07",
+    "category": "visual_face",
+    "name": "Dual Interview Video Conference",
+    "description": "Two video tiles with interviewer and candidate faces visible",
+    "ground_truth_pii": [
+      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [120, 160, 220, 75] },
+      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [420, 160, 220, 75] }
+    ]
+  },
+  {
+    "id": "case_08",
+    "category": "form_pii",
+    "name": "Two-Factor Auth OTP Screen",
+    "description": "6-digit one-time passcode and recovery phone number",
+    "ground_truth_pii": [
+      { "type": "otp", "label": "autocomplete=one-time-code", "box": [180, 210, 200, 42] }
+    ]
+  },
+  {
+    "id": "case_09",
+    "category": "mixed_kyc",
+    "name": "Government Passport Renewal Form",
+    "description": "Passport number, full legal name, expiration date, holder portrait photo",
+    "ground_truth_pii": [
+      { "type": "passport", "label": "regex: passport", "box": [90, 140, 260, 34] },
+      { "type": "name", "label": "autocomplete=name", "box": [90, 190, 260, 34] },
+      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [450, 120, 180, 65] }
+    ]
+  },
+  {
+    "id": "case_10",
+    "category": "financial",
+    "name": "Crypto Wallet Key Recovery",
+    "description": "Secret recovery passphrase / private key textarea and wallet pin",
+    "ground_truth_pii": [
+      { "type": "password", "label": "type=password", "box": [110, 170, 320, 38] },
+      { "type": "pin", "label": "regex: pin", "box": [110, 230, 140, 36] }
+    ]
+  },
+  {
+    "id": "case_11",
+    "category": "form_pii",
+    "name": "Shipping & Delivery Address",
+    "description": "Recipient full name, street address, postal code, mobile number",
+    "ground_truth_pii": [
+      { "type": "name", "label": "autocomplete=name", "box": [70, 110, 310, 34] },
+      { "type": "address", "label": "autocomplete=street-address", "box": [70, 160, 310, 34] },
+      { "type": "postal", "label": "autocomplete=postal-code", "box": [70, 210, 140, 34] },
+      { "type": "phone", "label": "autocomplete=tel", "box": [240, 210, 140, 34] }
+    ]
+  },
+  {
+    "id": "case_12",
+    "category": "visual_face",
+    "name": "Desk Workspace with Person and Cell Phone",
+    "description": "Subject sitting at desk with smartphone and laptop displays",
+    "ground_truth_pii": [
+      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [236, 148, 485, 206] }
+    ]
+  },
+  {
+    "id": "case_13",
+    "category": "negative_control",
+    "name": "Public News Article (Zero PII Baseline)",
+    "description": "Headlines, article body text, and search bar (No PII)",
+    "ground_truth_pii": []
+  },
+  {
+    "id": "case_14",
+    "category": "negative_control",
+    "name": "E-Commerce Public Product Catalog",
+    "description": "Product grid, filters, ratings, and add-to-cart buttons (No PII)",
+    "ground_truth_pii": []
+  },
+  {
+    "id": "case_15",
+    "category": "negative_control",
+    "name": "Public Documentation / Code Viewer",
+    "description": "API documentation and code snippets with public links (No PII)",
+    "ground_truth_pii": []
+  }
+]

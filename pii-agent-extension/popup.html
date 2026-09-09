@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <title>PrivyBrowse-X — Visual Privacy Agent</title>
+  <link rel="stylesheet" href="popup.css" />
+</head>
+<body>
+  <div class="popup">
+    <!-- Header -->
+    <header class="topbar">
+      <div class="brand-badge">
+        <span class="brand-logo">🛡️</span>
+        <div>
+          <h1>PrivyBrowse-X</h1>
+          <span class="tag-sub">ISRO PS #26171 • Zero-Leakage</span>
+        </div>
+      </div>
+      <div class="topbar-actions">
+        <button id="btnOpenHUD" class="btn-hud" title="Launch Dual-Viewport Live HUD" aria-label="Launch Dual-Viewport Live HUD">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="2" y="3" width="20" height="14" rx="2" ry="2"></rect>
+            <line x1="8" y1="21" x2="16" y2="21"></line>
+            <line x1="12" y1="17" x2="12" y2="21"></line>
+          </svg>
+          HUD
+        </button>
+        <button id="btnOpenSidePanel" class="icon-btn" title="Dock to Side Panel" aria-label="Dock to Side Panel">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <rect x="3" y="3" width="18" height="18" rx="2" ry="2"></rect>
+            <line x1="15" y1="3" x2="15" y2="21"></line>
+          </svg>
+        </button>
+      </div>
+    </header>
+
+    <!-- Protection Hero -->
+    <section class="hero-card">
+      <div class="hero-main">
+        <div class="hero-left">
+          <button id="toggleProtection" class="hero-toggle active" data-state="on" aria-pressed="true" aria-label="Toggle protection">
+            <span class="hero-toggle-track"><span class="hero-toggle-thumb"></span></span>
+          </button>
+          <div>
+            <div class="status-row">
+              <span class="status-glow"></span>
+              <p class="hero-status" id="statusText">Shield Active</p>
+            </div>
+            <p class="hero-desc">Zero raw pixels exit device. Passwords, biometric faces, & credentials obliterated on offscreen canvas.</p>
+          </div>
+        </div>
+      </div>
+      <div class="hero-metric-bar">
+        <div class="pill-metric">
+          <span class="metric-dot live"></span>
+          <span id="basicCount">Scanning visual regions…</span>
+        </div>
+        <span class="assurance-pill">🔒 100% Zero-Leakage</span>
+      </div>
+    </section>
+
+    <!-- Autonomous Task Panel -->
+    <section class="panel prompt-panel">
+      <div class="panel-header">
+        <label class="field-label" for="taskInput">⚡ Autonomous Agent Directive</label>
+        <span id="lblServerStatus" class="status-badge online">FastAPI Ready</span>
+      </div>
+      <div class="field-row">
+        <input
+          type="text"
+          id="taskInput"
+          class="input"
+          placeholder="e.g. Search Chandrayaan-3 and inspect telemetry"
+        />
+        <button id="btnDispatchTask" class="btn-primary">
+          <span>Dispatch</span>
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+            <line x1="5" y1="12" x2="19" y2="12"></line>
+            <polyline points="12 5 19 12 12 19"></polyline>
+          </svg>
+        </button>
+      </div>
+      <div id="stepFeed" class="step-feed"></div>
+    </section>
+
+    <!-- Advanced Settings Accordion -->
+    <label class="advanced-toggle-bar">
+      <div class="adv-label">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+          <circle cx="12" cy="12" r="3"></circle>
+          <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path>
+        </svg>
+        <span>Telemetry & Reasoner Config</span>
+      </div>
+      <span class="switch">
+        <input type="checkbox" id="chkAdvanced" />
+        <span class="switch-track"><span class="switch-thumb"></span></span>
+      </span>
+    </label>
+
+    <div class="advanced-panel" id="advancedPanel">
+      <div class="advanced-inner">
+        <!-- Reasoner Configuration -->
+        <section class="panel config-box">
+          <div class="field-row space-between">
+            <div>
+              <span class="field-label-inline">VLM / LLM Reasoner</span>
+              <span class="field-desc">Decision planning backend</span>
+            </div>
+            <select id="selModelProvider" class="select">
+              <option value="auto">⚡ Auto (Best Available)</option>
+              <option value="ollama_qwen">🛡️ Ollama: isro-privacy-qwen (Local)</option>
+              <option value="gemini">☁️ Google Gemini 2.5 Flash</option>
+              <option value="nlp">🔌 Offline Semantic Engine</option>
+            </select>
+          </div>
+        </section>
+
+        <!-- Quick Action Buttons -->
+        <section class="panel actions-row">
+          <button id="btnCapture" class="btn-ghost">📷 Capture</button>
+          <button id="btnHighlightDOM" class="btn-ghost">🎯 Highlight</button>
+          <button id="btnClearOverlays" class="btn-ghost">🧹 Clear</button>
+          <button id="btnAutoSync" class="btn-ghost">📡 Live Sync</button>
+        </section>
+
+        <!-- Real-Time Sanitized Preview -->
+        <details class="panel disclosure" open>
+          <summary>
+            <div class="disclosure-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"></path>
+                <circle cx="12" cy="12" r="3"></circle>
+              </svg>
+              <span>Sanitized Frame Preview</span>
+            </div>
+            <span id="redactionCountPill" class="count-badge">0 masked</span>
+          </summary>
+          <div class="disclosure-body">
+            <div class="segmented">
+              <button id="btnViewSanitized" class="seg active">🛡️ Sanitized (Server View)</button>
+              <button id="btnViewRaw" class="seg">👁️ Raw (Client Only)</button>
+            </div>
+            <div class="viewport">
+              <img id="displayImage" class="viewport-img" alt="Captured viewport" />
+              <div id="viewportPlaceholder" class="placeholder">
+                <div class="placeholder-icon">📸</div>
+                <div>Awaiting capture... Click "Capture" or dispatch an agent directive.</div>
+              </div>
+            </div>
+            <div id="visualRedactionList" class="detected-list">
+              <div class="muted">No sensitive entities detected on current viewport.</div>
+            </div>
+          </div>
+        </details>
+
+        <!-- Activity Telemetry Log -->
+        <details class="panel disclosure">
+          <summary>
+            <div class="disclosure-title">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <polyline points="22 12 18 12 15 21 9 3 6 12 2 12"></polyline>
+              </svg>
+              <span>Perception Activity Log</span>
+            </div>
+          </summary>
+          <div id="agentStatusLog" class="log">
+            <div class="log-entry">System ready. Zero-leakage boundaries armed.</div>
+          </div>
+        </details>
+
+        <div class="footer-inline">
+          <span id="linkOpenDemo" class="link">🧪 Open ISRO Test Lab Demo</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <span id="linkOpenDashboard" class="link">📊 Analytics Hub</span>
+      <span class="footer-dot">•</span>
+      <span id="linkOpenOptions" class="link">⚙️ Vault & Policies</span>
+    </footer>
+  </div>
+
+  <script type="module" src="popup.js"></script>
+</body>
+</html>

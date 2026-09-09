@@ -1,0 +1,264 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>PriviBrowse-X — Analytics & Privacy Assurance Dashboard</title>
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+  <div class="dashboard-layout">
+    <!-- Top Header -->
+    <header class="dashboard-header">
+      <div class="brand-group">
+        <div class="shield-badge">🛡️</div>
+        <div>
+          <div class="title-row">
+            <h1>PriviBrowse-X Analytics</h1>
+            <span class="badge-tag">ISRO PS #26171</span>
+          </div>
+          <p class="subtitle">Real-time telemetry, on-device perception metrics, and zero-leakage verification</p>
+        </div>
+      </div>
+      <div class="header-actions">
+        <button id="btnRefresh" class="btn btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+          </svg>
+          Refresh
+        </button>
+        <button id="btnExportLogs" class="btn btn-secondary">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+            <polyline points="7 10 12 15 17 10"></polyline>
+            <line x1="12" y1="15" x2="12" y2="3"></line>
+          </svg>
+          Export Audit JSON
+        </button>
+        <button id="btnOpenOptions" class="btn btn-primary">Settings</button>
+      </div>
+    </header>
+
+    <!-- Key Metrics Ribbon -->
+    <section class="metrics-grid">
+      <div class="metric-card">
+        <div class="metric-icon red">🔒</div>
+        <div class="metric-body">
+          <span class="metric-label">Shielded Entities</span>
+          <span class="metric-val" id="metricTotalShielded">0</span>
+          <span class="metric-sub">0 raw pixels exported</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon green">🛡️</div>
+        <div class="metric-body">
+          <span class="metric-label">Zero-Leakage Assurance</span>
+          <span class="metric-val" id="metricAssuranceRate">100%</span>
+          <span class="metric-sub">Fail-closed air-gapped</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon cyan">⚡</div>
+        <div class="metric-body">
+          <span class="metric-label">Mean Perception Latency</span>
+          <span class="metric-val" id="metricAvgLatency">38 ms</span>
+          <span class="metric-sub">On-device WebGPU accelerated</span>
+        </div>
+      </div>
+      <div class="metric-card">
+        <div class="metric-icon purple">🧠</div>
+        <div class="metric-body">
+          <span class="metric-label">Qwen Local Evaluations</span>
+          <span class="metric-val" id="metricQwenDecisions">0</span>
+          <span class="metric-sub">Selective local ambiguity model</span>
+        </div>
+      </div>
+    </section>
+
+    <!-- Visual Charts Grid -->
+    <div class="charts-grid">
+      <!-- PII Category Donut Chart -->
+      <section class="card chart-card">
+        <div class="card-header">
+          <div>
+            <h3>PII Category Distribution</h3>
+            <p class="card-desc">Breakdown of shielded entities across active browser sessions</p>
+          </div>
+          <span class="pill-badge" id="pillTotalEntities">0 Total</span>
+        </div>
+        <div class="donut-chart-container">
+          <div class="donut-wrapper">
+            <svg id="svgDonut" class="donut-svg" viewBox="0 0 240 240">
+              <circle cx="120" cy="120" r="80" fill="none" stroke="#1a1e26" stroke-width="32"></circle>
+              <!-- Dynamic SVG slices injected by dashboard.js -->
+            </svg>
+            <div class="donut-center-label">
+              <span class="donut-count" id="donutTotalCount">0</span>
+              <span class="donut-sub">Entities</span>
+            </div>
+          </div>
+          <div class="donut-legend" id="donutLegend">
+            <!-- Dynamic legend injected by dashboard.js -->
+          </div>
+        </div>
+      </section>
+
+      <!-- Zero-Leakage Assurance Gauge & Hardware Health -->
+      <section class="card gauge-card">
+        <div class="card-header">
+          <div>
+            <h3>Security Assurance & Hardware Stack</h3>
+            <p class="card-desc">Verified client-side enforcement integrity</p>
+          </div>
+          <span class="status-indicator-live">● Active</span>
+        </div>
+
+        <div class="gauge-wrapper">
+          <svg class="gauge-svg" viewBox="0 0 200 120">
+            <!-- Gauge arc background -->
+            <path d="M 20 110 A 80 80 0 0 1 180 110" fill="none" stroke="#1a1e26" stroke-width="18" stroke-linecap="round"/>
+            <!-- Gauge active arc (100%) -->
+            <path id="gaugeArc" d="M 20 110 A 80 80 0 0 1 180 110" fill="none" stroke="#10b981" stroke-width="18" stroke-linecap="round"
+                  stroke-dasharray="251.2" stroke-dashoffset="0"/>
+            <text x="100" y="95" text-anchor="middle" class="gauge-text">100%</text>
+            <text x="100" y="112" text-anchor="middle" class="gauge-sub">Zero-Leakage Guarantee</text>
+          </svg>
+        </div>
+
+        <div class="hardware-stack-list">
+          <div class="stack-item">
+            <span class="stack-icon">⚙️</span>
+            <div class="stack-info">
+              <span class="stack-name">DOM Sanitization Engine</span>
+              <span class="stack-status green">Active • Top-Frame Target</span>
+            </div>
+          </div>
+          <div class="stack-item">
+            <span class="stack-icon">⚡</span>
+            <div class="stack-info">
+              <span class="stack-name">WebGPU Canvas Redactor</span>
+              <span class="stack-status green" id="lblWebGPUStatus">Ready • Cryptographic SHA-256</span>
+            </div>
+          </div>
+          <div class="stack-item">
+            <span class="stack-icon">🧠</span>
+            <div class="stack-info">
+              <span class="stack-name">Qwen Local Ambiguity Reasoner</span>
+              <span class="stack-status cyan" id="lblQwenStatus">Ollama / Fastpath Fallback</span>
+            </div>
+          </div>
+          <div class="stack-item">
+            <span class="stack-icon">🛡️</span>
+            <div class="stack-info">
+              <span class="stack-name">Prompt-Guard & Vault</span>
+              <span class="stack-status green">Enforcing • Fail-Closed</span>
+            </div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <!-- Perception Layer Latency Waterfall -->
+    <section class="card waterfall-card">
+      <div class="card-header">
+        <div>
+          <h3>Perception Pipeline Latency Breakdown</h3>
+          <p class="card-desc">Sub-second execution budgets across perception and reasoning tiers</p>
+        </div>
+        <span class="pill-badge" id="lblTotalPipelineLatency">~42 ms Total</span>
+      </div>
+
+      <div class="waterfall-bars">
+        <div class="waterfall-row">
+          <div class="bar-meta">
+            <span class="bar-title">1. DOM Heuristic Scanner</span>
+            <span class="bar-val" id="latDom">3 ms</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill cyan" style="width: 8%;"></div>
+          </div>
+        </div>
+        <div class="waterfall-row">
+          <div class="bar-meta">
+            <span class="bar-title">2. MediaPipe Face & Biometrics</span>
+            <span class="bar-val" id="latFace">24 ms</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill green" style="width: 32%;"></div>
+          </div>
+        </div>
+        <div class="waterfall-row">
+          <div class="bar-meta">
+            <span class="bar-title">3. OCR Text Spotting</span>
+            <span class="bar-val" id="latOcr">45 ms</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill amber" style="width: 48%;"></div>
+          </div>
+        </div>
+        <div class="waterfall-row">
+          <div class="bar-meta">
+            <span class="bar-title">4. Qwen Local Reasoner</span>
+            <span class="bar-val" id="latQwen">75 ms</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill purple" style="width: 60%;"></div>
+          </div>
+        </div>
+        <div class="waterfall-row">
+          <div class="bar-meta">
+            <span class="bar-title">5. Canvas Cryptographic Redaction</span>
+            <span class="bar-val" id="latCanvas">8 ms</span>
+          </div>
+          <div class="bar-track">
+            <div class="bar-fill red" style="width: 12%;"></div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Compliance Audit Stream Table -->
+    <section class="card audit-card">
+      <div class="card-header">
+        <div>
+          <h3>Compliance Audit Stream</h3>
+          <p class="card-desc">Tamper-evident verification log of redacted entities and agent actions</p>
+        </div>
+        <button id="btnClearLogs" class="btn btn-danger-ghost">Clear Log</button>
+      </div>
+
+      <div class="table-container">
+        <table class="audit-table">
+          <thead>
+            <tr>
+              <th>Timestamp</th>
+              <th>Task / Event</th>
+              <th>Action Type</th>
+              <th>Engine / Model</th>
+              <th>Redactions</th>
+              <th>Latency</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody id="auditTableBody">
+            <tr>
+              <td colspan="7" class="empty-state">Loading audit history...</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer class="dashboard-footer">
+      <span>PriviBrowse-X • Visual Perception Privacy Agent for Autonomous Browser Automation</span>
+      <span class="footer-separator">•</span>
+      <span>ISRO PS #26171</span>
+      <span class="footer-separator">•</span>
+      <span>Zero-Leakage Guarantee Verified</span>
+    </footer>
+  </div>
+
+  <script type="module" src="dashboard.js"></script>
+</body>
+</html>
