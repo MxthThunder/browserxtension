@@ -167,13 +167,21 @@ def health_check():
     return {
         "status": "healthy",
         "service": "ISRO PS #26171 VLM Reasoning Server",
-        "version": "2.0.0 (Universal Prompt NLP Engine)",
+        "version": "2.1.0 (Hardened Pipeline)",
         "redaction_aware": True,
         "supported_actions": ["click", "type", "scroll", "select", "submit", "wait", "navigate", "finish"],
+        "architecture": {
+            "privacy_classification": "On-device (Qwen/Ollama) — zero leakage guaranteed",
+            "action_planning": "Gemini (primary) → Ollama (fallback) → NLP engine (offline)",
+        },
         "api_providers": {
             "gemini": bool(os.getenv("GEMINI_API_KEY")),
+            "gemini_model": os.getenv("GEMINI_MODEL", "gemini-2.0-flash"),
             "openai": bool(os.getenv("OPENAI_API_KEY")),
-            "ollama_qwen": bool(os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")),
+            # FIX §5E: Report actual discovered Ollama model, not just True/False
+            "ollama_online": _ollama_online,
+            "ollama_model": _ollama_best_model or os.getenv("OLLAMA_MODEL", "isro-privacy-qwen:latest"),
+            "ollama_host": ollama_host,
             "universal_nlp_engine": True,
         },
     }
@@ -217,28 +225,62 @@ async def websocket_telemetry_endpoint(websocket: WebSocket):
         pass
 
 
-# Cache Ollama availability state to prevent network timeout latency
+# Cache Ollama availability + best model to prevent repeated network latency
 _ollama_checked = False
 _ollama_online = False
+_ollama_best_model: Optional[str] = None
 _last_ollama_check_time = 0
 
 async def is_ollama_available(ollama_host: str) -> bool:
-    global _ollama_checked, _ollama_online, _last_ollama_check_time
+    global _ollama_checked, _ollama_online, _ollama_best_model, _last_ollama_check_time
     now = time.time()
     # Cache result for 30 seconds
     if _ollama_checked and (now - _last_ollama_check_time < 30):
         return _ollama_online
 
     try:
-        async with httpx.AsyncClient(timeout=0.15) as client:
+        # FIX BUG-03: Raised from 0.15s (150ms) → 2.5s to handle Ollama cold-start latency
+        async with httpx.AsyncClient(timeout=2.5) as client:
             resp = await client.get(f"{ollama_host}/api/tags")
-            _ollama_online = (resp.status_code == 200)
+            if resp.status_code == 200:
+                _ollama_online = True
+                # Discover and cache the best available model
+                data = resp.json()
+                names = [(m.get("name") or "").lower() for m in (data.get("models") or [])]
+                _ollama_best_model = _pick_best_ollama_model(names)
+                print(f"[Ollama] Available. Best model: {_ollama_best_model}")
+            else:
+                _ollama_online = False
+                _ollama_best_model = None
     except Exception:
         _ollama_online = False
+        _ollama_best_model = None
 
     _ollama_checked = True
     _last_ollama_check_time = now
     return _ollama_online
+
+
+def _pick_best_ollama_model(names: list) -> str:
+    """Pick the best available Ollama model from a list of installed model names."""
+    # Priority 1: Custom ISRO fine-tuned model
+    for n in names:
+        if "isro-privacy-qwen" in n:
+            return n
+    # Priority 2: Qwen 1.5B
+    for n in names:
+        if "qwen2.5:1.5b" in n or "qwen2.5-1.5b" in n:
+            return n
+    # Priority 3: Qwen 0.5B
+    for n in names:
+        if "qwen2.5:0.5b" in n or "qwen2.5-0.5b" in n:
+            return n
+    # Priority 4: Any Qwen model
+    for n in names:
+        if "qwen" in n:
+            return n
+    # Fallback: first available model
+    return names[0] if names else "isro-privacy-qwen:latest"
 
 
 async def try_ollama_qwen(
@@ -258,7 +300,9 @@ async def try_ollama_qwen(
     if not await is_ollama_available(ollama_host):
         return None
 
-    model = os.getenv("OLLAMA_MODEL", "qwen2.5:1.5b")
+    # FIX BUG-04: Use dynamic model discovery; env var overrides if set
+    model = os.getenv("OLLAMA_MODEL") or _ollama_best_model or "isro-privacy-qwen:latest"
+    print(f"[Ollama] Using model: {model} for action planning.")
 
     elements_digest = [
         {
@@ -294,7 +338,7 @@ async def try_ollama_qwen(
         "2. To explore more results, use type: 'scroll', value: 'down'.\n"
         "3. Once best product is found, use type: 'finish' with your recommendation summary in explanation.\n"
         "4. If 'REAL-TIME TELEMETRY & STRUCTURED DATA' is provided below, treat those values as verified exact parameters.\n"
-        "Respond strictly with JSON: "
+        "Respond strictly with JSON (no markdown): "
         '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
         '"selector": "CSS selector or element id", "value": "text or scroll direction", '
         '"explanation": "reasoning and findings", "confidence": 0.0-1.0}'
@@ -306,7 +350,8 @@ async def try_ollama_qwen(
         "model": model,
         "prompt": f"{system_prompt}\n\n{user_prompt}",
         "stream": False,
-        "format": "json"
+        "format": "json",
+        "keep_alive": -1,  # FIX BUG-05: Keep model in VRAM between agent steps
     }
 
     try:
@@ -314,16 +359,25 @@ async def try_ollama_qwen(
             resp = await client.post(f"{ollama_host}/api/generate", json=payload)
             if resp.status_code == 200:
                 data = resp.json()
-                raw_json = json.loads(data.get("response", "{}"))
+                # FIX §5B: Strip markdown fences before JSON parsing
+                raw = data.get("response", "{}").strip()
+                raw = re.sub(r'^```json\s*', '', raw, flags=re.I)
+                raw = re.sub(r'\s*```$', '', raw).strip()
+                try:
+                    raw_json = json.loads(raw)
+                except json.JSONDecodeError:
+                    print(f"[Ollama] JSON parse error. Raw response: {raw[:200]}")
+                    return None
                 if "type" in raw_json:
                     return ActionOutput(
                         type=raw_json.get("type", "finish"),
                         selector=raw_json.get("selector"),
                         value=raw_json.get("value"),
-                        explanation=f"[Qwen] " + raw_json.get("explanation", "Action planned by local model."),
+                        explanation="[Qwen] " + raw_json.get("explanation", "Action planned by local model."),
                         confidence=float(raw_json.get("confidence", 0.92))
                     )
-    except Exception:
+    except Exception as e:
+        print(f"[Ollama] Request error: {e}")
         return None
     return None
 
@@ -409,9 +463,10 @@ async def try_gemini(
             }
         })
 
-    primary_model = os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")
+    # FIX §5A: Use verified available Gemini model names only
+    primary_model = os.getenv("GEMINI_MODEL", "gemini-2.0-flash")
     candidate_models = [primary_model]
-    for fallback in ["gemini-3.5-flash-lite", "gemini-3.7-flash", "gemini-3.1-flash-lite", "gemini-3.6-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+    for fallback in ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-flash-8b", "gemini-1.5-pro"]:
         if fallback not in candidate_models:
             candidate_models.append(fallback)
 
@@ -879,6 +934,157 @@ async def act_endpoint(payload: ActRequest):
     )
 
 
+
+# ── Privacy Classification Endpoint ──────────────────────────────────────────
+
+class ClassifyRequest(BaseModel):
+    elements: List[DOMElement]
+    task: Optional[str] = "General Web Navigation"
+
+
+class ClassifyDecision(BaseModel):
+    element_id: Optional[str]
+    decision: str           # ALLOW | REDACT | BLOCK | LOCAL_ONLY
+    reason: str
+    confidence: float
+
+
+class ClassifyResponse(BaseModel):
+    decisions: List[ClassifyDecision]
+    model_used: str
+    latency_ms: float
+
+
+PRIVACY_CLASSIFY_SYSTEM = (
+    "You are an on-device zero-leakage privacy filter for an autonomous browser agent.\n"
+    "Classify each web element as ALLOW, REDACT, BLOCK, or LOCAL_ONLY.\n"
+    "ALLOW: Public info, search queries, navigation links, safe buttons.\n"
+    "REDACT: Names, email, phone, address, Aadhaar, PAN, govt IDs, account numbers.\n"
+    "BLOCK: Passwords, PINs, OTP, CVV, private keys, auth tokens, seed phrases. ALWAYS block credentials.\n"
+    "LOCAL_ONLY: Account settings or vault-scoped inputs handled strictly on-device.\n"
+    "Respond ONLY with raw JSON (no markdown): "
+    "{\"decisions\": [{\"id\": \"element_id\", \"decision\": \"ALLOW|REDACT|BLOCK|LOCAL_ONLY\", "
+    "\"reason\": \"brief rationale\", \"confidence\": 0.0-1.0}]}"
+)
+
+
+def _fallback_classify_element(el: DOMElement) -> ClassifyDecision:
+    """Rule-based fallback classifier when Ollama is unavailable."""
+    text = f"{el.name} {el.id} {el.text} {el.type} {el.role}".lower()
+    if el.type == "password" or any(k in text for k in ["password", "secret", "pin", "cvv", "otp", "token", "private key"]):
+        return ClassifyDecision(element_id=el.id, decision="BLOCK", reason="Credential/auth field", confidence=0.99)
+    if any(k in text for k in ["aadhaar", "pan", "email", "phone", "mobile", "address", "ssn", "passport", "gov"]):
+        return ClassifyDecision(element_id=el.id, decision="REDACT", reason="Personal identifier field", confidence=0.92)
+    if el.type in ["text", "email", "tel", "number"] and any(k in text for k in ["name", "first", "last", "full"]):
+        return ClassifyDecision(element_id=el.id, decision="REDACT", reason="Name field", confidence=0.88)
+    return ClassifyDecision(element_id=el.id, decision="ALLOW", reason="Non-sensitive field", confidence=0.80)
+
+
+@app.post("/api/classify", response_model=ClassifyResponse)
+async def classify_endpoint(payload: ClassifyRequest):
+    """
+    On-device privacy classification using local Qwen/Ollama.
+    This endpoint NEVER sends data to cloud — Qwen runs strictly locally.
+    Used by the agent loop to resolve ambiguous DOM elements before redaction.
+    """
+    start_time = time.perf_counter()
+    ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+    model_used = "rule-based-fallback"
+    decisions: List[ClassifyDecision] = []
+
+    elements_text = "\n".join([
+        f"{i+1}. ID:\"{el.id or f'el_{i+1}'}\" Tag:<{el.tag}> Type:{el.type or 'text'} "
+        f"Name:\"{el.name or ''}\" Label:\"{el.text or ''}\" Role:\"{el.role or ''}\""
+        for i, el in enumerate(payload.elements[:20])
+    ])
+
+    if await is_ollama_available(ollama_host):
+        model = os.getenv("OLLAMA_MODEL") or _ollama_best_model or "isro-privacy-qwen:latest"
+        classify_prompt = (
+            f"{PRIVACY_CLASSIFY_SYSTEM}\n\n"
+            f"User Task: {payload.task}\n\n"
+            f"Elements to classify:\n{elements_text}"
+        )
+        try:
+            async with httpx.AsyncClient(timeout=20.0) as client:
+                resp = await client.post(
+                    f"{ollama_host}/api/generate",
+                    json={"model": model, "prompt": classify_prompt, "stream": False,
+                          "format": "json", "keep_alive": -1}
+                )
+                if resp.status_code == 200:
+                    raw = resp.json().get("response", "{}").strip()
+                    raw = re.sub(r'^```json\s*', '', raw, flags=re.I)
+                    raw = re.sub(r'\s*```$', '', raw).strip()
+                    parsed = json.loads(raw)
+                    for d in (parsed.get("decisions") or []):
+                        decisions.append(ClassifyDecision(
+                            element_id=str(d.get("id", "")),
+                            decision=str(d.get("decision", "ALLOW")).upper(),
+                            reason=d.get("reason", ""),
+                            confidence=float(d.get("confidence", 0.9))
+                        ))
+                    model_used = f"ollama-{model}"
+        except Exception as e:
+            print(f"[Classify] Ollama error: {e}")
+
+    # Fill missing elements with rule-based fallback
+    classified_ids = {d.element_id for d in decisions}
+    for el in payload.elements:
+        if (el.id or "") not in classified_ids:
+            decisions.append(_fallback_classify_element(el))
+
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    return ClassifyResponse(decisions=decisions, model_used=model_used, latency_ms=round(elapsed_ms, 2))
+
+
+# ── Qwen Raw Prompt Test Endpoint ─────────────────────────────────────────────
+
+class QwenTestRequest(BaseModel):
+    prompt: str
+    model: Optional[str] = None
+
+
+class QwenTestResponse(BaseModel):
+    raw_response: str
+    model: str
+    latency_ms: float
+    ollama_online: bool
+
+
+@app.post("/api/qwen-test", response_model=QwenTestResponse)
+async def qwen_test_endpoint(payload: QwenTestRequest):
+    """
+    Send a raw prompt directly to the local Qwen/Ollama model and get the raw response.
+    Used for debugging accuracy and testing prompt engineering. Strictly on-device.
+    """
+    start_time = time.perf_counter()
+    ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+
+    if not await is_ollama_available(ollama_host):
+        return QwenTestResponse(
+            raw_response="ERROR: Ollama is not available at " + ollama_host,
+            model="none",
+            latency_ms=round((time.perf_counter() - start_time) * 1000, 2),
+            ollama_online=False
+        )
+
+    model = payload.model or os.getenv("OLLAMA_MODEL") or _ollama_best_model or "isro-privacy-qwen:latest"
+    try:
+        async with httpx.AsyncClient(timeout=30.0) as client:
+            resp = await client.post(
+                f"{ollama_host}/api/generate",
+                json={"model": model, "prompt": payload.prompt, "stream": False, "keep_alive": -1}
+            )
+            raw = resp.json().get("response", "") if resp.status_code == 200 else f"HTTP {resp.status_code}"
+    except Exception as e:
+        raw = f"ERROR: {e}"
+
+    elapsed_ms = (time.perf_counter() - start_time) * 1000
+    return QwenTestResponse(raw_response=raw, model=model, latency_ms=round(elapsed_ms, 2), ollama_online=True)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="127.0.0.1", port=8001)
+

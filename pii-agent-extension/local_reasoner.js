@@ -55,28 +55,50 @@ export class LocalPrivacyReasoner {
    */
   async getPreferredOllamaModel() {
     if (this._cachedOllamaModel) return this._cachedOllamaModel;
-    try {
-      const resp = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(1200) });
-      if (resp.ok) {
-        const data = await resp.json();
-        const names = (data.models || []).map((m) => (m.name || "").toLowerCase());
-        if (names.some((n) => n.includes("isro-privacy-qwen"))) {
-          this._cachedOllamaModel = "isro-privacy-qwen";
-          return "isro-privacy-qwen";
+
+    // Try up to 2 times — first attempt + 1 retry after 1s (handles Ollama cold start)
+    for (let attempt = 0; attempt < 2; attempt++) {
+      try {
+        if (attempt > 0) await new Promise((r) => setTimeout(r, 1000));
+        // FIX BUG-01: Raised from 1200ms → 3000ms to handle Ollama cold-start latency
+        const resp = await fetch("http://127.0.0.1:11434/api/tags", { signal: AbortSignal.timeout(3000) });
+        if (resp.ok) {
+          const data = await resp.json();
+          const names = (data.models || []).map((m) => (m.name || "").toLowerCase());
+          // Priority 1: Custom fine-tuned ISRO model
+          if (names.some((n) => n.includes("isro-privacy-qwen"))) {
+            this._cachedOllamaModel = "isro-privacy-qwen:latest";
+            console.log("[LocalReasoner] Selected model: isro-privacy-qwen:latest");
+            return "isro-privacy-qwen:latest";
+          }
+          // Priority 2: Qwen 1.5B
+          if (names.some((n) => n.includes("qwen2.5:1.5b") || n.includes("qwen2.5-1.5b"))) {
+            this._cachedOllamaModel = "qwen2.5:1.5b";
+            console.log("[LocalReasoner] Selected model: qwen2.5:1.5b");
+            return "qwen2.5:1.5b";
+          }
+          // Priority 3: Qwen 0.5B
+          if (names.some((n) => n.includes("qwen2.5:0.5b") || n.includes("qwen2.5-0.5b"))) {
+            this._cachedOllamaModel = "qwen2.5:0.5b";
+            console.log("[LocalReasoner] Selected model: qwen2.5:0.5b");
+            return "qwen2.5:0.5b";
+          }
+          // Priority 4: Any qwen model found
+          const anyQwen = names.find((n) => n.includes("qwen"));
+          if (anyQwen) {
+            this._cachedOllamaModel = anyQwen;
+            console.log(`[LocalReasoner] Selected model (generic qwen): ${anyQwen}`);
+            return anyQwen;
+          }
         }
-        if (names.some((n) => n.includes("qwen2.5:1.5b") || n.includes("qwen2.5-1.5b"))) {
-          this._cachedOllamaModel = "qwen2.5:1.5b";
-          return "qwen2.5:1.5b";
-        }
-        if (names.some((n) => n.includes("qwen2.5:0.5b") || n.includes("qwen2.5-0.5b"))) {
-          this._cachedOllamaModel = "qwen2.5:0.5b";
-          return "qwen2.5:0.5b";
-        }
+      } catch {
+        // Ollama offline or unreachable — retry once, then fall back
+        if (attempt === 0) console.warn("[LocalReasoner] Ollama /api/tags check failed, retrying in 1s...");
       }
-    } catch {
-      // Ollama offline or unreachable - don't cache so it retries when Ollama boots
     }
-    return "qwen2.5:1.5b";
+
+    console.warn("[LocalReasoner] Ollama unreachable — using fastpath fallback reasoning.");
+    return "isro-privacy-qwen:latest"; // Best-effort default without confirming availability
   }
 
   /**
