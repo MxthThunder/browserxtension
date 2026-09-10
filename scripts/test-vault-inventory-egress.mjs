@@ -12,7 +12,9 @@
 import fs from 'node:fs';
 
 const SRC = 'C:/BrowserExt/browserxtension-2-working/pii-agent-extension/agent_loop.js';
-const src = fs.readFileSync(SRC, 'utf8');
+// Normalised to LF: git renormalises the extension files to CRLF on a Windows
+// checkout, which breaks every newline-anchored slice below.
+const src = fs.readFileSync(SRC, 'utf8').split('\r\n').join('\n');
 
 // Lift listVaultTokenPaths out of the module (it imports browser-only deps).
 const start = src.indexOf('const VAULT_PATH_RE');

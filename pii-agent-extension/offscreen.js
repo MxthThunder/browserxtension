@@ -181,31 +181,129 @@ initFaceDetector().catch((err) => console.log("[Offscreen] BlazeFace pre-warm st
 
 
 
-/**
- * Run MediaPipe face detection on a decoded HTMLImageElement.
- * Returns an array of { x, y, w, h, score } boxes.
- */
-function detectFaces(img, imgWidth, imgHeight) {
-  if (!faceDetector || !faceDetectorReady) return [];
-  try {
-    const result = faceDetector.detect(img);
-    return (result.detections || []).map((d) => {
-      const bb = d.boundingBox;
-      return {
-        source:     "MediaPipe-Face",
-        label:      "Face",
-        category:   "faces",
-        confidence: d.categories?.[0]?.score ?? 0.9,
-        x: Math.round(bb.originX),
-        y: Math.round(bb.originY),
-        w: Math.round(bb.width),
-        h: Math.round(bb.height),
-      };
-    });
-  } catch (err) {
-    console.warn("[Offscreen] MediaPipe detect() error:", err.message);
-    return [];
+/* ── Face detection scale problem ──────────────────────────────────────────
+   `blaze_face_short_range` takes a 128x128 input, and MediaPipe scales whatever
+   you hand it down to that. A full-page screenshot is ~2560px wide, so a face in
+   an article thumbnail (~70px) arrives at the model about 3px across and is
+   simply not there any more — which is why a page full of visible faces reported
+   zero detections.
+
+   The frame is therefore also scanned in overlapping tiles. At a 512px tile that
+   same 70px face lands at ~17px in model space, which is comfortably detectable.
+   The whole-frame pass is kept as well: it is cheap and catches a close-up face
+   that would otherwise be split across tiles. */
+const FACE_TILE_PX       = 512;   // source pixels per tile
+const FACE_TILE_OVERLAP  = 0.25;  // so a face on a seam still lands whole in one tile
+const FACE_TILE_MAX      = 30;
+const FACE_TILE_BUDGET_MS = 1500;
+const FACE_DEDUPE_IOU    = 0.35;
+
+function boxIoU(a, b) {
+  const x1 = Math.max(a.x, b.x);
+  const y1 = Math.max(a.y, b.y);
+  const x2 = Math.min(a.x + a.w, b.x + b.w);
+  const y2 = Math.min(a.y + a.h, b.y + b.h);
+  const inter = Math.max(0, x2 - x1) * Math.max(0, y2 - y1);
+  if (inter <= 0) return 0;
+  const union = a.w * a.h + b.w * b.h - inter;
+  return union > 0 ? inter / union : 0;
+}
+
+/** The same face seen in two overlapping tiles must count once. */
+function dedupeFaces(boxes) {
+  const kept = [];
+  for (const box of boxes.sort((p, q) => q.confidence - p.confidence)) {
+    if (!kept.some((k) => boxIoU(k, box) > FACE_DEDUPE_IOU)) kept.push(box);
   }
+  return kept;
+}
+
+/**
+ * Overlapping tile rects covering the frame, largest-first coverage order.
+ * Pure so the geometry can be verified without a canvas.
+ */
+function computeFaceTiles(imgWidth, imgHeight) {
+  if (imgWidth <= FACE_TILE_PX * 1.2 && imgHeight <= FACE_TILE_PX * 1.2) return [];
+  const step = Math.max(64, Math.round(FACE_TILE_PX * (1 - FACE_TILE_OVERLAP)));
+  const tiles = [];
+  for (let y = 0; y < imgHeight; y += step) {
+    for (let x = 0; x < imgWidth; x += step) {
+      const w = Math.min(FACE_TILE_PX, imgWidth - x);
+      const h = Math.min(FACE_TILE_PX, imgHeight - y);
+      if (w < 96 || h < 96) continue;   // a strip this thin holds no usable face
+      tiles.push({ x, y, w, h });
+      if (tiles.length >= FACE_TILE_MAX) return tiles;
+    }
+  }
+  return tiles;
+}
+
+function mapDetections(result, offsetX, offsetY) {
+  return (result?.detections || []).map((d) => {
+    const bb = d.boundingBox;
+    return {
+      source:     "MediaPipe-Face",
+      label:      "Face",
+      category:   "faces",
+      confidence: d.categories?.[0]?.score ?? 0.9,
+      x: Math.round(bb.originX + offsetX),
+      y: Math.round(bb.originY + offsetY),
+      w: Math.round(bb.width),
+      h: Math.round(bb.height),
+    };
+  });
+}
+
+/**
+ * Run MediaPipe face detection over a decoded frame.
+ * Returns an array of { source, label, category, confidence, x, y, w, h } boxes
+ * in full-frame coordinates.
+ */
+async function detectFaces(img, imgWidth, imgHeight) {
+  if (!faceDetector || !faceDetectorReady) return [];
+
+  const found = [];
+
+  // Pass 1 — whole frame. Cheap, and the only pass that can see a face spanning
+  // more than one tile.
+  try {
+    found.push(...mapDetections(faceDetector.detect(img), 0, 0));
+  } catch (err) {
+    console.warn("[Offscreen] MediaPipe detect() error (full frame):", err.message);
+  }
+
+  // Pass 2 — overlapping tiles, so small faces survive the model's downscale.
+  const tiles = computeFaceTiles(imgWidth, imgHeight);
+  if (tiles.length) {
+    const started = performance.now();
+    let scanned = 0;
+
+    const canvas = new OffscreenCanvas(FACE_TILE_PX, FACE_TILE_PX);
+    const context = canvas.getContext("2d", { willReadFrequently: true });
+
+    for (const tile of tiles) {
+      if (performance.now() - started > FACE_TILE_BUDGET_MS) {
+        logEvent("offscreen", `Face tiling budget reached after ${scanned}/${tiles.length} tile(s); frame partially scanned`, null, "warn");
+        break;
+      }
+      try {
+        canvas.width = tile.w;
+        canvas.height = tile.h;
+        context.clearRect(0, 0, tile.w, tile.h);
+        context.drawImage(img, tile.x, tile.y, tile.w, tile.h, 0, 0, tile.w, tile.h);
+        found.push(...mapDetections(faceDetector.detect(canvas), tile.x, tile.y));
+        scanned++;
+      } catch (err) {
+        console.warn("[Offscreen] MediaPipe detect() error (tile):", err.message);
+      }
+    }
+  }
+
+  const deduped = dedupeFaces(found);
+  if (deduped.length) {
+    logEvent("offscreen", `BlazeFace found ${deduped.length} face(s) (${found.length} raw detection(s) before dedupe)`);
+  }
+  return deduped;
 }
 
 // ── Tesseract OCR ─────────────────────────────────────────────────────────────
@@ -228,6 +326,20 @@ const OCR_PII_PATTERNS = [
   { category: "contactInfo", label: "Phone Number",       re: /\b\+?\(?\d{2,5}\)?(?:[-.\s]\d{2,5}){1,4}\b/ },
   { category: "govIds",      label: "Bank IFSC Code",     re: /\b[A-Z]{4}0[A-Z0-9]{6}\b/ },
   { category: "govIds",      label: "Account Number",     re: /\b\d{9,18}\b/ },
+  // Credentials rendered INSIDE an image — a screenshot of a login form, a
+  // pasted terminal session, a shared password manager view. The DOM scanner
+  // cannot see these at all: there is no text node, only pixels.
+  //
+  // Label list kept in step with content.js / semantic_redactor.js; the value
+  // stops at whitespace here rather than end-of-line, because OCR emits word
+  // boxes and a run that crossed a line break would produce a box spanning
+  // unrelated rows. scripts/test-credential-detection.mjs guards the drift.
+  { category: "passwords",   label: "Credential",
+    re: /\b(?:pass(?:word|phrase|wd)|pwd|passcode|otp|pin|cvv|cvc|csc|api[\s_-]?key|secret[\s_-]?key|access[\s_-]?token|auth[\s_-]?token|recovery[\s_-]?code|security[\s_-]?answer|user(?:name|[\s_-]?id))\s*[:=]\s*\S+/i },
+  { category: "passwords",   label: "API Key / Token",
+    re: /\b(?:sk|pk|rk)[-_](?:test|live|prod)[-_][A-Za-z0-9]{12,}|\bAKIA[0-9A-Z]{16}\b|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b|\bAIza[0-9A-Za-z_-]{35}\b|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/ },
+  { category: "creditCards", label: "UPI ID",
+    re: /\b[A-Za-z0-9._-]{2,}@(?:upi|ybl|ibl|axl|apl|paytm|okhdfcbank|oksbi|okaxis|okicici|hdfcbank|sbi|icici|axisbank|kotak|yesbank|freecharge|airtel|jupiteraxis|fam|slc|naviaxis)\b/i },
 ];
 
 /**
@@ -831,7 +943,7 @@ async function processAndRedactFrame(payload) {
       try {
         if (categories.faces === false) return [];
         await initFaceDetector();
-        return detectFaces(img, width, height);
+        return await detectFaces(img, width, height);
       } finally {
         faceMs = performance.now() - tBranch;
       }

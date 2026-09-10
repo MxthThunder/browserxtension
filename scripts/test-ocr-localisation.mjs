@@ -8,7 +8,9 @@ import fs from 'node:fs';
 import { findNames, findNameCandidates } from '../pii-agent-extension/name_detector.js';
 
 const SRC = 'C:/BrowserExt/browserxtension-2-working/pii-agent-extension/offscreen.js';
-const src = fs.readFileSync(SRC, 'utf8');
+// Normalised to LF: git renormalises the extension files to CRLF on a Windows
+// checkout, which breaks every newline-anchored slice below.
+const src = fs.readFileSync(SRC, 'utf8').split('\r\n').join('\n');
 
 // Lift the pure pieces out of the module (it imports browser-only deps).
 const patterns = src.slice(src.indexOf('const OCR_PII_PATTERNS = ['),

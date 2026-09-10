@@ -26,6 +26,24 @@ export const REDACTION_TYPES = {
   GENERIC_PII: "PII"
 };
 
+/**
+ * Credential labels, kept byte-identical to INLINE_PII_PATTERNS' copy in
+ * content.js — that file is a classic content script and cannot `import`, so
+ * the list is duplicated rather than shared (the same call the PHONE pattern
+ * made). scripts/test-credential-detection.mjs asserts the two never drift.
+ */
+export const CREDENTIAL_LABELS = [
+  "pass(?:word|phrase|wd)", "pwd", "passcode",
+  "otp", "one[\\s_-]?time[\\s_-]?(?:code|password|pin)",
+  "(?:security|secret)[\\s_-]?(?:question|answer)",
+  "(?:recovery|backup|reset|activation)[\\s_-]?code",
+  "(?:api|secret|access|private|client|encryption)[\\s_-]?(?:key|secret)",
+  "(?:access|auth|bearer|refresh|session|csrf)[\\s_-]?token",
+  "session[\\s_-]?id",
+  "cvv", "cvc", "csc", "pin",
+  "user(?:name|[\\s_-]?id)", "login(?:[\\s_-]?id)?",
+].join("|");
+
 export const VISUAL_MASK_STYLES = {
   SOLID_BLACK: "solid_black",
   PIXELATE: "pixelate",
@@ -155,6 +173,35 @@ export class SemanticRedactor {
   sanitizeText(rawText) {
     if (!rawText || typeof rawText !== "string") return "";
     let sanitized = rawText;
+
+    // Credentials FIRST. A secret has no shape of its own, so it has to claim
+    // its span before the numeric patterns below mistake "PIN: 4829" for
+    // something benign — and because a leaked credential is the worst outcome
+    // on this list, it must not depend on another pattern missing it.
+    //
+    // The label is deliberately preserved: the model still learns "a password
+    // lives here", which it needs to reason about a login form, while the value
+    // becomes [PASSWORD_n]. Only the value is replaced.
+    sanitized = sanitized.replace(
+      new RegExp(`\\b(${CREDENTIAL_LABELS})(\\s*[:=]\\s*)(\\S[^\\n\\r]{0,79})`, "gi"),
+      (_m, label, sep, value) =>
+        `${label}${sep}${this.getOrCreatePlaceholder(value, REDACTION_TYPES.PASSWORD)}`
+    );
+
+    // Vendor-shaped keys and JWTs, which announce themselves with no label.
+    sanitized = sanitized.replace(
+      /\b(?:sk|pk|rk)[-_](?:test|live|prod)[-_][A-Za-z0-9]{12,}|\b(?:sk|pk)[-_][A-Za-z0-9]{20,}|\bAKIA[0-9A-Z]{16}\b|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{22,}|\bAIza[0-9A-Za-z_-]{35}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}\b|\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/g,
+      (match) => this.getOrCreatePlaceholder(match, REDACTION_TYPES.PASSWORD)
+    );
+
+    // UPI handles. The EMAIL pattern below cannot catch these: it requires a
+    // dot-TLD and a UPI handle has none ("name@upi", "name@oksbi"), so a
+    // payment identifier was passing through untouched. Matched against the
+    // known PSP suffixes rather than "any @word", which would eat @mentions.
+    sanitized = sanitized.replace(
+      /\b[A-Za-z0-9._-]{2,}@(?:upi|ybl|ibl|axl|apl|paytm|okhdfcbank|oksbi|okaxis|okicici|hdfcbank|sbi|icici|axisbank|kotak|yesbank|freecharge|airtel|jupiteraxis|fam|slc|naviaxis)\b/gi,
+      (match) => this.getOrCreatePlaceholder(match, REDACTION_TYPES.FINANCIAL)
+    );
 
     // Credit Cards
     sanitized = sanitized.replace(/\b(?:\d{4}[ -]?){3}\d{4}\b/g, (match) =>

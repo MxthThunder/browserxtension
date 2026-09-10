@@ -29,7 +29,37 @@ const SENSITIVE_NAME_PATTERN =
 // Regex for scanning visible text nodes containing raw PII patterns
 const MAX_TEXT_NODES = 4000;
 
+// Credentials are LABEL-driven, not shape-driven. A password has no
+// recognisable form — "TestPassword!4829" is just a string — so the only
+// reliable signal is the word printed in front of it. The mandatory `[:=]` is
+// what keeps this safe: prose like "choose a strong password" never matches,
+// only an actual "Password: value" pair.
+//
+// Kept as a list rather than one long alternation because this is a
+// security-critical pattern that people will need to extend.
+const CREDENTIAL_LABELS = [
+  "pass(?:word|phrase|wd)", "pwd", "passcode",
+  "otp", "one[\\s_-]?time[\\s_-]?(?:code|password|pin)",
+  "(?:security|secret)[\\s_-]?(?:question|answer)",
+  "(?:recovery|backup|reset|activation)[\\s_-]?code",
+  "(?:api|secret|access|private|client|encryption)[\\s_-]?(?:key|secret)",
+  "(?:access|auth|bearer|refresh|session|csrf)[\\s_-]?token",
+  "session[\\s_-]?id",
+  "cvv", "cvc", "csc", "pin",
+  "user(?:name|[\\s_-]?id)", "login(?:[\\s_-]?id)?",
+].join("|");
+
 const INLINE_PII_PATTERNS = {
+  // The value runs to end-of-line, not to the next space: "Security Answer:
+  // Blue Mountain" is two words, and inside a <pre> the whole block is one text
+  // node, so \n is the correct terminator.
+  CREDENTIAL: new RegExp(`\\b(?:${CREDENTIAL_LABELS})\\s*[:=]\\s*\\S[^\\n\\r]{0,79}`, "i"),
+  // Vendor key formats that identify themselves without any label.
+  API_KEY_TOKEN: /\b(?:sk|pk|rk)[-_](?:test|live|prod)[-_][A-Za-z0-9]{12,}|\b(?:sk|pk)[-_][A-Za-z0-9]{20,}|\bAKIA[0-9A-Z]{16}\b|\b(?:ghp|gho|ghu|ghs|ghr)_[A-Za-z0-9]{36}\b|\bgithub_pat_[A-Za-z0-9_]{22,}|\bAIza[0-9A-Za-z_-]{35}\b|\bxox[baprs]-[A-Za-z0-9-]{10,}\b/,
+  JWT: /\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}/,
+  PRIVATE_KEY_BLOCK: /-----BEGIN(?: [A-Z]+)* PRIVATE KEY-----/,
+  // A UPI handle has no dot-TLD, so EMAIL below can never match one.
+  UPI_ID: /\b[A-Za-z0-9._-]{2,}@(?:upi|ybl|ibl|axl|apl|paytm|okhdfcbank|oksbi|okaxis|okicici|hdfcbank|sbi|icici|axisbank|kotak|yesbank|freecharge|airtel|jupiteraxis|fam|slc|naviaxis)\b/i,
   CREDIT_CARD: /\b(?:\d{4}[ -]?){3}\d{4}\b/,
   SSN: /\b\d{3}-\d{2}-\d{4}\b/,
   AADHAAR: /\b\d{4}\s\d{4}\s\d{4}\b/,
@@ -52,6 +82,40 @@ const INLINE_PII_PATTERNS = {
   CONSOLE_ID: /\b(?:MOX|ISTRAC|MCC)-CON-\d+\b/i,
   GEO_COORDINATES: /\b\d{1,2}(?:\.\d+)?°?\s*[NS][,\s]+\d{1,3}(?:\.\d+)?°?\s*[EW]\b/i
 };
+
+/**
+ * Maps an INLINE_PII_PATTERNS key to a settings category.
+ *
+ * Single source of truth: this mapping used to be copy-pasted into both the
+ * element-value check and the visible-text walker, so a new pattern silently
+ * landed in "contactInfo" in whichever copy was missed.
+ *
+ * "passwords" is the highest-severity bucket — privacy_engine maps it to
+ * BLOCK, not REDACT, so these never leave the device by any channel.
+ */
+function categoryForPattern(patternName) {
+  switch (patternName) {
+    case "CREDENTIAL":
+    case "API_KEY_TOKEN":
+    case "JWT":
+    case "PRIVATE_KEY_BLOCK":
+      return "passwords";
+    case "CREDIT_CARD":
+    case "UPI_ID":
+      return "creditCards";
+    case "SSN":
+    case "AADHAAR":
+    case "PAN":
+      return "govIds";
+    case "INTERNAL_IP":
+    case "OPERATOR_ID":
+    case "CONSOLE_ID":
+    case "GEO_COORDINATES":
+      return "opsSecurity";
+    default:
+      return "contactInfo";
+  }
+}
 
 const OVERLAY_ID = "__pii_agent_overlay_layer__";
 const FLOATING_BADGE_ID = "__pii_agent_floating_badge__";
@@ -189,11 +253,11 @@ function classifyElement(el) {
   if (val.length >= 3) {
     for (const [patternName, re] of Object.entries(INLINE_PII_PATTERNS)) {
       if (re.test(val)) {
-        let category = "contactInfo";
-        if (patternName === "CREDIT_CARD") category = "creditCards";
-        else if (patternName === "SSN" || patternName === "AADHAAR" || patternName === "PAN") category = "govIds";
-        else if (patternName === "INTERNAL_IP" || patternName === "OPERATOR_ID" || patternName === "CONSOLE_ID" || patternName === "GEO_COORDINATES") category = "opsSecurity";
-        return { sensitive: true, category, reason: `value matches ${patternName}` };
+        return {
+          sensitive: true,
+          category: categoryForPattern(patternName),
+          reason: `value matches ${patternName}`,
+        };
       }
     }
   }
@@ -339,14 +403,9 @@ function scanVisibleTextNodes() {
       if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
       if (rect.right < 0 || rect.left > window.innerWidth) continue;
 
-      let category = "contactInfo";
-      if (patternName === "CREDIT_CARD") category = "creditCards";
-      else if (patternName === "SSN" || patternName === "AADHAAR" || patternName === "PAN") category = "govIds";
-      else if (patternName === "INTERNAL_IP" || patternName === "OPERATOR_ID" || patternName === "CONSOLE_ID" || patternName === "GEO_COORDINATES") category = "opsSecurity";
-
       results.push({
         el: ancestor,
-        category,
+        category: categoryForPattern(patternName),
         reason: `visible text: ${patternName}`,
         x: Math.round(rect.left),
         y: Math.round(rect.top),
