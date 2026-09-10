@@ -775,6 +775,104 @@ function applyNMS(boxes, iouThreshold = 0.45) {
  *
  * @returns {{residualFound: boolean, repainted: number, checked: number, failures: Array}}
  */
+/**
+ * The token drawn into a redacted box.
+ *
+ * Deliberately the same vocabulary the text channel uses for its
+ * [EMAIL_1]-style placeholders, so a reader comparing the sanitized image
+ * against the sanitized text sees the same words on both sides. The number is
+ * not included: the image pipeline only ever holds a bounding box, never the
+ * matched string, so it cannot know which occurrence this was — and inventing
+ * an index that disagreed with the text channel would be worse than none.
+ */
+const REDACTION_TOKEN_BY_CATEGORY = {
+  passwords:   "PASSWORD",
+  creditCards: "CARD",
+  govIds:      "GOV_ID",
+  contactInfo: "CONTACT",
+  faces:       "FACE",
+  names:       "PERSON",
+  screens:     "SCREEN",
+  opsSecurity: "OPS",
+};
+
+// Used when the full token will not fit; see the ladder in annotateRedaction.
+const REDACTION_TOKEN_SHORT = {
+  PASSWORD: "PWD", SECRET: "KEY", GOV_ID: "ID", CONTACT: "PII",
+  FINANCIAL: "FIN", PERSON: "NAME", SCREEN: "SCR",
+};
+
+function redactionToken(box) {
+  // A detector's own label is more specific than the category bucket, so it
+  // wins where it is recognisable ("Email Address" -> EMAIL, not CONTACT).
+  const label = String(box.label || "").toLowerCase();
+  if (label.includes("email")) return "EMAIL";
+  if (label.includes("phone")) return "PHONE";
+  if (label.includes("upi")) return "FINANCIAL";
+  if (label.includes("api key") || label.includes("token")) return "SECRET";
+  if (label.includes("credential") || label.includes("password")) return "PASSWORD";
+  if (label.includes("card")) return "CARD";
+  if (label.includes("aadhaar") || label.includes("pan") || label.includes("ssn") ||
+      label.includes("passport") || label.includes("ifsc") || label.includes("account")) return "GOV_ID";
+  return REDACTION_TOKEN_BY_CATEGORY[box.category] || "PII";
+}
+
+const LABEL_FONT_MAX = 14;
+const LABEL_FONT_MIN = 8;
+const LABEL_PAD      = 4;
+const LABEL_FONT     = (px) => `600 ${px}px ui-monospace, "SF Mono", Menlo, Consolas, monospace`;
+
+/** Largest font size at which `text` fits the box, or 0 if it never does. */
+function fitLabelSize(context, text, boxW, boxH) {
+  const ceiling = Math.min(LABEL_FONT_MAX, Math.floor(boxH) - 2);
+  for (let size = ceiling; size >= LABEL_FONT_MIN; size--) {
+    context.font = LABEL_FONT(size);
+    if (context.measureText(text).width <= boxW - LABEL_PAD * 2) return size;
+  }
+  return 0;
+}
+
+/**
+ * Draws the border and category label into an already-blacked-out box.
+ *
+ * Returns whether a label was drawn. Tight boxes are small by design, so the
+ * text steps down a ladder — full token, short token, nothing — rather than
+ * overflowing. A label wider than its box would spill across unredacted page
+ * content and read as a leak, which is worse than no label at all.
+ */
+function annotateRedaction(context, box) {
+  const x = Math.round(box.x), y = Math.round(box.y);
+  const w = Math.round(box.w), h = Math.round(box.h);
+  if (w <= 0 || h <= 0) return false;
+
+  context.save();
+  context.strokeStyle = "#ef4444";
+  context.lineWidth   = 2;
+  context.strokeRect(x, y, w, h);
+
+  const token = redactionToken(box);
+  let text = `[${token}]`;
+  let size = fitLabelSize(context, text, w, h);
+
+  if (!size) {                                  // drop the brackets (2 chars)
+    text = token;
+    size = fitLabelSize(context, text, w, h);
+  }
+  if (!size && REDACTION_TOKEN_SHORT[token]) {  // then the abbreviation
+    text = REDACTION_TOKEN_SHORT[token];
+    size = fitLabelSize(context, text, w, h);
+  }
+  if (!size) { context.restore(); return false; }
+
+  context.font         = LABEL_FONT(size);
+  context.fillStyle    = "#e8e8e8";
+  context.textAlign    = "center";
+  context.textBaseline = "middle";
+  context.fillText(text, x + w / 2, y + h / 2, w - LABEL_PAD * 2);
+  context.restore();
+  return true;
+}
+
 function verifyRedactionOpacity(context, boxes, canvasWidth, canvasHeight) {
   const failures = [];
   let checked = 0;
@@ -812,7 +910,10 @@ function verifyRedactionOpacity(context, boxes, canvasWidth, canvasHeight) {
       if (luma > brightest) brightest = luma;
     }
 
-    // The redaction stroke is a 2px red border, so allow a small margin.
+    // Every box is flat #000 at this point — the border and label are drawn in
+    // the annotation pass AFTER this guard, precisely so that nothing we drew
+    // ourselves can look like residue here. 40 is headroom, not a tolerance for
+    // any expected mark; anything above it is genuinely leftover page content.
     if (brightest > 40) {
       failures.push({ box, reason: `not opaque (peak luma ${Math.round(brightest)})` });
     }
@@ -1154,13 +1255,21 @@ async function processAndRedactFrame(payload) {
   const nmsSuppressed = merged.length - finalRedactionBoxes.length;
 
   // ── L6: Zero-Leakage canvas blackout ─────────────────────────────────────
+  // FILL ONLY. The border and the labels are drawn *after* the guard has run,
+  // in the annotation pass below.
+  //
+  // This ordering is load-bearing, not cosmetic. The guard fails any box whose
+  // brightest sampled pixel exceeds luma 40, and the #ef4444 border it claimed
+  // to tolerate is luma 119 — so drawing it here made EVERY box fail on EVERY
+  // capture. That was invisible because the emergency repaint then filled the
+  // box flat black (erasing the border) and the recheck passed, but it meant
+  // `emergencyBlackout` was firing constantly and the assurance metric on the
+  // dashboard was meaningless. Verifying flat black, then annotating, keeps the
+  // guard proving exactly one thing: the original pixels are gone.
   const tStartPaint = performance.now();
   finalRedactionBoxes.forEach((box) => {
     ctx.fillStyle = "#000000";
     ctx.fillRect(box.x, box.y, box.w, box.h);
-    ctx.strokeStyle = "#ef4444";
-    ctx.lineWidth   = 2;
-    ctx.strokeRect(box.x, box.y, box.w, box.h);
   });
   const tEndPaint = performance.now();
 
@@ -1209,6 +1318,18 @@ async function processAndRedactFrame(payload) {
     }
   }
   const guardMs = performance.now() - tStartGuard;
+
+  // ── L6b: Annotation pass ─────────────────────────────────────────────────
+  // Runs only once the guard has certified every region as flat black, so
+  // nothing drawn here can be mistaken for residue — or erased as residue.
+  // The label names the CATEGORY, never the value: "an email was here" is what
+  // the model needs to reason about the page, and it is not a leak.
+  const tStartAnnotate = performance.now();
+  let labelledCount = 0;
+  finalRedactionBoxes.forEach((box) => {
+    if (annotateRedaction(ctx, box)) labelledCount++;
+  });
+  const annotateMs = performance.now() - tStartAnnotate;
 
   // ── Build output ──────────────────────────────────────────────────────────
   const sanitizedImageUrl = canvas.toDataURL("image/jpeg", 0.90);
@@ -1288,6 +1409,12 @@ async function processAndRedactFrame(payload) {
       guardMs,
       imageLoadMs:      tImgReady  - t0,
       paintLatencyMs:   tEndPaint  - tStartPaint,
+      annotateMs,
+      // Boxes too small for even an abbreviated token. A high number here means
+      // the labels are not landing and the sanitized image is back to anonymous
+      // black rectangles, which is worth seeing on the dashboard.
+      labelledCount,
+      unlabelledCount:  finalRedactionBoxes.length - labelledCount,
       domCount:         domRedactions.length,
       owlvitCount:      owlRedactions.length,
       faceCount:        faceRedactions.length,

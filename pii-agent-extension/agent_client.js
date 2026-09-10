@@ -9,6 +9,31 @@
 
 import { getSettings } from "./storage.js";
 import { semanticRedactor } from "./semantic_redactor.js";
+import { promptGuard } from "./prompt_guard.js";
+
+/**
+ * The scrub every piece of free-form page text must pass before it crosses the
+ * network. Two independent jobs, in this order:
+ *
+ *   1. Injection screening — page copy is attacker-controlled on a hostile
+ *      site, and this is the channel that carries it.
+ *   2. PII redaction — the existing semantic placeholder pass.
+ *
+ * Injection screening runs FIRST because the redactor rewrites spans: an
+ * injection string containing an email would have that email swapped for
+ * [EMAIL_1] mid-sentence, which can break the very pattern the guard is
+ * looking for. The guard's own replacement marker contains no PII, so the
+ * reverse ordering costs nothing.
+ *
+ * Previously only interactive-element .text/.value went through the guard, so
+ * page_content — the single largest and most attacker-controlled text channel
+ * in the payload — reached the model completely unscreened.
+ */
+function scrubForModel(raw, maxLen, threatSink) {
+  const report = promptGuard.inspectAndSanitizeText(String(raw || ""));
+  if (!report.isSafe && threatSink) threatSink.push(...report.threats);
+  return semanticRedactor.sanitizeText(report.sanitizedText).slice(0, maxLen);
+}
 
 /**
  * Reduces a URL to what the model actually needs to recognise a tab: origin and
@@ -78,15 +103,24 @@ export class AgentClient {
     // 1. Sanitize user task prompt if it contains inline raw PII
     const sanitizedTask = semanticRedactor.sanitizeText(params.task || "");
 
-    // 2. Format sanitized DOM elements list
+    // Collects anything the guard neutralises anywhere in this payload, so the
+    // loop and the HUD can report that the page tried something.
+    const injectionThreats = [];
+
+    // 2. Format sanitized DOM elements list.
+    //
+    // `text` is already guarded upstream in agent_loop, but placeholder and
+    // aria_label were not — both are page-authored attributes and just as
+    // attacker-controlled. Screening all three here makes the network boundary
+    // self-sufficient rather than dependent on what a caller remembered to do.
     const sanitizedElements = (params.interactiveElements || []).map((el) => ({
       tag: el.tagName || el.tag || "element",
       id: el.id || "",
       name: el.name || "",
       type: el.type || "",
-      text: el.text || "",
-      placeholder: el.placeholder || "",
-      aria_label: el.ariaLabel || el.aria_label || "",
+      text: scrubForModel(el.text, 300, injectionThreats),
+      placeholder: scrubForModel(el.placeholder, 120, injectionThreats),
+      aria_label: scrubForModel(el.ariaLabel || el.aria_label, 120, injectionThreats),
       selector: el.selector || (el.id ? `#${el.id}` : el.name ? `[name="${el.name}"]` : ""),
       role: el.role || null,
       rect: el.bbox || el.rect || null,
@@ -128,20 +162,21 @@ export class AgentClient {
       page_content: (params.pageContent || []).slice(0, 24).map((r) => ({
         ref: typeof r.ref === "number" ? r.ref : null,
         on_screen: Boolean(r.onScreen),
-        title: semanticRedactor.sanitizeText(String(r.title || "")).slice(0, 120),
-        price: semanticRedactor.sanitizeText(String(r.price || "")).slice(0, 24),
+        title: scrubForModel(r.title, 120, injectionThreats),
+        price: scrubForModel(r.price, 24, injectionThreats),
         rating: String(r.rating || "").slice(0, 8),
         reviews: String(r.reviews || "").slice(0, 16),
-        delivery: semanticRedactor.sanitizeText(String(r.delivery || "")).slice(0, 60),
-        badge: semanticRedactor.sanitizeText(String(r.badge || "")).slice(0, 40),
+        delivery: scrubForModel(r.delivery, 60, injectionThreats),
+        badge: scrubForModel(r.badge, 40, injectionThreats),
       })),
       // Tab titles and URLs are a text egress channel too: a title is routinely
       // "Order #4821 - Priya Nair" and a URL carries ids and emails in its query
-      // string. Both go through the same redactor as the task prompt.
+      // string. A page also fully controls its own document.title, so a title is
+      // attacker-controlled and gets injection screening as well as redaction.
       open_tabs: (params.openTabs || []).map((t) => ({
         index: t.index,
         active: Boolean(t.active),
-        title: semanticRedactor.sanitizeText(t.title || "").slice(0, 90),
+        title: scrubForModel(t.title, 90, injectionThreats),
         url: sanitizeUrlForModel(t.url || ""),
       })),
       // Names of the personal details the user has stored, so the model knows
@@ -151,6 +186,19 @@ export class AgentClient {
       vault_keys: (params.vaultKeys || [])
         .filter((k) => typeof k === "string" && /^[a-z0-9_]+\.[a-z0-9_]+$/i.test(k))
         .slice(0, 40),
+      // What the page tried, so the model can weigh how much to trust this page
+      // and the HUD can tell the user. Types and counts only — the offending
+      // strings were already replaced in place, and echoing a snippet here
+      // would re-deliver the payload we just neutralised.
+      injection_report: {
+        threats_neutralised: injectionThreats.length,
+        threat_types: [...new Set(injectionThreats.map((t) => t.type))].slice(0, 8),
+        max_severity: injectionThreats.some((t) => t.severity === "CRITICAL") ? "CRITICAL"
+                    : injectionThreats.length ? "HIGH" : "NONE",
+        // Hidden white-on-white / zero-pixel / off-screen text planted for an
+        // agent to read. Selector and reason only, never the text itself.
+        hidden_text: (params.hiddenAdversarialText || []).slice(0, 20),
+      },
     };
 
     const startTime = performance.now();

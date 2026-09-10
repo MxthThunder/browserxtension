@@ -206,6 +206,7 @@ export class AutonomousAgentLoop {
         let structuredData = null;
         let pageContent = [];
         let viewportScrollY = 0;
+        let hiddenAdversarialText = [];
         try {
           const tab = await this._getActiveTab();
           if (tab && tab.id) {
@@ -214,6 +215,7 @@ export class AutonomousAgentLoop {
               if (domResp.interactiveElements) domElements = domResp.interactiveElements;
               if (domResp.structuredData) structuredData = domResp.structuredData;
               if (domResp.pageContent) pageContent = domResp.pageContent;
+              if (domResp.hiddenAdversarialText) hiddenAdversarialText = domResp.hiddenAdversarialText;
               if (domResp.viewport && typeof domResp.viewport.scrollY === "number") {
                 viewportScrollY = domResp.viewport.scrollY;
               }
@@ -221,6 +223,15 @@ export class AutonomousAgentLoop {
           }
         } catch {
           // Tab unavailable or restricted
+        }
+
+        if (hiddenAdversarialText.length) {
+          logEvent(
+            "agent",
+            `Prompt-guard: ${hiddenAdversarialText.length} hidden adversarial text element(s) on this page — ${hiddenAdversarialText[0].reason}`,
+            null,
+            "warn"
+          );
         }
 
         // Apply Prompt-Guard & Semantic Redaction to DOM text
@@ -390,6 +401,7 @@ export class AutonomousAgentLoop {
           history: historyDigest,
           openTabs,
           pageContent,
+          hiddenAdversarialText,
           vaultKeys,
           plan: this._plan,
           planStep: this._planStep

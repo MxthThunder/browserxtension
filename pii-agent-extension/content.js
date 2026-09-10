@@ -157,6 +157,44 @@ const FALLBACK_NAME_AUTOCOMPLETE = new Set([
   }
 })();
 
+/**
+ * Layer L6: hidden adversarial text.
+ *
+ * `detectHiddenAdversarialElements` needs `document`, so it can only run here,
+ * in the content script. It was written but never called from anywhere, which
+ * left the classic indirect-injection vector — white-on-white or zero-pixel
+ * instructions planted for an agent to read — completely unguarded.
+ */
+let promptGuardModule = null;
+(async () => {
+  try {
+    promptGuardModule = await import(chrome.runtime.getURL("prompt_guard.js"));
+  } catch (err) {
+    console.warn("[Content] Prompt guard unavailable; hidden-text scan disabled:", err?.message);
+  }
+})();
+
+/**
+ * Reports WHERE hidden adversarial text was found and why — never WHAT it said.
+ *
+ * The detected string is by definition an injection aimed at the agent, so
+ * forwarding the snippet would hand the model the exact payload we just caught.
+ * The selector and the reason are enough to warn the loop and to show the user
+ * in the HUD.
+ */
+function scanHiddenAdversarialText() {
+  try {
+    const hits = promptGuardModule?.promptGuard?.detectHiddenAdversarialElements() || [];
+    return hits.slice(0, 20).map((h) => ({
+      selector: String(h.selector || "").slice(0, 80),
+      reason: String(h.reason || "").slice(0, 120),
+    }));
+  } catch (err) {
+    console.warn("[Content] Hidden-text scan failed:", err?.message);
+    return [];
+  }
+}
+
 function detectNameField(descriptors) {
   if (nameDetectorModule?.isNameField) {
     return nameDetectorModule.isNameField(descriptors);
@@ -342,14 +380,78 @@ function isBlockElement(el) {
   return BLOCK_TAGS.has(el.tagName);
 }
 
+/** Max boxes one pattern may produce from a single text node. */
+const MAX_MATCHES_PER_NODE = 12;
+/**
+ * Total cap across the page. Per-match boxing produces far more rects than the
+ * old one-per-ancestor scheme — a directory page of phone numbers could emit
+ * thousands — and every one costs a fillRect plus a guard sample. Downstream
+ * NMS merges overlaps, but it runs after this list is built, so the ceiling
+ * has to live here.
+ */
+const MAX_TEXT_BOXES = 400;
+/** Below this, a rect is a rendering artefact rather than readable text. */
+const MIN_BOX_SIDE = 4;
+
+// Global twins of INLINE_PII_PATTERNS, built once. matchAll() requires /g, and
+// a shared /g regex carries lastIndex between calls, so these are created here
+// rather than per node — and every read uses matchAll (never test/exec), which
+// does not depend on lastIndex.
+const INLINE_PII_PATTERNS_GLOBAL = Object.fromEntries(
+  Object.entries(INLINE_PII_PATTERNS).map(([name, re]) => [
+    name,
+    new RegExp(re.source, re.flags.includes("g") ? re.flags : re.flags + "g"),
+  ])
+);
+
+/**
+ * Boxes for the exact characters a match covers, in viewport coordinates.
+ *
+ * Uses Range.getClientRects() rather than a single bounding rect: wrapped text
+ * yields one rect per line fragment, and their union would be a rectangle
+ * covering everything between the two lines — including whatever sits to the
+ * left of the first line and right of the last. Per-fragment rects redact the
+ * text and nothing else.
+ *
+ * Returns [] when the range is unmeasurable (detached, display:none, a broken
+ * offset), which the caller treats as "fall back to the ancestor box" so a
+ * measurement failure can never silently drop a redaction.
+ */
+function rectsForMatch(node, start, end) {
+  try {
+    const range = document.createRange();
+    range.setStart(node, start);
+    range.setEnd(node, end);
+    const rects = Array.from(range.getClientRects());
+    range.detach?.();
+    return rects.filter((r) => r.width >= MIN_BOX_SIDE && r.height >= MIN_BOX_SIDE);
+  } catch {
+    return [];
+  }
+}
+
+/** A box is only worth painting if some of it is actually on screen. */
+function isOnScreen(r) {
+  return r.width > 1 && r.height > 1 &&
+         r.bottom >= 0 && r.top <= window.innerHeight &&
+         r.right >= 0 && r.left <= window.innerWidth;
+}
+
 /**
  * C1: Walks all visible text nodes and flags those matching INLINE_PII_PATTERNS.
- * Activates the previously dead-code INLINE_PII_PATTERNS constant.
- * Returns DOM box entries pointing at the text's nearest block-level ancestor.
+ *
+ * Boxes the MATCHED CHARACTERS, not their block ancestor. The old behaviour
+ * walked up to the nearest block element and blacked out its whole rect, so a
+ * single email inside a <pre> obliterated the entire code block, and the
+ * per-ancestor dedupe meant an eight-line address block produced exactly one
+ * box. That never under-redacted, but it destroyed all the surrounding context
+ * the model needs — and made the sanitized screenshot unreadable to the user.
+ *
+ * The ancestor rect survives as the fallback for when a range cannot be
+ * measured, so the failure mode is still "too much", never "too little".
  */
 function scanVisibleTextNodes() {
   const results = [];
-  const seenAncestors = new WeakMap();
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "IFRAME", "TEMPLATE", "CANVAS", "SVG"]);
 
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
@@ -371,48 +473,62 @@ function scanVisibleTextNodes() {
   // 100 was far too low: a normal article page has hundreds of text nodes in
   // nav, sidebar and body, so PII further down the document was never examined.
   while ((node = walker.nextNode()) && textNodeCount < MAX_TEXT_NODES) {
+    if (results.length >= MAX_TEXT_BOXES) break;
     textNodeCount++;
     const text = node.textContent;
-    for (const [patternName, re] of Object.entries(INLINE_PII_PATTERNS)) {
-      if (!re.test(text)) continue;
+    for (const [patternName, re] of Object.entries(INLINE_PII_PATTERNS_GLOBAL)) {
+      if (results.length >= MAX_TEXT_BOXES) break;
+      const category = categoryForPattern(patternName);
+      let matchCount = 0;
 
-      // Walk up to find the nearest meaningful block ancestor for bounding box
-      let ancestor = node.parentElement;
-      let depth = 0;
-      while (ancestor && ancestor !== document.body && depth < 6) {
-        if (isBlockElement(ancestor) && depth >= 1) break;
-        ancestor = ancestor.parentElement;
-        depth++;
+      for (const m of text.matchAll(re)) {
+        if (++matchCount > MAX_MATCHES_PER_NODE) break;
+        if (!m[0]) continue;
+
+        const rects = rectsForMatch(node, m.index, m.index + m[0].length);
+
+        if (rects.length) {
+          // Every line fragment the match spans gets its own box.
+          for (const r of rects) {
+            if (!isOnScreen(r)) continue;
+            results.push({
+              el: node.parentElement,
+              category,
+              reason: `visible text: ${patternName}`,
+              x: Math.round(r.left),
+              y: Math.round(r.top),
+              width: Math.round(r.width),
+              height: Math.round(r.height),
+            });
+          }
+          continue;
+        }
+
+        // Range unmeasurable — fall back to the old whole-ancestor box. Over-
+        // redacting here is the correct failure: the alternative is a match we
+        // know exists going unpainted.
+        let ancestor = node.parentElement;
+        let depth = 0;
+        while (ancestor && ancestor !== document.body && depth < 6) {
+          if (isBlockElement(ancestor) && depth >= 1) break;
+          ancestor = ancestor.parentElement;
+          depth++;
+        }
+        if (!ancestor || ancestor === document.body) ancestor = node.parentElement;
+        if (!ancestor) continue;
+
+        const rect = ancestor.getBoundingClientRect();
+        if (!isOnScreen(rect)) continue;
+        results.push({
+          el: ancestor,
+          category,
+          reason: `visible text: ${patternName} (unmeasurable range — block fallback)`,
+          x: Math.round(rect.left),
+          y: Math.round(rect.top),
+          width: Math.round(rect.width),
+          height: Math.round(rect.height),
+        });
       }
-      if (!ancestor || ancestor === document.body) ancestor = node.parentElement;
-      if (!ancestor) continue;
-
-      // Keyed by ancestor AND pattern: one block can legitimately hold a name,
-      // an email and a phone, and each deserves its own detection.
-      const seenKey = `${patternName}`;
-      let seenForAncestor = seenAncestors.get(ancestor);
-      if (!seenForAncestor) {
-        seenForAncestor = new Set();
-        seenAncestors.set(ancestor, seenForAncestor);
-      }
-      if (seenForAncestor.has(seenKey)) continue;
-      seenForAncestor.add(seenKey);
-
-      const rect = ancestor.getBoundingClientRect();
-      if (rect.width <= 1 || rect.height <= 1) continue;
-      if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
-      if (rect.right < 0 || rect.left > window.innerWidth) continue;
-
-      results.push({
-        el: ancestor,
-        category: categoryForPattern(patternName),
-        reason: `visible text: ${patternName}`,
-        x: Math.round(rect.left),
-        y: Math.round(rect.top),
-        width: Math.round(rect.width),
-        height: Math.round(rect.height),
-      });
-      // keep scanning: one node can carry several kinds of PII
     }
   }
   return results;
@@ -1455,6 +1571,7 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       interactiveElements: interactive,
       pageContent: pageContent.rows,
       structuredData,
+      hiddenAdversarialText: scanHiddenAdversarialText(),
       spaMetadata: {
         currentRoute: window.location.href,
         lastMutationTime: lastSpaMutationTime,
