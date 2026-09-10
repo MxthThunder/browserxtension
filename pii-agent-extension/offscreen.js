@@ -235,18 +235,95 @@ async function initOCR() {
  * Run OCR on a canvas crop of a bounding box region.
  * Returns array of matched PII boxes (same region, labelled by regex match type).
  */
+/**
+ * Flattens Tesseract output into word boxes.
+ * v4 exposes data.words directly; v5 nests them under blocks/paragraphs/lines.
+ */
+function extractOcrWords(data) {
+  if (!data) return [];
+  if (Array.isArray(data.words) && data.words.length) return data.words;
+
+  const words = [];
+  for (const block of data.blocks || []) {
+    for (const para of block.paragraphs || []) {
+      for (const line of para.lines || []) {
+        for (const word of line.words || []) words.push(word);
+      }
+    }
+  }
+  return words;
+}
+
+/**
+ * OCRs one region and returns a redaction box per MATCHED PHRASE.
+ *
+ * It used to return the whole region on any match, which was survivable when
+ * regions were small object detections but blacks out an entire figure once
+ * page-sized images become OCR targets. Word boxes localise the hit instead.
+ */
 async function ocrRegion(cropCanvas, regionBox, categories) {
   if (!tessWorker || !tessReady) return [];
   try {
     const dataUrl = cropCanvas.toDataURL("image/png");
-    const { data: { text } } = await tessWorker.recognize(dataUrl);
+    const { data } = await tessWorker.recognize(dataUrl, {}, { text: true, blocks: true });
+    const text = data?.text || "";
+    if (!text.trim()) return [];
+
+    const words = extractOcrWords(data).filter((w) => w && w.text && w.bbox);
     const matched = [];
+    const claimed = new Set();
+    const PAD = 3;
+
     for (const { category, label, re } of OCR_PII_PATTERNS) {
       if (categories[category] === false) continue;
-      if (re.test(text)) {
+      if (!re.test(text)) continue;
+
+      let localised = false;
+
+      // Walk runs of up to 5 adjacent words: an email is one word, a phone
+      // number is often two or three. Span is the OUTER loop so the tightest
+      // match wins - starting from the word index would let a run beginning at
+      // the "Email" label swallow the label and the rows beneath it.
+      for (let span = 1; span <= 5 && !localised; span++) {
+        for (let i = 0; i + span <= words.length; i++) {
+          const run = words.slice(i, i + span);
+          if (run.some((_, k) => claimed.has(i + k))) continue;
+          if (!re.test(run.map((w) => w.text).join(" "))) continue;
+
+          const x0 = Math.min(...run.map((w) => w.bbox.x0));
+          const y0 = Math.min(...run.map((w) => w.bbox.y0));
+          const x1 = Math.max(...run.map((w) => w.bbox.x1));
+          const y1 = Math.max(...run.map((w) => w.bbox.y1));
+
+          // Crop is drawn 1:1, so local coordinates need only the region offset.
+          matched.push({
+            source:     "OCR",
+            label:      `OCR: ${label}`,
+            category,
+            confidence: 0.9,
+            x: regionBox.x + Math.max(0, x0 - PAD),
+            y: regionBox.y + Math.max(0, y0 - PAD),
+            w: Math.max(1, x1 - x0 + PAD * 2),
+            h: Math.max(1, y1 - y0 + PAD * 2),
+          });
+          run.forEach((_, k) => claimed.add(i + k));
+          localised = true;
+          break;
+        }
+      }
+
+      if (!localised) {
+        // The text is in there but could not be placed. Fail closed by covering
+        // the region - but never silently swallow a hit.
+        logEvent(
+          "offscreen",
+          `OCR matched ${label} but could not localise it; covering the whole region (${regionBox.w}x${regionBox.h}px)`,
+          null,
+          "warn"
+        );
         matched.push({
           source:     "OCR",
-          label:      `OCR: ${label}`,
+          label:      `OCR: ${label} (unlocalised)`,
           category,
           confidence: 0.9,
           x: regionBox.x,
@@ -254,9 +331,9 @@ async function ocrRegion(cropCanvas, regionBox, categories) {
           w: regionBox.w,
           h: regionBox.h,
         });
-        break; // one label per region
       }
     }
+
     return matched;
   } catch {
     return [];
@@ -300,13 +377,81 @@ function applyNMS(boxes, iouThreshold = 0.45) {
 
   for (let i = 0; i < sorted.length; i++) {
     if (used.has(i)) continue;
-    keep.push(sorted[i]);
+    // Copy so the merged `sources` list never mutates the caller's detection objects.
+    const winner = { ...sorted[i], sources: sorted[i].source ? [sorted[i].source] : [] };
+    keep.push(winner);
     for (let j = i + 1; j < sorted.length; j++) {
       if (used.has(j)) continue;
-      if (iou(sorted[i], sorted[j]) > iouThreshold) used.add(j);
+      if (iou(sorted[i], sorted[j]) > iouThreshold) {
+        used.add(j);
+        // The overlapping box is dropped, but which layer found it is not:
+        // without this, a region seen by two layers reports only one source.
+        const alsoSeenBy = sorted[j].source;
+        if (alsoSeenBy && !winner.sources.includes(alsoSeenBy)) {
+          winner.sources.push(alsoSeenBy);
+        }
+      }
     }
   }
   return keep;
+}
+
+/**
+ * L2D — Second-pass zero-leakage guard.
+ *
+ * Verifies that every redaction rect actually reads as opaque black on the
+ * sanitized canvas. Catches the case where a box was computed but painted
+ * off-canvas or clipped, which would otherwise ship with PII still visible.
+ *
+ * Cheap by construction: samples a sparse grid per rect rather than reading
+ * every pixel, so cost scales with box count, not image area.
+ *
+ * @returns {{residualFound: boolean, repainted: number, checked: number, failures: Array}}
+ */
+function verifyRedactionOpacity(context, boxes, canvasWidth, canvasHeight) {
+  const failures = [];
+  let checked = 0;
+
+  for (const box of boxes) {
+    const x = Math.max(0, Math.round(box.x));
+    const y = Math.max(0, Math.round(box.y));
+    const w = Math.min(Math.round(box.w), canvasWidth - x);
+    const h = Math.min(Math.round(box.h), canvasHeight - y);
+    if (w <= 0 || h <= 0) {
+      // Box lies fully outside the canvas — nothing was painted at all.
+      failures.push({ box, reason: "off-canvas" });
+      continue;
+    }
+
+    checked++;
+    let data;
+    try {
+      data = context.getImageData(x, y, w, h).data;
+    } catch (err) {
+      // The canvas cannot be read at all (e.g. tainted by a cross-origin
+      // draw). That is "unable to verify", NOT "found a leak" — reporting it
+      // as a leak would fail every frame closed and take the product down.
+      return { residualFound: false, unreadable: true, checked, failures: [], error: err.message };
+    }
+
+    // Sample up to ~400 pixels spread across the rect.
+    const totalPixels = w * h;
+    const stride = Math.max(1, Math.floor(totalPixels / 400));
+    let brightest = 0;
+    for (let p = 0; p < totalPixels; p += stride) {
+      const i = p * 4;
+      // Rec. 601 luma is close enough to spot anything that is not black.
+      const luma = 0.299 * data[i] + 0.587 * data[i + 1] + 0.114 * data[i + 2];
+      if (luma > brightest) brightest = luma;
+    }
+
+    // The redaction stroke is a 2px red border, so allow a small margin.
+    if (brightest > 40) {
+      failures.push({ box, reason: `not opaque (peak luma ${Math.round(brightest)})` });
+    }
+  }
+
+  return { residualFound: failures.length > 0, unreadable: false, checked, failures };
 }
 
 function iou(a, b) {
@@ -379,6 +524,7 @@ async function processAndRedactFrame(payload) {
   const tImgReady = performance.now();
 
   // ── L1: DOM boxes (already analysed by content.js) ──────────────────────
+  const tStartDomMap = performance.now();
   const domRedactions = [];
   domBoxes.forEach((box) => {
     if (box.category && categories[box.category] === false) return;
@@ -394,29 +540,46 @@ async function processAndRedactFrame(payload) {
     });
   });
 
+  const domMapMs = performance.now() - tStartDomMap;
+
   // ── L2 + L3: OWL-ViT and MediaPipe run in parallel ──────────────────────
   logEvent("offscreen", "Step 4/6: Running parallel vision inference (OWL-ViT + MediaPipe BlazeFace)...");
   const tStartVision = performance.now();
 
+  // Timed inside each branch: the wall-clock span below covers both, so it
+  // cannot attribute cost to OWL-ViT vs BlazeFace on its own.
+  let owlvitMs = 0;
+  let faceMs   = 0;
+
   const [owlResult, faceResult] = await Promise.allSettled([
     // L2: OWL-ViT zero-shot object detection (credit cards, IDs, passports, screens)
     (async () => {
-      if (!owlvitModel) return [];
-      const shouldRun =
-        categories.faces !== false ||
-        categories.screens !== false ||
-        categories.govIds !== false ||
-        categories.creditCards !== false;
-      if (!shouldRun) return [];
-      const rawImg = await RawImage.fromURL(screenshotUrl);
-      return owlvitModel(rawImg, PII_VISUAL_QUERIES, { threshold });
+      const tBranch = performance.now();
+      try {
+        if (!owlvitModel) return [];
+        const shouldRun =
+          categories.faces !== false ||
+          categories.screens !== false ||
+          categories.govIds !== false ||
+          categories.creditCards !== false;
+        if (!shouldRun) return [];
+        const rawImg = await RawImage.fromURL(screenshotUrl);
+        return owlvitModel(rawImg, PII_VISUAL_QUERIES, { threshold });
+      } finally {
+        owlvitMs = performance.now() - tBranch;
+      }
     })(),
 
     // L3: MediaPipe BlazeFace (human face bounding boxes)
     (async () => {
-      if (categories.faces === false) return [];
-      await initFaceDetector();
-      return detectFaces(img, width, height);
+      const tBranch = performance.now();
+      try {
+        if (categories.faces === false) return [];
+        await initFaceDetector();
+        return detectFaces(img, width, height);
+      } finally {
+        faceMs = performance.now() - tBranch;
+      }
     })(),
   ]);
 
@@ -478,8 +641,25 @@ async function processAndRedactFrame(payload) {
   const tStartOCR = performance.now();
   const ocrRedactions = [];
 
-  if (categories.ocr !== false && allVisualBoxes.length > 0) {
-    const unclassifiedVisualTargets = allVisualBoxes.filter(
+  // Was gated on `categories.ocr`, a key that never existed in settings — so
+  // the toggle was inert. `ocrEnabled` is a real setting, defaulting to on.
+  // OCR also used to run ONLY over regions the object detector had flagged, so
+  // text baked into an ordinary screenshot or figure was never read: the
+  // detector looks for cards and passports, not blocks of text. Image regions
+  // reported by the page are now first-class OCR targets too.
+  const imageRegions = (payload.ocrRegions || []).map((r) => ({
+    source: "image-region",
+    label: "image region",
+    category: "unknown",
+    confidence: 0.5,
+    x: Math.round(r.x * scaleX),
+    y: Math.round(r.y * scaleY),
+    w: Math.round(r.width * scaleX),
+    h: Math.round(r.height * scaleY),
+  }));
+
+  if (options.ocrEnabled !== false && (allVisualBoxes.length > 0 || imageRegions.length > 0)) {
+    const unclassifiedVisualTargets = [...allVisualBoxes, ...imageRegions].filter(
       (vb) => !domRedactions.some((db) => Math.abs(db.x - vb.x) < 20 && Math.abs(db.y - vb.y) < 20)
     );
 
@@ -516,7 +696,10 @@ async function processAndRedactFrame(payload) {
 
   // ── L5: Merge all redaction boxes + NMS ──────────────────────────────────
   const merged = [...domRedactions, ...owlRedactions, ...faceRedactions, ...ocrRedactions];
+  const tStartNms = performance.now();
   const finalRedactionBoxes = applyNMS(merged, 0.45);
+  const nmsMs = performance.now() - tStartNms;
+  const nmsSuppressed = merged.length - finalRedactionBoxes.length;
 
   // ── L6: Zero-Leakage canvas blackout ─────────────────────────────────────
   const tStartPaint = performance.now();
@@ -529,10 +712,58 @@ async function processAndRedactFrame(payload) {
   });
   const tEndPaint = performance.now();
 
+  // ── L2D: Second-pass zero-leakage guard ──────────────────────────────────
+  const tStartGuard = performance.now();
+  let guardReport = { enabled: false, residualFound: false, emergencyBlackout: false, checked: 0, failures: [] };
+
+  if (options.secondPassGuard !== false) {
+    const verdict = verifyRedactionOpacity(ctx, finalRedactionBoxes, width, height);
+    guardReport = {
+      enabled: true,
+      residualFound: verdict.residualFound,
+      emergencyBlackout: false,
+      unreadable: Boolean(verdict.unreadable),
+      checked: verdict.checked,
+      failures: verdict.failures.map((f) => f.reason),
+    };
+
+    if (verdict.unreadable) {
+      logEvent("offscreen", `Zero-Leakage guard could not read the canvas (${verdict.error}); skipping verification for this frame`, null, "warn");
+    } else if (verdict.residualFound) {
+      // Emergency blackout: repaint each failed region, clamped to the canvas,
+      // then verify once more.
+      logEvent("offscreen", `Zero-Leakage guard caught ${verdict.failures.length} unsealed region(s) — repainting`, null, "error");
+      for (const failure of verdict.failures) {
+        const b = failure.box;
+        const x = Math.max(0, Math.min(Math.round(b.x), width));
+        const y = Math.max(0, Math.min(Math.round(b.y), height));
+        const w = Math.max(0, Math.min(Math.round(b.w), width - x));
+        const h = Math.max(0, Math.min(Math.round(b.h), height - y));
+        if (w > 0 && h > 0) {
+          ctx.fillStyle = "#000000";
+          ctx.fillRect(x, y, w, h);
+        }
+      }
+      guardReport.emergencyBlackout = true;
+
+      const recheck = verifyRedactionOpacity(ctx, finalRedactionBoxes, width, height);
+      guardReport.residualFound = recheck.residualFound;
+
+      if (recheck.residualFound && failClosed) {
+        throw new Error(
+          `Zero-Leakage Guarantee: ${recheck.failures.length} region(s) could not be sealed after emergency blackout. Frame blocked.`
+        );
+      }
+    }
+  }
+  const guardMs = performance.now() - tStartGuard;
+
   // ── Build output ──────────────────────────────────────────────────────────
   const sanitizedImageUrl = canvas.toDataURL("image/jpeg", 0.90);
   const rawImageUrl       = rawCanvas.toDataURL("image/jpeg", 0.85);
-  const integrityHash     = await computeHash(sanitizedImageUrl.substring(0, 1000));
+  // Hash the whole sanitized frame: hashing the first 1000 chars only covered
+  // the base64 JPEG header, so different redactions produced identical hashes.
+  const integrityHash     = await computeHash(sanitizedImageUrl);
   const totalTime         = performance.now() - t0;
 
   logEvent(
@@ -581,11 +812,21 @@ async function processAndRedactFrame(payload) {
     redactionList: finalRedactionBoxes,
     unifiedPerceptionState,
     privacyDecisionManifest,
+    guard: guardReport,
     resolution: { width, height },
     timings: {
       totalRedactionLatencyMs: totalTime,
+      // Wall-clock span covering OWL-ViT and BlazeFace together; the two
+      // per-branch numbers below are what attribute cost to each engine.
       visionLatencyMs:  tEndVision - tStartVision,
+      owlvitMs,
+      faceMs,
+      domScanMs:        payload.domScanMs ?? null,
+      domMapMs,
       ocrLatencyMs:     tEndOCR    - tStartOCR,
+      nmsMs,
+      nmsSuppressed,
+      guardMs,
       imageLoadMs:      tImgReady  - t0,
       paintLatencyMs:   tEndPaint  - tStartPaint,
       domCount:         domRedactions.length,

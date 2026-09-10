@@ -1,0 +1,117 @@
+/* ─────────────────────────────────────────────────────────
+   Privacy Agent — Shared design tokens
+   One system across popup, dashboard and settings.
+   Geist font · dark (default) + light · Emil Kowalski-inspired
+   ───────────────────────────────────────────────────────── */
+
+:root {
+  --font:      "Geist", -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: ui-monospace, "SF Mono", "Fira Code", Menlo, monospace;
+
+  /* Dark (default) */
+  --bg:           #0d0d0d;
+  --surface:      #161616;
+  --surface-2:    #1f1f1f;
+  --surface-3:    #262626;
+  --border:       rgba(255,255,255,0.08);
+  --border-focus: rgba(255,255,255,0.22);
+
+  --text:         #f2f2f2;
+  --text-2:       #a0a0a0;
+  --text-3:       #555;
+
+  --green:        #22c55e;
+  --green-dim:    rgba(34,197,94,0.15);
+  --green-glow:   rgba(34,197,94,0.35);
+
+  --red:          #ef4444;
+  --red-dim:      rgba(239,68,68,0.15);
+
+  --amber:        #f59e0b;
+  --amber-dim:    rgba(245,158,11,0.15);
+
+  --accent:       #f2f2f2;
+  --accent-btn:   rgba(255,255,255,0.9);
+
+  --radius:       10px;
+  --radius-lg:    14px;
+  --radius-sm:    6px;
+  --radius-full:  9999px;
+
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --dur:  180ms;
+
+  /* Categorical data slots — validated non-blue palette (see dataviz check) */
+  --cat-1: #d95926; /* orange   */
+  --cat-2: #199e70; /* aqua     */
+  --cat-3: #c98500; /* yellow   */
+  --cat-4: #d55181; /* magenta  */
+  --cat-5: #008300; /* green    */
+  --cat-6: #e66767; /* red      */
+}
+
+/* Light theme */
+[data-theme="light"] {
+  --bg:           #fafafa;
+  --surface:      #ffffff;
+  --surface-2:    #f4f4f5;
+  --surface-3:    #ececee;
+  --border:       rgba(0,0,0,0.08);
+  --border-focus: rgba(0,0,0,0.22);
+
+  --text:         #111111;
+  --text-2:       #555555;
+  --text-3:       #aaaaaa;
+
+  --accent:       #111111;
+  --accent-btn:   #111111;
+
+  --cat-1: #eb6834;
+  --cat-2: #1baf7a;
+  --cat-3: #eda100;
+  --cat-4: #e87ba4;
+  --cat-5: #008300;
+  --cat-6: #e34948;
+}
+
+/* ── Reset ─────────────────────────────────────────────── */
+*, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body { height: 100%; }
+
+body {
+  font-family: var(--font);
+  background: var(--bg);
+  color: var(--text);
+  -webkit-font-smoothing: antialiased;
+  line-height: 1.5;
+  transition: background var(--dur) var(--ease), color var(--dur) var(--ease);
+}
+
+button, input, select, textarea { font-family: inherit; color: inherit; }
+button { cursor: pointer; }
+a { color: inherit; }
+
+/* ── Scrollbar ─────────────────────────────────────────── */
+::-webkit-scrollbar { width: 6px; height: 6px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--surface-3); border-radius: var(--radius-full); }
+
+/* ── Reusable icon button (matches popup's theme/settings buttons) ── */
+.icon-btn {
+  background: transparent;
+  border: none;
+  color: var(--text-2);
+  padding: 6px;
+  border-radius: var(--radius-sm);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: color var(--dur) var(--ease), background var(--dur) var(--ease);
+}
+.icon-btn:hover { color: var(--text); background: var(--surface-2); }
+
+[data-theme="dark"] .icon-moon { display: none; }
+[data-theme="light"] .icon-sun { display: none; }
+
+.hidden { display: none !important; }

@@ -9,7 +9,15 @@
  * 5. Persistent audit logging and settings synchronization.
  */
 
-import { getSettings, saveSettings, logAuditEntry, DEFAULT_SETTINGS } from "./storage.js";
+import {
+  getSettings,
+  saveSettings,
+  logAuditEntry,
+  logPipelineTrace,
+  newTraceId,
+  summarizeRedactions,
+  DEFAULT_SETTINGS,
+} from "./storage.js";
 import { agentLoop } from "./agent_loop.js";
 import { vault } from "./vault.js";
 import { semanticRedactor } from "./semantic_redactor.js";
@@ -22,7 +30,7 @@ let agentSessionState = {
   status: "IDLE", // "IDLE" | "RUNNING" | "COMPLETED" | "STOPPED" | "ERROR"
   taskPrompt: "",
   currentStep: 0,
-  maxSteps: 8,
+  maxSteps: DEFAULT_SETTINGS.maxSteps,
   stepsHistory: [],
   latestCapture: null,
   activityLogs: [],
@@ -291,6 +299,8 @@ async function captureAndRedactActiveTab(options = {}) {
     engineMode: settings.engineMode,
     categories: settings.categories,
     failClosed: settings.failClosed,
+    ocrEnabled: settings.ocrEnabled,
+    secondPassGuard: settings.secondPassGuard,
     ...options,
   };
 
@@ -303,6 +313,8 @@ async function captureAndRedactActiveTab(options = {}) {
         payload: {
           screenshotUrl,
           domBoxes: domData.boxes || [],
+          domScanMs: domData.domScanMs ?? null,
+          ocrRegions: domData.ocrRegions || [],
           interactiveElements: domData.interactiveElements || [],
           viewport: domData.viewport || { width: 1, height: 1, devicePixelRatio: 1 },
           options: mergedOptions,
@@ -325,16 +337,42 @@ async function captureAndRedactActiveTab(options = {}) {
     }
   }
 
-  // 5. Record compliance audit entry
+  // 5. Record compliance audit entry + developer pipeline trace
   if (result && result.ok) {
+    const redactionList = result.redactionList || [];
+    const traceId = newTraceId();
+    const latencyMs = result.timings?.totalRedactionLatencyMs || 0;
+
     await logAuditEntry({
+      type: "CAPTURE",
+      traceId,
       url: tab.url,
       tabTitle: tab.title,
-      redactionsCount: (result.redactionList || []).length,
-      redactionManifest: result.redactionList || [],
+      redactions: redactionList.length,
+      redactionsCount: redactionList.length, // retained for existing audit readers
+      redactionManifest: redactionList,
       backend: result.activeBackend || "WebGPU",
-      latencyMs: result.timings?.totalRedactionLatencyMs || 0,
+      latencyMs,
       breakdown: result.timings || {},
+    });
+
+    const { counts, categories } = summarizeRedactions(redactionList);
+    await logPipelineTrace({
+      traceId,
+      kind: "capture",
+      step: null,
+      url: tab.url,
+      redactions: redactionList.length,
+      latencyMs,
+      perception: {
+        counts,
+        categories,
+        timings: result.timings || {},
+        nmsSuppressed: result.timings?.nmsSuppressed ?? 0,
+        guard: result.guard || null,
+      },
+      reasoning: null,
+      qwen: null,
     });
   }
 
@@ -501,7 +539,15 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     agentSessionState.status = "RUNNING";
     agentSessionState.taskPrompt = message.task;
     agentSessionState.currentStep = 0;
-    agentSessionState.maxSteps = message.options?.maxSteps || 8;
+    // Display value only; the loop reads settings.maxSteps itself. The listener
+    // is not async, so resolve the persisted budget out of band and re-sync.
+    agentSessionState.maxSteps = message.options?.maxSteps || DEFAULT_SETTINGS.maxSteps;
+    if (!message.options?.maxSteps) {
+      getSettings().then((s) => {
+        agentSessionState.maxSteps = s.maxSteps || DEFAULT_SETTINGS.maxSteps;
+        syncSessionState();
+      });
+    }
     agentSessionState.stepsHistory = [];
     agentSessionState.activityLogs = [`Started task: "${message.task}"`];
     agentSessionState.summary = "";
@@ -514,9 +560,16 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         agentSessionState.currentStep = stepData.step;
         agentSessionState.stepsHistory.push(stepData);
         if (stepData.sanitizedImage) {
+          // Keep the real manifest: it carries per-detection `source` and `category`,
+          // which the dashboard needs for layer attribution. Only synthesise a
+          // placeholder list when the step genuinely did not supply one.
+          const stepRedactions = stepData.redactionList
+            || (stepData.redactionCount ? new Array(stepData.redactionCount).fill({ label: "PII Masked" }) : []);
+
           agentSessionState.latestCapture = {
             sanitizedImageUrl: stepData.sanitizedImage,
-            redactionList: stepData.redactionCount ? new Array(stepData.redactionCount).fill({ label: "PII Masked" }) : []
+            redactionList: stepRedactions,
+            timings: stepData.perception?.timings || null,
           };
         }
         agentSessionState.activityLogs.push(`Step ${stepData.step}: ${stepData.action?.type || "action"} — ${stepData.action?.explanation || ""}`);

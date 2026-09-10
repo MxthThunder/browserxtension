@@ -12,7 +12,7 @@
  * - Form values and vault secrets are de-anonymized strictly on-device at the actuation phase.
  */
 
-import { getSettings, logAuditEntry } from "./storage.js";
+import { getSettings, logAuditEntry, logPipelineTrace, newTraceId, summarizeRedactions } from "./storage.js";
 import { agentClient } from "./agent_client.js";
 import { permissionEngine, PERMISSION_OUTCOMES } from "./permission_engine.js";
 import { promptGuard } from "./prompt_guard.js";
@@ -20,6 +20,23 @@ import { semanticRedactor } from "./semantic_redactor.js";
 import { vault } from "./vault.js";
 import { defaultPrivacyReasoner } from "./local_reasoner.js";
 import { logEvent } from "./telemetry.js";
+
+/**
+ * Cheap stable fingerprint of the interactive page state (FNV-1a).
+ * Used only to tell "the page changed" from "nothing happened".
+ */
+function digestElements(elements = []) {
+  const shape = elements
+    .map((el) => `${el.id || ""}|${el.tagName || el.tag || ""}|${el.value || ""}|${(el.text || "").slice(0, 40)}`)
+    .join("~");
+
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < shape.length; i++) {
+    hash ^= shape.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193) >>> 0;
+  }
+  return `${shape.length}:${hash.toString(16)}`;
+}
 
 /**
  * De-anonymizes an action value locally before any DOM insertion.
@@ -103,11 +120,16 @@ export class AutonomousAgentLoop {
 
     const settings = await getSettings();
     const maxSteps = options.maxSteps || settings.maxSteps || this.maxSteps;
+    const maxUnproductive = options.maxUnproductiveSteps
+      || settings.maxUnproductiveSteps
+      || 3;
 
     this.options = options || {};
     this.status = AGENT_LOOP_STATUS.RUNNING;
     this.currentStep = 0;
     this.stepHistory = [];
+    this._lastDomDigest = null;
+    this._unproductiveRun = 0;
     this._abortController = new AbortController();
 
     // Reset session-scoped placeholder mappings for a clean task run
@@ -165,14 +187,30 @@ export class AutonomousAgentLoop {
           return /recovery|seed|private.?key|secret.?key|medical|prescription|diagnosis|salary|payroll|telemetry|launch.?code|confidential|kyc|identity/i.test(text);
         });
 
+        let qwenTrace = {
+          invoked: false,
+          trigger: null,
+          candidateCount: ambiguousInputs.length,
+          batchSize: 0,
+          latencyMs: 0,
+          engine: null,
+          cacheHits: null,
+          timedOut: false,
+          decisions: [],
+        };
+
         if (ambiguousInputs.length > 0) {
           // Use the batch resolver — one LLM call covers all elements
           const batchManifest = {
             ambiguousElements: ambiguousInputs.map((el) => ({ element: el })),
             decisions: ambiguousInputs.map((el, i) => ({ elementId: el.id || `el_${i}`, element: el })),
           };
+          const tReasonerStart = performance.now();
           const resolved = await defaultPrivacyReasoner.resolveManifestAmbiguities(batchManifest, { userTask });
-          for (const decision of (resolved.decisions || [])) {
+          const reasonerLatencyMs = Math.round(performance.now() - tReasonerStart);
+          const decisions = resolved.decisions || [];
+
+          for (const decision of decisions) {
             const el = sanitizedElements.find((e) => (e.id || "") === String(decision.elementId));
             if (el && (decision.decision === "BLOCK" || decision.decision === "REDACT")) {
               el.value = semanticRedactor.anonymize(el.value || "SENSITIVE", decision.category || "custom");
@@ -183,8 +221,79 @@ export class AutonomousAgentLoop {
               el.privacyDecision = decision.decision;
             }
           }
+
+          qwenTrace = {
+            invoked: true,
+            trigger: "keyword-prefilter",
+            candidateCount: ambiguousInputs.length,
+            batchSize: decisions.length,
+            latencyMs: reasonerLatencyMs,
+            engine: resolved.reasonerTrace?.engine || decisions[0]?.resolvedBy || "local-reasoner",
+            cacheHits: resolved.reasonerTrace?.cacheHits ?? null,
+            timedOut: resolved.reasonerTrace?.timedOut ?? false,
+            decisions: decisions.map((d) => ({
+              elementId: d.elementId,
+              decision: d.decision,
+              category: d.category || null,
+              engine: d.resolvedBy || null,
+              reason: d.reason || null,
+            })),
+          };
         }
 
+
+        // No-op detection: if the page looks identical to the last observation,
+        // the previous action changed nothing. Without this the loop can repeat
+        // a dead action until it runs out of steps.
+        const domDigest = digestElements(sanitizedElements);
+        if (this._lastDomDigest && this._lastDomDigest === domDigest && this.stepHistory.length > 0) {
+          const previous = this.stepHistory[this.stepHistory.length - 1];
+          previous.noOp = true;
+          logEvent(
+            "agent",
+            `Step ${previous.step} (${previous.action?.type || "action"}) had no observable effect — instructing model to try a different approach.`,
+            null,
+            "warn"
+          );
+        }
+        this._lastDomDigest = domDigest;
+
+        // Productivity accounting. The step budget is a ceiling, not a target:
+        // a run that is genuinely progressing should be allowed to use it, while
+        // one that is stuck should stop long before it. Judged on the PREVIOUS
+        // step, because its outcome is only observable now.
+        if (this.stepHistory.length > 0) {
+          const previous = this.stepHistory[this.stepHistory.length - 1];
+          const beforeThat = this.stepHistory[this.stepHistory.length - 2];
+          const signature = (s) =>
+            `${s?.action?.type || ""}|${s?.action?.selector || ""}|${s?.action?.value || ""}`;
+
+          const failed = previous.executionReport?.ok === false;
+          const repeated = Boolean(beforeThat) && signature(previous) === signature(beforeThat);
+          const unproductive = Boolean(previous.noOp) || failed || repeated;
+
+          if (unproductive) {
+            this._unproductiveRun += 1;
+            previous.unproductive = true;
+            previous.unproductiveReason = previous.noOp ? "no-effect" : failed ? "failed" : "repeated";
+          } else {
+            this._unproductiveRun = 0;
+          }
+
+          if (this._unproductiveRun >= maxUnproductive) {
+            logEvent(
+              "agent",
+              `Stopping: ${this._unproductiveRun} consecutive steps made no progress (last: ${previous.unproductiveReason}). ` +
+              `Reporting what was found rather than spending the remaining ${maxSteps - this.currentStep + 1} steps.`,
+              null,
+              "warn"
+            );
+            this.currentStep -= 1; // this step was never executed
+            this.status = AGENT_LOOP_STATUS.COMPLETED;
+            loopSummary = `Stopped after ${this._unproductiveRun} steps with no progress (${previous.unproductiveReason}).`;
+            break;
+          }
+        }
 
         // Build concise action history of previous steps in this session
         const historyDigest = this.stepHistory.map((s) => ({
@@ -192,6 +301,12 @@ export class AutonomousAgentLoop {
           action: s.action?.type || "action",
           selector: s.action?.selector || "",
           value: s.action?.value || "",
+          // Outcome, not just intent: without these the model cannot tell a
+          // click that worked from one that hit nothing, and starts looping.
+          ok: s.executionReport ? s.executionReport.ok !== false : true,
+          error: s.executionReport?.error || "",
+          noOp: Boolean(s.noOp),
+          repeated: s.unproductiveReason === "repeated",
           explanation: s.action?.explanation || ""
         }));
 
@@ -251,7 +366,8 @@ export class AutonomousAgentLoop {
             modelUsed: actionResult.modelUsed,
             latencyMs: Math.round(performance.now() - stepStartTime),
             sanitizedImage: captureResult.sanitizedImageUrl,
-            redactionCount: (captureResult.redactionList || []).length
+            redactionCount: (captureResult.redactionList || []).length,
+            redactionList: captureResult.redactionList || []
           };
           this.stepHistory.push(stepData);
 
@@ -288,6 +404,27 @@ export class AutonomousAgentLoop {
 
         const stepLatencyMs = Math.round(performance.now() - stepStartTime);
 
+        const stepRedactions = captureResult.redactionList || [];
+        const traceId = newTraceId();
+        const { counts, categories } = summarizeRedactions(stepRedactions);
+
+        const perceptionTrace = {
+          counts,
+          categories,
+          timings: captureResult.timings || {},
+          nmsSuppressed: captureResult.timings?.nmsSuppressed ?? 0,
+          guard: captureResult.guard || null,
+        };
+
+        const reasoningTrace = {
+          providerRequested: options.modelProvider || "auto",
+          provider: actionResult.modelUsed || null,
+          modelId: actionResult.modelId || null,
+          serverLatencyMs: actionResult.serverLatencyMs ?? null,
+          clientLatencyMs: actionResult.latencyMs ?? null,
+          attempts: actionResult.providerAttempts || [],
+        };
+
         const stepRecord = {
           step: this.currentStep,
           action,
@@ -297,7 +434,12 @@ export class AutonomousAgentLoop {
           serverLatencyMs: actionResult.serverLatencyMs,
           totalStepLatencyMs: stepLatencyMs,
           sanitizedImage: captureResult.sanitizedImageUrl,
-          redactionCount: (captureResult.redactionList || []).length
+          redactionCount: stepRedactions.length,
+          redactionList: stepRedactions,
+          perception: perceptionTrace,
+          reasoning: reasoningTrace,
+          qwen: qwenTrace,
+          traceId,
         };
 
         this.stepHistory.push(stepRecord);
@@ -305,12 +447,27 @@ export class AutonomousAgentLoop {
         // Record audit entry
         await logAuditEntry({
           type: "AGENT_LOOP_STEP",
+          traceId,
           step: this.currentStep,
           task: userTask,
           actionType: action.type,
           model: actionResult.modelUsed,
+          modelId: actionResult.modelId || null,
           latencyMs: stepLatencyMs,
-          redactions: (captureResult.redactionList || []).length
+          redactions: stepRedactions.length
+        });
+
+        // Record developer pipeline trace
+        await logPipelineTrace({
+          traceId,
+          kind: "agent_step",
+          step: this.currentStep,
+          url: captureResult.tabUrl || "",
+          redactions: stepRedactions.length,
+          latencyMs: stepLatencyMs,
+          perception: perceptionTrace,
+          reasoning: reasoningTrace,
+          qwen: qwenTrace,
         });
 
         // Notify caller
@@ -331,14 +488,32 @@ export class AutonomousAgentLoop {
 
     if (this.currentStep >= maxSteps && this.status === AGENT_LOOP_STATUS.RUNNING) {
       this.status = AGENT_LOOP_STATUS.COMPLETED;
-      loopSummary = `Reached maximum step limit (${maxSteps}).`;
+      loopSummary = `Reached the ${maxSteps}-step budget.`;
+    }
+
+    // Whatever ended the run, the user asked a question and deserves an answer.
+    // Previously an exhausted budget returned only the stop reason, so a run that
+    // had actually gathered useful information reported nothing at all.
+    const finishStep = [...this.stepHistory].reverse().find((s) => s.action?.type === "finish");
+    let result = finishStep?.action?.result || null;
+
+    if (!result && this.status !== AGENT_LOOP_STATUS.STOPPED) {
+      result = await this._synthesizeBestEffort(userTask, options, loopSummary).catch((err) => {
+        logEvent("agent", `Could not synthesize a final answer: ${err.message}`, null, "warn");
+        return null;
+      });
+    }
+
+    if (result?.summary) {
+      loopSummary = result.summary;
     }
 
     return {
       status: this.status,
       stepsExecuted: this.currentStep,
       history: this.stepHistory,
-      summary: loopSummary
+      summary: loopSummary,
+      result
     };
   }
 
@@ -350,6 +525,46 @@ export class AutonomousAgentLoop {
   }
 
   // ── Private Helpers ─────────────────────────────────────────────────────────
+
+  /**
+   * Asks the model to answer the user's question from what the run actually saw,
+   * for runs that ended without a `finish` (budget exhausted, or stuck).
+   *
+   * Sends only the sanitized step history — no new capture, no raw page text —
+   * so this adds no new egress surface beyond what each step already sent.
+   *
+   * @returns {Promise<Object|null>} A result object, or null if nothing to report.
+   */
+  async _synthesizeBestEffort(userTask, options, stopReason) {
+    const observed = this.stepHistory
+      .filter((s) => s.action && s.action.type !== "wait")
+      .map((s) => ({
+        step: s.step,
+        action: s.action.type,
+        value: s.action.value || "",
+        explanation: s.action.explanation || "",
+        ok: s.executionReport ? s.executionReport.ok !== false : true,
+      }));
+
+    if (observed.length === 0) return null;
+
+    logEvent("agent", "Synthesizing a best-effort answer from what the run observed...");
+
+    const res = await agentClient.requestAction({
+      task: userTask,
+      interactiveElements: [],
+      redactionManifest: [],
+      url: this.stepHistory[this.stepHistory.length - 1]?.url || "",
+      modelProvider: options.modelProvider || "auto",
+      step: this.currentStep,
+      maxSteps: this.currentStep,
+      history: observed,
+      synthesizeOnly: true,
+      stopReason,
+    });
+
+    return res?.ok ? (res.action?.result || null) : null;
+  }
 
   async _getActiveTab() {
     if (typeof chrome !== "undefined" && chrome.tabs && chrome.tabs.query) {

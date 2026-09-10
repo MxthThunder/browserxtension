@@ -4,14 +4,14 @@ import {
   resetSettings,
   getAuditLogs,
   clearAuditLogs,
-  DEFAULT_SETTINGS,
 } from "./storage.js";
 import { vault } from "./vault.js";
 
-// DOM Elements
-const navItems = document.querySelectorAll(".nav-item");
+// Nav / layout
+const navItems = document.querySelectorAll(".nav-item[data-target]");
 const sections = document.querySelectorAll(".settings-section");
 const pageTitle = document.getElementById("pageTitle");
+const btnTheme = document.getElementById("btnTheme");
 
 // Form Inputs
 const chkEnabled = document.getElementById("chkEnabled");
@@ -20,6 +20,10 @@ const chkShowPageBadge = document.getElementById("chkShowPageBadge");
 
 const selEngineMode = document.getElementById("selEngineMode");
 const numConfidence = document.getElementById("numConfidence");
+const numMaxSteps = document.getElementById("numMaxSteps");
+const lblMaxStepsVal = document.getElementById("lblMaxStepsVal");
+const numUnproductive = document.getElementById("numUnproductive");
+const lblUnproductiveVal = document.getElementById("lblUnproductiveVal");
 const lblConfidenceVal = document.getElementById("lblConfidenceVal");
 const numFaceProxy = document.getElementById("numFaceProxy");
 const lblFaceProxyVal = document.getElementById("lblFaceProxyVal");
@@ -49,33 +53,49 @@ const auditTableBody = document.getElementById("auditTableBody");
 const btnSave = document.getElementById("btnSave");
 const btnReset = document.getElementById("btnReset");
 const saveToast = document.getElementById("saveToast");
+const saveToastText = document.getElementById("saveToastText");
 
-// Diagnostics Elements
+// Diagnostics
 const diagWebgpu = document.getElementById("diagWebgpu");
 const diagGpuName = document.getElementById("diagGpuName");
 const hardwareStatusText = document.getElementById("hardwareStatusText");
 
 let currentWhitelist = [];
+let currentTheme = "dark";
 
-// Initialize Page
 document.addEventListener("DOMContentLoaded", async () => {
   setupNavigation();
   setupSliders();
   setupDiagnostics();
+  await applySavedTheme();
   await loadAndRenderSettings();
   await loadAndRenderAuditLogs();
   await initVaultSection();
 });
 
+/* ── Theme ─────────────────────────────────────────────── */
+async function applySavedTheme() {
+  const settings = await getSettings();
+  currentTheme = settings.theme || "dark";
+  document.documentElement.setAttribute("data-theme", currentTheme);
+}
+
+btnTheme.addEventListener("click", async () => {
+  currentTheme = currentTheme === "dark" ? "light" : "dark";
+  document.documentElement.setAttribute("data-theme", currentTheme);
+  await saveSettings({ theme: currentTheme });
+});
+
+/* ── Navigation ────────────────────────────────────────── */
 function setupNavigation() {
   const titles = {
-    "section-general": "General & Protection Preferences",
-    "section-engine": "Engine & Hardware Acceleration",
-    "section-categories": "Redaction Target Categories",
-    "section-server": "VLM Server & Agent Configuration",
-    "section-whitelist": "Domain Allowlist Management",
-    "section-vault": "Local Sensitive-Data Vault",
-    "section-audit": "Compliance Audit & Logs",
+    "section-general": "General & Protection",
+    "section-engine": "Engine & Hardware",
+    "section-categories": "PII Categories",
+    "section-server": "Backend & Server",
+    "section-whitelist": "Domain Whitelist",
+    "section-vault": "Secure Vault",
+    "section-audit": "Audit & Compliance",
   };
 
   navItems.forEach((item) => {
@@ -88,13 +108,8 @@ function setupNavigation() {
 
       item.classList.add("active");
       const targetSection = document.getElementById(targetId);
-      if (targetSection) {
-        targetSection.classList.add("active");
-      }
-
-      if (pageTitle && titles[targetId]) {
-        pageTitle.textContent = titles[targetId];
-      }
+      if (targetSection) targetSection.classList.add("active");
+      if (pageTitle && titles[targetId]) pageTitle.textContent = titles[targetId];
     });
   });
 }
@@ -108,39 +123,47 @@ function setupSliders() {
     const pct = Math.round(parseFloat(numFaceProxy.value) * 100);
     lblFaceProxyVal.textContent = pct + "%";
   });
+
+  numMaxSteps.addEventListener("input", () => {
+    lblMaxStepsVal.textContent = numMaxSteps.value;
+  });
+
+  numUnproductive.addEventListener("input", () => {
+    lblUnproductiveVal.textContent = numUnproductive.value;
+  });
 }
 
 async function setupDiagnostics() {
   if (typeof navigator !== "undefined" && navigator.gpu) {
     try {
-      const adapter = await navigator.gpu.requestAdapter();
+      const adapter = await Promise.race([
+        navigator.gpu.requestAdapter(),
+        new Promise((_, reject) => setTimeout(() => reject(new Error("timeout")), 1200)),
+      ]);
       if (adapter) {
-        diagWebgpu.textContent = "Supported (Available)";
-        diagWebgpu.style.color = "#34d399";
-        hardwareStatusText.textContent = "WebGPU Accelerated";
-        
-        if (adapter.info && adapter.info.device) {
-          diagGpuName.textContent = adapter.info.device;
-        } else {
-          diagGpuName.textContent = "Hardware GPU Found";
-        }
+        diagWebgpu.textContent = "Supported";
+        diagWebgpu.classList.add("good");
+        hardwareStatusText.textContent = "WebGPU accelerated";
+
+        diagGpuName.textContent = adapter.info?.device || "Hardware GPU found";
       } else {
-        diagWebgpu.textContent = "No Adapter";
-        diagWebgpu.style.color = "#f59e0b";
-        hardwareStatusText.textContent = "WASM SIMD Active";
+        diagWebgpu.textContent = "No adapter";
+        diagWebgpu.classList.add("warn");
+        hardwareStatusText.textContent = "WASM SIMD active";
       }
     } catch {
-      diagWebgpu.textContent = "WASM Fallback";
-      diagWebgpu.style.color = "#f59e0b";
-      hardwareStatusText.textContent = "WASM SIMD Active";
+      diagWebgpu.textContent = "WASM fallback";
+      diagWebgpu.classList.add("warn");
+      hardwareStatusText.textContent = "WASM SIMD active";
     }
   } else {
-    diagWebgpu.textContent = "Not Supported (WASM Mode)";
-    diagWebgpu.style.color = "#f59e0b";
-    hardwareStatusText.textContent = "WASM SIMD Active";
+    diagWebgpu.textContent = "Not supported (WASM mode)";
+    diagWebgpu.classList.add("warn");
+    hardwareStatusText.textContent = "WASM SIMD active";
   }
 }
 
+/* ── Settings ──────────────────────────────────────────── */
 async function loadAndRenderSettings() {
   const settings = await getSettings();
 
@@ -154,6 +177,12 @@ async function loadAndRenderSettings() {
 
   numFaceProxy.value = settings.faceProxyPercent || 0.30;
   lblFaceProxyVal.textContent = Math.round(parseFloat(numFaceProxy.value) * 100) + "%";
+
+  numMaxSteps.value = settings.maxSteps || 25;
+  lblMaxStepsVal.textContent = numMaxSteps.value;
+
+  numUnproductive.value = settings.maxUnproductiveSteps || 3;
+  lblUnproductiveVal.textContent = numUnproductive.value;
 
   const cats = settings.categories || {};
   catPasswords.checked = cats.passwords !== false;
@@ -174,7 +203,7 @@ async function loadAndRenderSettings() {
 function renderDomainList() {
   domainList.innerHTML = "";
   if (currentWhitelist.length === 0) {
-    domainList.innerHTML = `<li style="color: #64748b; font-size: 13px;">No excluded domains. Protection active across all websites.</li>`;
+    domainList.innerHTML = `<li class="domain-empty">No excluded domains — protection is active on every site.</li>`;
     return;
   }
 
@@ -182,8 +211,10 @@ function renderDomainList() {
     const li = document.createElement("li");
     li.className = "domain-item";
     li.innerHTML = `
-      <span>🌐 ${domain}</span>
-      <button class="btn-remove" data-idx="${idx}" title="Remove domain">✕</button>
+      <span>${escapeHtml(domain)}</span>
+      <button class="btn-remove" data-idx="${idx}" title="Remove domain" aria-label="Remove domain">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
     `;
     domainList.appendChild(li);
   });
@@ -197,7 +228,6 @@ function renderDomainList() {
   });
 }
 
-// Add domain
 btnAddDomain.addEventListener("click", () => {
   const domain = txtNewDomain.value.trim().toLowerCase().replace(/^https?:\/\//, "");
   if (domain && !currentWhitelist.includes(domain)) {
@@ -208,16 +238,13 @@ btnAddDomain.addEventListener("click", () => {
 });
 
 txtNewDomain.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
-    btnAddDomain.click();
-  }
+  if (e.key === "Enter") btnAddDomain.click();
 });
 
-// Test Connection
 btnTestConnection.addEventListener("click", async () => {
   const url = txtHealthUrl.value.trim();
-  connectionStatus.textContent = "Probing endpoint " + url + "...";
-  connectionStatus.style.color = "#93c5fd";
+  connectionStatus.className = "connection-status";
+  connectionStatus.textContent = "Probing endpoint " + url + "…";
 
   try {
     const start = performance.now();
@@ -226,19 +253,18 @@ btnTestConnection.addEventListener("click", async () => {
 
     if (res.ok) {
       const data = await res.json();
-      connectionStatus.textContent = `✓ Server Online (${latency} ms) — ${data.service || "Connected"}`;
-      connectionStatus.style.color = "#34d399";
+      connectionStatus.textContent = `Server online (${latency} ms) — ${data.service || "connected"}`;
+      connectionStatus.classList.add("good");
     } else {
-      connectionStatus.textContent = `⚠ Server responded with HTTP ${res.status}`;
-      connectionStatus.style.color = "#f59e0b";
+      connectionStatus.textContent = `Server responded with HTTP ${res.status}`;
+      connectionStatus.classList.add("warn");
     }
   } catch (err) {
-    connectionStatus.textContent = `✕ Failed to reach server: ${err.message}. Ensure FastAPI is running on port 8001.`;
-    connectionStatus.style.color = "#f87171";
+    connectionStatus.textContent = `Failed to reach server: ${err.message}. Ensure the backend is running on port 8001.`;
+    connectionStatus.classList.add("bad");
   }
 });
 
-// Save Settings
 btnSave.addEventListener("click", async () => {
   const newSettings = {
     enabled: chkEnabled.checked,
@@ -247,6 +273,8 @@ btnSave.addEventListener("click", async () => {
     engineMode: selEngineMode.value,
     detectionConfidence: parseFloat(numConfidence.value),
     faceProxyPercent: parseFloat(numFaceProxy.value),
+    maxSteps: parseInt(numMaxSteps.value, 10),
+    maxUnproductiveSteps: parseInt(numUnproductive.value, 10),
     categories: {
       passwords: catPasswords.checked,
       creditCards: catCreditCards.checked,
@@ -262,31 +290,30 @@ btnSave.addEventListener("click", async () => {
   };
 
   await saveSettings(newSettings);
-  showToast("✓ Preferences saved and synced across all tabs!");
+  showToast("Preferences saved and synced across all tabs.");
 });
 
-// Reset Settings
 btnReset.addEventListener("click", async () => {
   if (confirm("Reset all extension settings to default values?")) {
     await resetSettings();
     await loadAndRenderSettings();
-    showToast("✓ Settings restored to defaults.");
+    showToast("Settings restored to defaults.");
   }
 });
 
 function showToast(msg) {
-  saveToast.textContent = msg;
+  saveToastText.textContent = msg;
   saveToast.classList.remove("hidden");
   setTimeout(() => saveToast.classList.add("hidden"), 3000);
 }
 
-// Audit Logs
+/* ── Audit logs ────────────────────────────────────────── */
 async function loadAndRenderAuditLogs() {
   const logs = await getAuditLogs();
   auditTableBody.innerHTML = "";
 
   if (logs.length === 0) {
-    auditTableBody.innerHTML = `<tr><td colspan="6" style="text-align: center; color: #64748b; padding: 20px;">No audit events recorded yet.</td></tr>`;
+    auditTableBody.innerHTML = `<tr><td colspan="6" class="empty-state">No audit events recorded yet.</td></tr>`;
     return;
   }
 
@@ -299,12 +326,12 @@ async function loadAndRenderAuditLogs() {
     const backend = entry.backend || "WebGPU";
 
     tr.innerHTML = `
-      <td>${ts}</td>
-      <td title="${entry.url || ''}">${url}</td>
-      <td style="color: ${count > 0 ? '#38bdf8' : '#94a3b8'}; font-weight: 700;">${count} masked</td>
-      <td><span style="color: #34d399;">${backend}</span></td>
-      <td>${latency}</td>
-      <td><span style="color: #34d399;">100% Sanitized</span></td>
+      <td class="cell-mono">${ts}</td>
+      <td title="${escapeHtml(entry.url || "")}">${escapeHtml(url)}</td>
+      <td><span class="badge-pill ${count > 0 ? "success" : "neutral"}">${count} masked</span></td>
+      <td>${escapeHtml(backend)}</td>
+      <td class="cell-mono">${latency}</td>
+      <td><span class="badge-pill success">Sanitized</span></td>
     `;
     auditTableBody.appendChild(tr);
   });
@@ -349,7 +376,13 @@ function downloadFile(blob, filename) {
   URL.revokeObjectURL(url);
 }
 
-// ── Vault Management Section ─────────────────────────────────────────────────
+function escapeHtml(str) {
+  return (str || "").replace(/[&<>"']/g, (m) => ({
+    "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+  }[m]));
+}
+
+/* ── Vault ─────────────────────────────────────────────── */
 
 const vaultStatusDot   = document.getElementById("vaultStatusDot");
 const vaultStatusText  = document.getElementById("vaultStatusText");
@@ -374,15 +407,16 @@ async function initVaultSection() {
 
 function setVaultStatus(unlocked, customMsg = null) {
   if (vaultStatusDot) {
-    vaultStatusDot.style.background = unlocked ? "#34d399" : "#f87171";
+    vaultStatusDot.classList.toggle("unlocked", unlocked);
   }
   if (vaultStatusText) {
     vaultStatusText.textContent = customMsg ||
-      (unlocked ? "✓ Vault unlocked — AES-256-GCM (device-keyed, zero-leakage)" : "Vault locked");
-    vaultStatusText.style.color = unlocked ? "#34d399" : "#f87171";
+      (unlocked ? "Vault unlocked — AES-256-GCM, device-keyed, zero-leakage" : "Vault locked");
+    vaultStatusText.classList.toggle("unlocked", unlocked);
+    vaultStatusText.classList.toggle("locked", !unlocked);
   }
   if (btnLockVault) {
-    btnLockVault.style.display = unlocked ? "inline-block" : "none";
+    btnLockVault.style.display = unlocked ? "inline-flex" : "none";
   }
 }
 
@@ -394,41 +428,29 @@ function renderVaultTable() {
 
     const allEntries = [];
     for (const [cat, items] of Object.entries(summary)) {
-      for (const item of items) {
-        allEntries.push({ cat, ...item });
-      }
+      for (const item of items) allEntries.push({ cat, ...item });
     }
 
     if (allEntries.length === 0) {
       vaultTableBody.innerHTML = `
-        <tr>
-          <td colspan="5" style="text-align:center;color:#64748b;padding:20px;">
-            No entries stored. Add your Name, Email, Phone, etc. using the form above.
-          </td>
-        </tr>`;
+        <tr><td colspan="5" class="empty-state">No entries stored. Add your name, email, phone etc. using the form above.</td></tr>`;
       return;
     }
 
     for (const entry of allEntries) {
       const tr = document.createElement("tr");
-      const catEmoji = {
-        personal: "👤", contact: "📞", address: "📍",
-        credentials: "🔑", financial: "💳", gov_id: "🪪", custom: "🔧"
-      }[entry.cat] || "📦";
-
       tr.innerHTML = `
-        <td><span style="font-size:11px;">${catEmoji} ${entry.cat}</span></td>
-        <td><code style="background:#1e293b;padding:1px 5px;border-radius:3px;color:#93c5fd;font-size:11px;">${entry.key}</code></td>
-        <td style="font-family:monospace;color:#64748b;font-size:11px;">${entry.maskedValue || "••••"}</td>
-        <td><code style="background:#0d1322;padding:1px 5px;border-radius:3px;color:#38bdf8;font-size:10px;">${entry.tokenHandle}</code></td>
+        <td>${escapeHtml(entry.cat)}</td>
+        <td><code class="cell-code">${escapeHtml(entry.key)}</code></td>
+        <td class="cell-mono">${escapeHtml(entry.maskedValue || "••••")}</td>
+        <td><code class="cell-code">${escapeHtml(entry.tokenHandle)}</code></td>
         <td>
-          <button class="btn btn-danger vault-delete-btn" data-cat="${entry.cat}" data-key="${entry.key}"
-            style="font-size:10px;padding:2px 8px;">Delete</button>
+          <button class="btn btn-ghost btn-danger-ghost vault-delete-btn" data-cat="${entry.cat}" data-key="${entry.key}"
+            style="font-size:10.5px;padding:3px 9px;">Delete</button>
         </td>`;
       vaultTableBody.appendChild(tr);
     }
 
-    // Bind delete buttons
     vaultTableBody.querySelectorAll(".vault-delete-btn").forEach((btn) => {
       btn.addEventListener("click", async () => {
         const cat = btn.getAttribute("data-cat");
@@ -442,15 +464,11 @@ function renderVaultTable() {
     });
   } catch (err) {
     if (vaultTableBody) {
-      vaultTableBody.innerHTML = `
-        <tr><td colspan="5" style="text-align:center;color:#f87171;padding:14px;">
-          ${err.message}
-        </td></tr>`;
+      vaultTableBody.innerHTML = `<tr><td colspan="5" class="empty-state">${escapeHtml(err.message)}</td></tr>`;
     }
   }
 }
 
-// Add new vault entry
 if (btnAddVaultEntry) {
   btnAddVaultEntry.addEventListener("click", async () => {
     const cat = vaultCategory?.value?.trim();
@@ -458,23 +476,22 @@ if (btnAddVaultEntry) {
     const val = vaultValue?.value?.trim();
 
     if (!cat || !key || !val) {
-      showToast("⚠️ Please fill in Category, Key, and Value.");
+      showToast("Please fill in category, key and value.");
       return;
     }
 
     try {
       await vault.set(cat, key, val);
-      if (vaultKey)   vaultKey.value = "";
+      if (vaultKey) vaultKey.value = "";
       if (vaultValue) vaultValue.value = "";
       renderVaultTable();
-      showToast(`✓ Saved to vault: ${cat}.${key}`);
+      showToast(`Saved to vault: ${cat}.${key}`);
     } catch (err) {
       showToast(`Vault error: ${err.message}`);
     }
   });
 }
 
-// Quick preset buttons — pre-fill Category+Key so user only needs to type the value
 document.querySelectorAll(".vault-preset").forEach((btn) => {
   btn.addEventListener("click", () => {
     const cat = btn.getAttribute("data-cat");
@@ -488,22 +505,17 @@ document.querySelectorAll(".vault-preset").forEach((btn) => {
   });
 });
 
-// Lock vault
 if (btnLockVault) {
   btnLockVault.addEventListener("click", () => {
     vault.lock();
     setVaultStatus(false, "Vault locked manually.");
     if (vaultTableBody) {
-      vaultTableBody.innerHTML = `
-        <tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px;">
-          Vault is locked.
-        </td></tr>`;
+      vaultTableBody.innerHTML = `<tr><td colspan="5" class="empty-state">Vault is locked.</td></tr>`;
     }
     showToast("Vault locked.");
   });
 }
 
-// Export encrypted backup
 if (btnExportVault) {
   btnExportVault.addEventListener("click", async () => {
     try {
@@ -517,17 +529,13 @@ if (btnExportVault) {
   });
 }
 
-// Clear all vault entries
 if (btnClearVault) {
   btnClearVault.addEventListener("click", async () => {
-    if (!confirm("⚠️ Delete ALL vault entries permanently? This cannot be undone.")) return;
+    if (!confirm("Delete ALL vault entries permanently? This cannot be undone.")) return;
     try {
-      // Delete every entry from every category
       const summary = vault.listKeys();
       for (const [cat, items] of Object.entries(summary)) {
-        for (const item of items) {
-          await vault.delete(cat, item.key);
-        }
+        for (const item of items) await vault.delete(cat, item.key);
       }
       renderVaultTable();
       showToast("All vault entries cleared.");

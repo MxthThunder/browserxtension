@@ -88,20 +88,18 @@
         "prompt_guard.js",
         "data_adapter.js",
         "agent_loop.js",
+        "theme.css",
         "popup.html",
         "popup.js",
         "popup.css",
         "options.html",
         "options.js",
         "options.css",
-        "demo.html",
         "dashboard.html",
         "dashboard.js",
         "dashboard.css",
         "mission_console.html",
-        "openmct_telemetry_plugin.js",
-        "demo-photo.jpg",
-        "benchmark_results.json"
+        "openmct_telemetry_plugin.js"
       ],
       "matches": ["<all_urls>"]
     }

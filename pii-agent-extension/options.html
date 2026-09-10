@@ -1,434 +1,408 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
-  <title>Privacy Agent — Preferences & Configuration</title>
+  <title>Privacy Agent — Settings</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="theme.css" />
   <link rel="stylesheet" href="options.css" />
 </head>
 <body>
   <div class="app-layout">
-    <!-- Sidebar Navigation -->
+
+    <!-- Sidebar -->
     <aside class="sidebar">
       <div class="brand">
-        <div class="brand-icon">🛡️</div>
+        <span class="shield-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7L12 2z" fill="currentColor" opacity="0.15" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
         <div class="brand-text">
-          <h2>Privacy Agent</h2>
-          <span>ISRO PS #26171</span>
+          <span class="brand-name">Privacy Agent</span>
+          <span class="brand-sub">Settings</span>
         </div>
+        <button id="btnTheme" class="icon-btn" title="Toggle light/dark mode" aria-label="Toggle theme">
+          <svg class="icon-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          <svg class="icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
       </div>
 
+      <a href="dashboard.html" class="nav-item nav-item-external" title="Open analytics dashboard">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="20" x2="18" y2="10"/><line x1="12" y1="20" x2="12" y2="4"/><line x1="6" y1="20" x2="6" y2="14"/></svg>
+        <span>Analytics Dashboard</span>
+        <svg class="ext-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+      </a>
+
       <nav class="nav-links">
-        <a href="dashboard.html" class="nav-item nav-item-highlight" title="Open graphical analytics dashboard">
-          <span class="icon">📊</span> Analytics Dashboard ↗
-        </a>
         <a href="#section-general" class="nav-item active" data-target="section-general">
-          <span class="icon">⚙️</span> General & Protection
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7L12 2z"/></svg>
+          <span>General &amp; Protection</span>
         </a>
         <a href="#section-engine" class="nav-item" data-target="section-engine">
-          <span class="icon">⚡</span> Engine & WebGPU
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+          <span>Engine &amp; Hardware</span>
         </a>
         <a href="#section-categories" class="nav-item" data-target="section-categories">
-          <span class="icon">🎯</span> PII Categories
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><circle cx="12" cy="12" r="5"/><circle cx="12" cy="12" r="1"/></svg>
+          <span>PII Categories</span>
         </a>
         <a href="#section-server" class="nav-item" data-target="section-server">
-          <span class="icon">🤖</span> Backend & VLM Server
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="7" rx="1.5"/><rect x="2" y="14" width="20" height="7" rx="1.5"/><line x1="6" y1="6.5" x2="6.01" y2="6.5"/><line x1="6" y1="17.5" x2="6.01" y2="17.5"/></svg>
+          <span>Backend &amp; Server</span>
         </a>
         <a href="#section-vault" class="nav-item" data-target="section-vault">
-          <span class="icon">🔐</span> Secure Vault
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+          <span>Secure Vault</span>
         </a>
         <a href="#section-whitelist" class="nav-item" data-target="section-whitelist">
-          <span class="icon">🌐</span> Domain Whitelist
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><line x1="3" y1="12" x2="21" y2="12"/><path d="M12 3a13.5 13.5 0 0 1 3.5 9A13.5 13.5 0 0 1 12 21a13.5 13.5 0 0 1-3.5-9A13.5 13.5 0 0 1 12 3z"/></svg>
+          <span>Domain Whitelist</span>
         </a>
         <a href="#section-audit" class="nav-item" data-target="section-audit">
-          <span class="icon">📋</span> Audit & Compliance
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="8" y1="16" x2="16" y2="16"/></svg>
+          <span>Audit &amp; Compliance</span>
         </a>
       </nav>
 
       <div class="sidebar-footer">
         <div class="status-indicator">
           <span class="pulse-dot"></span>
-          <span id="hardwareStatusText">Probing WebGPU...</span>
+          <span id="hardwareStatusText">Probing hardware…</span>
         </div>
-        <p class="version">v1.2.0 • Zero-Leakage Client</p>
+        <p class="version">v1.2.0 · Zero-leakage client</p>
       </div>
     </aside>
 
-    <!-- Main Content Area -->
+    <!-- Main -->
     <main class="main-content">
       <header class="content-header">
         <div>
-          <h1 id="pageTitle">General & Protection Preferences</h1>
-          <p class="subtitle">Configure client-side visual perception and privacy enforcement policies.</p>
+          <h1 id="pageTitle">General &amp; Protection</h1>
+          <p class="subtitle">Configure client-side visual perception and privacy enforcement policy.</p>
         </div>
         <div class="header-actions">
-          <button id="btnReset" class="btn btn-secondary">Reset to Defaults</button>
-          <button id="btnSave" class="btn btn-primary">Save Changes</button>
+          <button id="btnReset" class="btn btn-ghost">Reset to defaults</button>
+          <button id="btnSave" class="btn btn-primary">Save changes</button>
         </div>
       </header>
 
-      <!-- Alert Notification Banner -->
-      <div id="saveToast" class="toast hidden">✓ Settings saved successfully!</div>
+      <div id="saveToast" class="toast hidden">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 17"/></svg>
+        <span id="saveToastText">Settings saved</span>
+      </div>
 
-      <!-- SECTION 1: General & Protection -->
+      <!-- SECTION: General -->
       <section id="section-general" class="settings-section active">
         <div class="card">
           <div class="card-header">
-            <h3>🛡️ Master Protection Guard</h3>
+            <h3>Master Protection Guard</h3>
             <p>Control whether the visual privacy shield actively scans and sanitizes pages.</p>
           </div>
           <div class="form-group row">
             <div class="label-col">
-              <strong>Enable Zero-Leakage Shield</strong>
-              <span>When enabled, sensitive DOM inputs and visual pixels are redacted before any network export.</span>
+              <strong>Enable zero-leakage shield</strong>
+              <span>Sensitive DOM inputs and visual pixels are redacted before any network export.</span>
             </div>
-            <div class="control-col">
-              <label class="switch">
-                <input type="checkbox" id="chkEnabled" checked />
-                <span class="slider"></span>
-              </label>
-            </div>
+            <label class="switch"><input type="checkbox" id="chkEnabled" checked /><span class="switch-track"><span class="switch-thumb"></span></span></label>
           </div>
-
           <div class="form-group row">
             <div class="label-col">
-              <strong>Strict Fail-Closed Policy</strong>
-              <span>If local model or canvas redaction encounters an error, completely block agent execution rather than risking leakage.</span>
+              <strong>Strict fail-closed policy</strong>
+              <span>If local model or canvas redaction errors, block agent execution rather than risk leakage.</span>
             </div>
-            <div class="control-col">
-              <label class="switch">
-                <input type="checkbox" id="chkFailClosed" checked />
-                <span class="slider"></span>
-              </label>
-            </div>
+            <label class="switch"><input type="checkbox" id="chkFailClosed" checked /><span class="switch-track"><span class="switch-thumb"></span></span></label>
           </div>
-
           <div class="form-group row">
             <div class="label-col">
-              <strong>Show On-Page Privacy Badge</strong>
-              <span>Displays a discrete indicator at the top right of web pages indicating active visual protection.</span>
+              <strong>Show on-page privacy badge</strong>
+              <span>Displays a discrete indicator on web pages while protection is active.</span>
             </div>
-            <div class="control-col">
-              <label class="switch">
-                <input type="checkbox" id="chkShowPageBadge" checked />
-                <span class="slider"></span>
-              </label>
-            </div>
+            <label class="switch"><input type="checkbox" id="chkShowPageBadge" checked /><span class="switch-track"><span class="switch-thumb"></span></span></label>
           </div>
         </div>
 
         <div class="card">
           <div class="card-header">
-            <h3>⚡ Keyboard Shortcuts</h3>
+            <h3>Keyboard Shortcuts</h3>
             <p>Quick access keys configured in Chrome.</p>
           </div>
           <div class="shortcut-list">
-            <div class="shortcut-item">
-              <span>Toggle Privacy Protection</span>
-              <kbd>Ctrl + Shift + P</kbd>
-            </div>
-            <div class="shortcut-item">
-              <span>Capture & Redact Screen</span>
-              <kbd>Ctrl + Shift + S</kbd>
-            </div>
+            <div class="shortcut-item"><span>Toggle privacy protection</span><kbd>Ctrl + Shift + P</kbd></div>
+            <div class="shortcut-item"><span>Capture &amp; redact screen</span><kbd>Ctrl + Shift + S</kbd></div>
           </div>
         </div>
       </section>
 
-      <!-- SECTION 2: Engine & WebGPU -->
+      <!-- SECTION: Engine -->
       <section id="section-engine" class="settings-section">
         <div class="card">
           <div class="card-header">
-            <h3>⚡ Hardware Acceleration & Vision Engine</h3>
-            <p>Choose runtime acceleration backend and tune visual detection sensitivity.</p>
+            <h3>Hardware Acceleration &amp; Vision Engine</h3>
+            <p>Choose the runtime backend and tune visual detection sensitivity.</p>
           </div>
 
           <div class="form-group">
-            <label for="selEngineMode"><strong>Inference Runtime Backend</strong></label>
+            <label for="selEngineMode"><strong>Inference runtime backend</strong></label>
             <select id="selEngineMode" class="form-input">
-              <option value="auto">Auto-Detect (WebGPU Preferred $\rightarrow$ WASM SIMD Fallback)</option>
-              <option value="webgpu">Force WebGPU (Hardware GPU Shader Acceleration)</option>
-              <option value="wasm">Force ONNX WASM SIMD (Universal CPU Execution)</option>
+              <option value="auto">Auto-detect (WebGPU preferred, WASM fallback)</option>
+              <option value="webgpu">Force WebGPU (hardware acceleration)</option>
+              <option value="wasm">Force ONNX WASM SIMD (universal CPU)</option>
             </select>
-            <small class="field-hint">Auto-Detect provides ~460ms WebGPU latency with zero-crash CPU fallback.</small>
+            <small class="field-hint">Auto-detect gives lowest latency with a zero-crash CPU fallback.</small>
           </div>
 
           <div class="form-group">
             <div class="slider-header">
-              <label for="numConfidence"><strong>Vision Confidence Threshold</strong></label>
+              <label for="numConfidence"><strong>Vision confidence threshold</strong></label>
               <span id="lblConfidenceVal" class="badge-val">0.65</span>
             </div>
             <input type="range" id="numConfidence" min="0.30" max="0.95" step="0.05" value="0.65" class="range-slider" />
-            <small class="field-hint">Lower values increase recall (fewer missed objects); higher values increase precision.</small>
+            <small class="field-hint">Lower values increase recall; higher values increase precision.</small>
           </div>
 
           <div class="form-group">
             <div class="slider-header">
-              <label for="numFaceProxy"><strong>Face Proxy Vertical Slice Ratio</strong></label>
+              <label for="numFaceProxy"><strong>Face proxy vertical slice ratio</strong></label>
               <span id="lblFaceProxyVal" class="badge-val">30%</span>
             </div>
             <input type="range" id="numFaceProxy" min="0.15" max="0.50" step="0.05" value="0.30" class="range-slider" />
-            <small class="field-hint">Percentage of the upper bounding box of detected persons masked for biometric facial privacy.</small>
+            <small class="field-hint">Portion of each detected person's bounding box masked for facial privacy.</small>
+          </div>
+
+          <div class="form-group">
+            <div class="slider-header">
+              <label for="numMaxSteps"><strong>Agent step budget</strong></label>
+              <span id="lblMaxStepsVal" class="badge-val">25</span>
+            </div>
+            <input type="range" id="numMaxSteps" min="5" max="60" step="1" value="25" class="range-slider" />
+            <small class="field-hint">Maximum actions per task. The agent stops early on repeated no-progress steps, so a higher ceiling is not a higher cost.</small>
+          </div>
+
+          <div class="form-group">
+            <div class="slider-header">
+              <label for="numUnproductive"><strong>Stop after no-progress steps</strong></label>
+              <span id="lblUnproductiveVal" class="badge-val">3</span>
+            </div>
+            <input type="range" id="numUnproductive" min="2" max="8" step="1" value="3" class="range-slider" />
+            <small class="field-hint">Consecutive actions with no observable effect before the run is abandoned and the best-effort answer is reported.</small>
           </div>
         </div>
 
         <div class="card">
           <div class="card-header">
-            <h3>🔍 Hardware Diagnostics</h3>
-            <p>Client device hardware capabilities probed in real time.</p>
+            <h3>Hardware Diagnostics</h3>
+            <p>Client device capabilities, probed in real time.</p>
           </div>
           <div class="diagnostics-grid">
-            <div class="diag-box">
-              <span class="d-label">WebGPU Supported</span>
-              <span id="diagWebgpu" class="d-val">Probing...</span>
-            </div>
-            <div class="diag-box">
-              <span class="d-label">Adapter / GPU</span>
-              <span id="diagGpuName" class="d-val">Detecting...</span>
-            </div>
-            <div class="diag-box">
-              <span class="d-label">WASM SIMD</span>
-              <span id="diagWasm" class="d-val">Supported</span>
-            </div>
-            <div class="diag-box">
-              <span class="d-label">Model Status</span>
-              <span id="diagModel" class="d-val">OWL-ViT (Zero-Shot)</span>
-            </div>
+            <div class="diag-box"><span class="d-label">WebGPU</span><span id="diagWebgpu" class="d-val">Probing…</span></div>
+            <div class="diag-box"><span class="d-label">Adapter / GPU</span><span id="diagGpuName" class="d-val">Detecting…</span></div>
+            <div class="diag-box"><span class="d-label">WASM SIMD</span><span id="diagWasm" class="d-val">Supported</span></div>
+            <div class="diag-box"><span class="d-label">Model</span><span id="diagModel" class="d-val">OWL-ViT (zero-shot)</span></div>
           </div>
         </div>
       </section>
 
-      <!-- SECTION 3: PII Categories -->
+      <!-- SECTION: Categories -->
       <section id="section-categories" class="settings-section">
         <div class="card">
           <div class="card-header">
-            <h3>🎯 Redaction Target Categories</h3>
-            <p>Select which types of sensitive information the extension should detect and black out.</p>
+            <h3>Redaction Target Categories</h3>
+            <p>Choose which types of sensitive information the extension detects and masks.</p>
           </div>
 
           <div class="category-grid">
             <label class="category-card">
               <input type="checkbox" id="catPasswords" checked />
-              <div class="cat-content">
-                <span class="cat-icon">🔑</span>
-                <strong>Passwords & PINs</strong>
-                <p>HTML password inputs, OTPs, secret credentials, and tokens.</p>
-              </div>
+              <svg class="cat-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><circle cx="7" cy="15" r="4"/><path d="M9.5 12.5L20 2M20 2l2 2M20 2l-2.5 2.5M16 6l2 2"/></svg>
+              <div class="cat-content"><strong>Passwords &amp; PINs</strong><p>Password inputs, OTPs, secret credentials and tokens.</p></div>
             </label>
 
             <label class="category-card">
               <input type="checkbox" id="catCreditCards" checked />
-              <div class="cat-content">
-                <span class="cat-icon">💳</span>
-                <strong>Payment Cards</strong>
-                <p>Card numbers, CVV/CVC, expiration dates, banking fields.</p>
-              </div>
+              <svg class="cat-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="1" y="4" width="22" height="16" rx="2"/><line x1="1" y1="10" x2="23" y2="10"/></svg>
+              <div class="cat-content"><strong>Payment Cards</strong><p>Card numbers, CVV/CVC, expiry dates, banking fields.</p></div>
             </label>
 
             <label class="category-card">
               <input type="checkbox" id="catGovIds" checked />
-              <div class="cat-content">
-                <span class="cat-icon">🪪</span>
-                <strong>Government & KYC IDs</strong>
-                <p>Aadhaar, SSN, PAN, Passport numbers, national ID fields.</p>
-              </div>
+              <svg class="cat-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><rect x="8" y="2" width="8" height="4" rx="1"/><line x1="9" y1="13" x2="15" y2="13"/><line x1="9" y1="17" x2="13" y2="17"/></svg>
+              <div class="cat-content"><strong>Government &amp; KYC IDs</strong><p>Aadhaar, SSN, PAN, passport and national ID fields.</p></div>
             </label>
 
             <label class="category-card">
               <input type="checkbox" id="catFaces" checked />
-              <div class="cat-content">
-                <span class="cat-icon">👤</span>
-                <strong>Biometric Faces & People</strong>
-                <p>Webcam feeds, user profile photos, camera viewports.</p>
-              </div>
+              <svg class="cat-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
+              <div class="cat-content"><strong>Biometric Faces &amp; People</strong><p>Webcam feeds, profile photos, camera viewports.</p></div>
             </label>
 
             <label class="category-card">
               <input type="checkbox" id="catContactInfo" checked />
-              <div class="cat-content">
-                <span class="cat-icon">📞</span>
-                <strong>Contact & Identity Info</strong>
-                <p>Phone numbers, personal email addresses, home addresses.</p>
-              </div>
+              <svg class="cat-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M22 16.92v3a2 2 0 0 1-2.18 2 19.79 19.79 0 0 1-8.63-3.07 19.5 19.5 0 0 1-6-6 19.79 19.79 0 0 1-3.07-8.67A2 2 0 0 1 4.11 2h3a2 2 0 0 1 2 1.72c.13.96.36 1.9.7 2.81a2 2 0 0 1-.45 2.11L8.09 9.91a16 16 0 0 0 6 6l1.27-1.27a2 2 0 0 1 2.11-.45c.9.34 1.85.57 2.81.7A2 2 0 0 1 22 16.92z"/></svg>
+              <div class="cat-content"><strong>Contact &amp; Identity Info</strong><p>Phone numbers, personal email addresses, home addresses.</p></div>
             </label>
 
             <label class="category-card">
               <input type="checkbox" id="catScreens" checked />
-              <div class="cat-content">
-                <span class="cat-icon">💻</span>
-                <strong>Physical Screens & Displays</strong>
-                <p>Monitors, mobile phone screens appearing in camera frames.</p>
-              </div>
+              <svg class="cat-icon" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+              <div class="cat-content"><strong>Physical Screens &amp; Displays</strong><p>Monitors and phone screens appearing in camera frames.</p></div>
             </label>
           </div>
         </div>
       </section>
 
-      <!-- SECTION 4: Backend & Server -->
+      <!-- SECTION: Server -->
       <section id="section-server" class="settings-section">
         <div class="card">
           <div class="card-header">
-            <h3>🤖 Centralized VLM Reasoning Server</h3>
-            <p>Configure the backend server that plans browser actions based on sanitized screen data.</p>
+            <h3>Reasoning Server</h3>
+            <p>Configure the backend that plans browser actions from sanitized screen data.</p>
           </div>
 
           <div class="form-group">
-            <label for="txtServerUrl"><strong>Agent Action Endpoint URL</strong></label>
+            <label for="txtServerUrl"><strong>Agent action endpoint URL</strong></label>
             <input type="text" id="txtServerUrl" class="form-input" value="http://127.0.0.1:8001/api/act" />
             <small class="field-hint">Endpoint accepting POST requests with sanitized visual frames.</small>
           </div>
 
           <div class="form-group">
-            <label for="txtHealthUrl"><strong>Server Health Check URL</strong></label>
+            <label for="txtHealthUrl"><strong>Server health check URL</strong></label>
             <div class="input-with-button">
               <input type="text" id="txtHealthUrl" class="form-input" value="http://127.0.0.1:8001/health" />
-              <button id="btnTestConnection" class="btn btn-secondary">Test Connection</button>
+              <button id="btnTestConnection" class="btn btn-ghost">Test connection</button>
             </div>
-            <div id="connectionStatus" class="connection-status">Click Test Connection to probe backend server.</div>
+            <div id="connectionStatus" class="connection-status">Click Test Connection to probe the backend server.</div>
           </div>
 
           <div class="form-group">
-            <label for="txtApiKey"><strong>API Authentication Key (Optional)</strong></label>
-            <input type="password" id="txtApiKey" class="form-input" placeholder="Bearer token or custom secret..." />
-            <small class="field-hint">If required by your enterprise cloud proxy or centralized gateway.</small>
+            <label for="txtApiKey"><strong>API authentication key (optional)</strong></label>
+            <input type="password" id="txtApiKey" class="form-input" placeholder="Bearer token or custom secret…" />
+            <small class="field-hint">Required only for an enterprise proxy or centralized gateway.</small>
           </div>
         </div>
       </section>
 
-      <!-- SECTION 5: Domain Whitelist -->
+      <!-- SECTION: Whitelist -->
       <section id="section-whitelist" class="settings-section">
         <div class="card">
           <div class="card-header">
-            <h3>🌐 Domain Allowlist / Exclusion List</h3>
-            <p>Domains listed here will bypass visual redaction (e.g. trusted internal test domains).</p>
+            <h3>Domain Allowlist</h3>
+            <p>Domains listed here bypass visual redaction — e.g. trusted internal test domains.</p>
           </div>
 
           <div class="whitelist-input-row">
             <input type="text" id="txtNewDomain" class="form-input" placeholder="e.g. internal.corp or localhost:3000" />
-            <button id="btnAddDomain" class="btn btn-primary">Add Domain</button>
+            <button id="btnAddDomain" class="btn btn-primary">Add domain</button>
           </div>
 
-          <div class="domain-list-container">
-            <ul id="domainList" class="domain-list">
-              <!-- Dynamically populated -->
-            </ul>
-          </div>
+          <ul id="domainList" class="domain-list"></ul>
         </div>
       </section>
 
-      <!-- SECTION 6: Secure Vault -->
+      <!-- SECTION: Vault -->
       <section id="section-vault" class="settings-section">
         <div class="card">
           <div class="card-header">
-            <h3>🔐 Local Sensitive-Data Vault</h3>
-            <p>Store personal details securely on-device (AES-256-GCM encrypted). The agent fills these fields locally — the VLM server <strong>only ever sees abstract tokens</strong>, never real values.</p>
+            <h3>Local Sensitive-Data Vault</h3>
+            <p>Personal details stay on-device, AES-256-GCM encrypted. The agent fills these fields locally — the reasoning server <strong>only ever sees abstract tokens</strong>, never real values.</p>
           </div>
 
-          <!-- Vault Status Bar -->
-          <div id="vaultStatusBar" style="display:flex;align-items:center;gap:10px;padding:10px 14px;border-radius:8px;background:#0d1322;border:1px solid #1f2937;margin-bottom:16px;">
-            <span id="vaultStatusDot" style="width:10px;height:10px;border-radius:50%;background:#f87171;flex-shrink:0;"></span>
-            <span id="vaultStatusText" style="font-size:12px;color:#94a3b8;">Vault is locked. Initializing...</span>
-            <span style="flex:1;"></span>
-            <button id="btnLockVault" class="btn btn-secondary" style="font-size:11px;padding:4px 10px;display:none;">🔒 Lock Vault</button>
+          <div id="vaultStatusBar" class="vault-status-bar">
+            <span id="vaultStatusDot" class="vault-status-dot"></span>
+            <span id="vaultStatusText" class="vault-status-text">Vault is locked. Initializing…</span>
+            <button id="btnLockVault" class="btn btn-ghost vault-lock-btn">
+              <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+              Lock vault
+            </button>
           </div>
 
-          <!-- Add New Entry Row -->
-          <div style="display:grid;grid-template-columns:1fr 1fr 2fr auto;gap:8px;margin-bottom:16px;align-items:center;">
-            <select id="vaultCategory" class="form-input" style="font-size:12px;">
-              <option value="personal">👤 Personal</option>
-              <option value="contact">📞 Contact</option>
-              <option value="address">📍 Address</option>
-              <option value="credentials">🔑 Credentials</option>
-              <option value="financial">💳 Financial</option>
-              <option value="gov_id">🪪 Gov ID</option>
-              <option value="custom">🔧 Custom</option>
+          <div class="vault-add-row">
+            <select id="vaultCategory" class="form-input">
+              <option value="personal">Personal</option>
+              <option value="contact">Contact</option>
+              <option value="address">Address</option>
+              <option value="credentials">Credentials</option>
+              <option value="financial">Financial</option>
+              <option value="gov_id">Gov ID</option>
+              <option value="custom">Custom</option>
             </select>
-            <input type="text" id="vaultKey" class="form-input" placeholder="Field key (e.g. email)" style="font-size:12px;" />
-            <input type="text" id="vaultValue" class="form-input" placeholder="Value (e.g. alice@example.com)" style="font-size:12px;" />
-            <button id="btnAddVaultEntry" class="btn btn-primary" style="white-space:nowrap;">+ Add</button>
+            <input type="text" id="vaultKey" class="form-input" placeholder="Field key (e.g. email)" />
+            <input type="text" id="vaultValue" class="form-input" placeholder="Value (e.g. alice@example.com)" />
+            <button id="btnAddVaultEntry" class="btn btn-primary">Add</button>
           </div>
 
-          <!-- Quick-Fill Presets -->
-          <div style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:14px;">
-            <span style="font-size:11px;color:#64748b;align-self:center;">Quick presets:</span>
-            <button class="vault-preset" data-cat="personal" data-key="first_name" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">First Name</button>
-            <button class="vault-preset" data-cat="personal" data-key="last_name" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Last Name</button>
-            <button class="vault-preset" data-cat="contact" data-key="email" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Email</button>
-            <button class="vault-preset" data-cat="contact" data-key="phone" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Phone</button>
-            <button class="vault-preset" data-cat="address" data-key="street" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Street</button>
-            <button class="vault-preset" data-cat="address" data-key="city" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">City</button>
-            <button class="vault-preset" data-cat="address" data-key="zip" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">ZIP / Pincode</button>
-            <button class="vault-preset" data-cat="credentials" data-key="username" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Username</button>
-            <button class="vault-preset" data-cat="credentials" data-key="password" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Password</button>
-            <button class="vault-preset" data-cat="gov_id" data-key="aadhaar" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">Aadhaar</button>
-            <button class="vault-preset" data-cat="gov_id" data-key="pan" style="padding:2px 8px;background:#1e293b;border:1px solid #334155;border-radius:4px;color:#cbd5e1;font-size:11px;cursor:pointer;">PAN</button>
+          <div class="chip-row">
+            <span class="chip-row-label">Quick presets</span>
+            <button class="chip-btn vault-preset" data-cat="personal" data-key="first_name">First name</button>
+            <button class="chip-btn vault-preset" data-cat="personal" data-key="last_name">Last name</button>
+            <button class="chip-btn vault-preset" data-cat="contact" data-key="email">Email</button>
+            <button class="chip-btn vault-preset" data-cat="contact" data-key="phone">Phone</button>
+            <button class="chip-btn vault-preset" data-cat="address" data-key="street">Street</button>
+            <button class="chip-btn vault-preset" data-cat="address" data-key="city">City</button>
+            <button class="chip-btn vault-preset" data-cat="address" data-key="zip">ZIP / pincode</button>
+            <button class="chip-btn vault-preset" data-cat="credentials" data-key="username">Username</button>
+            <button class="chip-btn vault-preset" data-cat="credentials" data-key="password">Password</button>
+            <button class="chip-btn vault-preset" data-cat="gov_id" data-key="aadhaar">Aadhaar</button>
+            <button class="chip-btn vault-preset" data-cat="gov_id" data-key="pan">PAN</button>
           </div>
 
-          <!-- Vault Entries Table -->
           <div class="table-responsive">
             <table class="audit-table" id="vaultTable">
               <thead>
-                <tr>
-                  <th>Category</th>
-                  <th>Key</th>
-                  <th>Value (masked)</th>
-                  <th>Token Handle</th>
-                  <th>Action</th>
-                </tr>
+                <tr><th>Category</th><th>Key</th><th>Value</th><th>Token handle</th><th></th></tr>
               </thead>
               <tbody id="vaultTableBody">
-                <tr><td colspan="5" style="text-align:center;color:#64748b;padding:20px;">Vault is initializing...</td></tr>
+                <tr><td colspan="5" class="empty-state">Vault is initializing…</td></tr>
               </tbody>
             </table>
           </div>
 
-          <!-- Vault Footer Actions -->
-          <div style="display:flex;gap:8px;margin-top:12px;">
-            <button id="btnExportVault" class="btn btn-secondary" style="font-size:11px;">⬇️ Export Encrypted Backup</button>
-            <button id="btnClearVault" class="btn btn-danger" style="font-size:11px;">🗑️ Clear All Entries</button>
+          <div class="vault-footer-actions">
+            <button id="btnExportVault" class="btn btn-ghost">Export encrypted backup</button>
+            <button id="btnClearVault" class="btn btn-ghost btn-danger-ghost">Clear all entries</button>
           </div>
         </div>
 
-        <div class="card" style="margin-top:12px;">
-          <div class="card-header">
-            <h3>🤖 How Vault Tokens Work</h3>
-          </div>
-          <div style="font-size:12px;color:#94a3b8;line-height:1.7;">
-            <p>When the agent needs to fill a sensitive field (e.g. your email), it requests <code style="background:#1e293b;padding:1px 5px;border-radius:3px;color:#38bdf8;">{{VAULT:contact.email}}</code> from the server.</p>
-            <p>The VLM server <strong>never sees your actual email</strong> — only the token. The extension resolves it to the real value on-device, at the last millisecond before DOM injection.</p>
-            <p style="color:#34d399;">✓ Zero-Leakage: Your data stays on-device. Always.</p>
+        <div class="card">
+          <div class="card-header"><h3>How Vault Tokens Work</h3></div>
+          <div class="info-copy">
+            <p>When the agent needs to fill a sensitive field — your email, say — it requests <code>{{VAULT:contact.email}}</code> from the server.</p>
+            <p>The reasoning server <strong>never sees your actual email</strong>, only the token. The extension resolves it to the real value on-device, at the last millisecond before DOM injection.</p>
+            <p class="info-good">Zero-leakage: your data stays on-device, always.</p>
           </div>
         </div>
       </section>
 
-      <!-- SECTION 6: Audit & Compliance -->
+      <!-- SECTION: Audit -->
       <section id="section-audit" class="settings-section">
         <div class="card">
           <div class="card-header">
-            <h3>📋 Compliance Logs & Audit Trail</h3>
-            <p>Review cryptographic logs of all redaction events for privacy verification.</p>
+            <h3>Compliance Logs &amp; Audit Trail</h3>
+            <p>Review logs of all redaction events for privacy verification.</p>
           </div>
 
           <div class="audit-controls">
-            <button id="btnExportJson" class="btn btn-secondary">⬇️ Export Audit JSON</button>
-            <button id="btnExportCsv" class="btn btn-secondary">⬇️ Export Audit CSV</button>
-            <button id="btnClearLogs" class="btn btn-danger">Clear All Logs</button>
+            <button id="btnExportJson" class="btn btn-ghost">Export JSON</button>
+            <button id="btnExportCsv" class="btn btn-ghost">Export CSV</button>
+            <button id="btnClearLogs" class="btn btn-ghost btn-danger-ghost">Clear all logs</button>
           </div>
 
           <div class="table-responsive">
             <table class="audit-table">
               <thead>
-                <tr>
-                  <th>Timestamp</th>
-                  <th>Domain / URL</th>
-                  <th>Redaction Count</th>
-                  <th>Backend</th>
-                  <th>Latency</th>
-                  <th>Status</th>
-                </tr>
+                <tr><th>Timestamp</th><th>Domain / URL</th><th>Redactions</th><th>Backend</th><th>Latency</th><th>Status</th></tr>
               </thead>
-              <tbody id="auditTableBody">
-                <!-- Dynamically populated -->
-              </tbody>
+              <tbody id="auditTableBody"></tbody>
             </table>
           </div>
         </div>

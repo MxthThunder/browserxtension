@@ -27,6 +27,8 @@ const SENSITIVE_NAME_PATTERN =
   /pass(word)?|ssn|aadhar|aadhaar|passport|credit|card.?number|card|cvv|cvc|security.?code|expir(y|ation)?|exp|pin\b|otp|email|phone|mobile|cell|tel|dob|birth|address|billing|zip|postal|postal.?code|pincode|zipcode|city|state|salary|account.?number|ifsc|\bpan\b|kyc|tax.?id|identity|\bname\b|full.?name|first.?name|last.?name|middle.?name|father|mother|guardian|nominee|gender|signature|photo|selfie|profile|picture|telecommand|encryption|payload_target|secret_key|orbit_keplerian/i;
 
 // Regex for scanning visible text nodes containing raw PII patterns
+const MAX_TEXT_NODES = 4000;
+
 const INLINE_PII_PATTERNS = {
   CREDIT_CARD: /\b(?:\d{4}[ -]?){3}\d{4}\b/,
   SSN: /\b\d{3}-\d{2}-\d{4}\b/,
@@ -192,7 +194,7 @@ function isBlockElement(el) {
  */
 function scanVisibleTextNodes() {
   const results = [];
-  const seenAncestors = new WeakSet();
+  const seenAncestors = new WeakMap();
   const SKIP_TAGS = new Set(["SCRIPT", "STYLE", "NOSCRIPT", "IFRAME", "TEMPLATE", "CANVAS", "SVG"]);
 
   const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
@@ -211,7 +213,9 @@ function scanVisibleTextNodes() {
 
   let node;
   let textNodeCount = 0;
-  while ((node = walker.nextNode()) && textNodeCount < 100) {
+  // 100 was far too low: a normal article page has hundreds of text nodes in
+  // nav, sidebar and body, so PII further down the document was never examined.
+  while ((node = walker.nextNode()) && textNodeCount < MAX_TEXT_NODES) {
     textNodeCount++;
     const text = node.textContent;
     for (const [patternName, re] of Object.entries(INLINE_PII_PATTERNS)) {
@@ -226,13 +230,23 @@ function scanVisibleTextNodes() {
         depth++;
       }
       if (!ancestor || ancestor === document.body) ancestor = node.parentElement;
-      if (!ancestor || seenAncestors.has(ancestor)) break;
-      seenAncestors.add(ancestor);
+      if (!ancestor) continue;
+
+      // Keyed by ancestor AND pattern: one block can legitimately hold a name,
+      // an email and a phone, and each deserves its own detection.
+      const seenKey = `${patternName}`;
+      let seenForAncestor = seenAncestors.get(ancestor);
+      if (!seenForAncestor) {
+        seenForAncestor = new Set();
+        seenAncestors.set(ancestor, seenForAncestor);
+      }
+      if (seenForAncestor.has(seenKey)) continue;
+      seenForAncestor.add(seenKey);
 
       const rect = ancestor.getBoundingClientRect();
-      if (rect.width <= 1 || rect.height <= 1) break;
-      if (rect.bottom < 0 || rect.top > window.innerHeight) break;
-      if (rect.right < 0 || rect.left > window.innerWidth) break;
+      if (rect.width <= 1 || rect.height <= 1) continue;
+      if (rect.bottom < 0 || rect.top > window.innerHeight) continue;
+      if (rect.right < 0 || rect.left > window.innerWidth) continue;
 
       let category = "contactInfo";
       if (patternName === "CREDIT_CARD") category = "creditCards";
@@ -248,10 +262,52 @@ function scanVisibleTextNodes() {
         width: Math.round(rect.width),
         height: Math.round(rect.height),
       });
-      break; // one match per text node
+      // keep scanning: one node can carry several kinds of PII
     }
   }
   return results;
+}
+
+/**
+ * C1b: Bounding boxes of on-screen imagery that could contain readable text.
+ *
+ * OCR previously ran only over regions the object detector had already flagged,
+ * so text baked into a screenshot, chart or scanned document was never read at
+ * all unless it happened to look like a credit card or a passport. These
+ * regions give the OCR pass somewhere to look on an ordinary page.
+ */
+function collectOcrCandidateRegions() {
+  const MIN_SIDE = 64;          // ignore icons, avatars, spacers
+  const MIN_AREA = 12000;       // roughly a small figure or larger
+  const MAX_REGIONS = 6;        // OCR is the slowest stage - keep it bounded
+
+  const candidates = [];
+  const nodes = document.querySelectorAll("img, canvas, svg, picture, video, [style*='background-image']");
+
+  for (const node of nodes) {
+    const rect = node.getBoundingClientRect();
+    if (rect.width < MIN_SIDE || rect.height < MIN_SIDE) continue;
+    if (rect.width * rect.height < MIN_AREA) continue;
+    // Must be inside the viewport - the screenshot only contains what is visible.
+    if (rect.bottom <= 0 || rect.top >= window.innerHeight) continue;
+    if (rect.right <= 0 || rect.left >= window.innerWidth) continue;
+
+    const style = window.getComputedStyle(node);
+    if (style.visibility === "hidden" || style.display === "none" || parseFloat(style.opacity || "1") < 0.1) continue;
+
+    candidates.push({
+      x: Math.max(0, Math.round(rect.left)),
+      y: Math.max(0, Math.round(rect.top)),
+      width: Math.round(Math.min(rect.width, window.innerWidth)),
+      height: Math.round(Math.min(rect.height, window.innerHeight)),
+      area: rect.width * rect.height,
+      source: node.tagName.toLowerCase(),
+    });
+  }
+
+  // Largest first: a big figure is likelier to carry legible text than a thumbnail.
+  candidates.sort((a, b) => b.area - a.area);
+  return candidates.slice(0, MAX_REGIONS).map(({ area, ...box }) => box);
 }
 
 /**
@@ -612,6 +668,11 @@ function extractInteractiveElements() {
       name: node.name || "",
       type: node.type || (node.isContentEditable ? "contenteditable" : ""),
       text: (node.innerText || node.value || node.getAttribute("aria-label") || node.placeholder || "").trim().substring(0, 80),
+      // Carried separately as well: `text` falls back through this chain, so a
+      // field that has a value loses its placeholder — which on an id-less page
+      // is often the only thing identifying it to the planner.
+      placeholder: (node.getAttribute("placeholder") || "").trim().substring(0, 80),
+      ariaLabel: (node.getAttribute("aria-label") || "").trim().substring(0, 80),
       selector,
       rect: {
         x: Math.round(rect.left),
@@ -947,7 +1008,10 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
     if (window.top !== window.self) {
       return false;
     }
+    const tScanStart = performance.now();
     const matches = scanPageForSensitiveElements();
+    const ocrRegions = collectOcrCandidateRegions();
+    const domScanMs = performance.now() - tScanStart;
     const interactive = extractInteractiveElements();
     let structuredData = null;
     try {
@@ -956,6 +1020,8 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
 
     sendResponse({
       ok: true,
+      domScanMs,
+      ocrRegions,
       boxes: matches.map((m) => ({
         x: m.x,
         y: m.y,

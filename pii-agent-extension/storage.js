@@ -36,6 +36,24 @@ export const DEFAULT_SETTINGS = {
   autoScanOnLoad: true,
   autoRefreshStream: false,
   uiAdvancedMode: false, // Popup: show power-user tools beyond the basic on/off view
+  theme: "dark",         // Popup color theme: "dark" | "light"
+
+  // Agent Budget
+  // A real task ("find a bassy speaker deliverable to my pincode") needs search,
+  // filter, compare and verify — 8 steps could not finish one, and the run died
+  // on the cap rather than on the goal. The budget is now generous but *earned*:
+  // maxUnproductiveSteps stops a stuck agent long before maxSteps is reached, so
+  // raising the ceiling does not mean burning it.
+  maxSteps: 25,
+  maxUnproductiveSteps: 3, // consecutive no-effect / failed / repeated actions
+
+  // Perception toggles
+  ocrEnabled: true,       // L2C: Tesseract OCR pass over candidate visual regions
+  secondPassGuard: true,  // L2D: post-blackout residual verification
+
+  // Developer Observability
+  devMode: false,        // Dashboard: reveal model/layer attribution panels
+  maxDevTraces: 50,
 
   // Whitelist / Excluded Domains (Redaction bypassed on these domains)
   domainWhitelist: [],
@@ -148,6 +166,115 @@ export async function getAuditLogs() {
       });
     } else {
       resolve([]);
+    }
+  });
+}
+
+/**
+ * Rolls a redaction manifest up into per-layer and per-category counts.
+ *
+ * `sources` (plural) is present when NMS merged overlapping detections from
+ * several layers; fall back to the single `source` tag when it is not.
+ *
+ * @param {Array<Object>} redactionList
+ * @returns {{counts: Object, categories: Object}}
+ */
+export function summarizeRedactions(redactionList = []) {
+  const counts = {};
+  const categories = {};
+
+  for (const box of redactionList) {
+    const sources = Array.isArray(box.sources) && box.sources.length
+      ? box.sources
+      : [box.source || "unknown"];
+
+    for (const source of sources) {
+      counts[source] = (counts[source] || 0) + 1;
+    }
+
+    const category = box.category || "unknown";
+    categories[category] = (categories[category] || 0) + 1;
+  }
+
+  return { counts, categories };
+}
+
+/**
+ * Correlation id shared by an audit entry and its matching pipeline trace.
+ */
+export function newTraceId() {
+  return "trace_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+}
+
+/**
+ * Records a developer pipeline trace: model attribution, per-layer detection
+ * counts and per-stage timings.
+ *
+ * Deliberately stored under its own key rather than in auditLogs — auditLogs is
+ * the user-facing compliance record, and a trace carries a full redaction
+ * manifest that would evict it several times faster and leak into its exports.
+ *
+ * @param {Object} trace
+ * @returns {Promise<Object|null>}
+ */
+export async function logPipelineTrace(trace) {
+  return new Promise((resolve) => {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get(["devTraces", "settings"], (result) => {
+        const settings = result.settings || DEFAULT_SETTINGS;
+        const maxTraces = settings.maxDevTraces || 50;
+        let traces = result.devTraces || [];
+
+        const safe = { ...trace };
+        // Image data URLs run to hundreds of KB — never persist them in the ring buffer.
+        delete safe.sanitizedImageUrl;
+        delete safe.rawImageUrl;
+        delete safe.sanitizedImage;
+
+        const entry = {
+          traceId: trace.traceId || newTraceId(),
+          timestamp: new Date().toISOString(),
+          ...safe,
+        };
+
+        traces.unshift(entry);
+        if (traces.length > maxTraces) {
+          traces = traces.slice(0, maxTraces);
+        }
+
+        chrome.storage.local.set({ devTraces: traces }, () => resolve(entry));
+      });
+    } else {
+      resolve(null);
+    }
+  });
+}
+
+/**
+ * Retrieves stored developer pipeline traces, newest first.
+ * @returns {Promise<Array<Object>>}
+ */
+export async function getPipelineTraces() {
+  return new Promise((resolve) => {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.get(["devTraces"], (result) => {
+        resolve(result.devTraces || []);
+      });
+    } else {
+      resolve([]);
+    }
+  });
+}
+
+/**
+ * Clears all stored developer pipeline traces.
+ */
+export async function clearPipelineTraces() {
+  return new Promise((resolve) => {
+    if (typeof chrome !== "undefined" && chrome.storage && chrome.storage.local) {
+      chrome.storage.local.set({ devTraces: [] }, () => resolve(true));
+    } else {
+      resolve(true);
     }
   });
 }

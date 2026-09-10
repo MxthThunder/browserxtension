@@ -188,7 +188,9 @@ export function buildUnifiedPerceptionState({
   viewport          = { width: 1280, height: 800, dpr: 1 },
   url               = "",
 }) {
-  const dpr = viewport.dpr || 1;
+  // content.js supplies `devicePixelRatio`; reading only `dpr` meant this was
+  // always 1, silently making every HiDPI coordinate conversion below a no-op.
+  const dpr = viewport.dpr || viewport.devicePixelRatio || 1;
   const unifiedElements = [];
   let elementCounter = 1;
 
@@ -351,13 +353,18 @@ export function buildUnifiedPerceptionState({
     const vw = Math.round(ocr.w / dpr);
     const vh = Math.round(ocr.h / dpr);
 
+    // The OCR layer emits `label` (e.g. "OCR: aadhaar"), never `pattern`/`text`.
+    // Reading only those meant every OCR-only hit landed as isSensitive:false.
+    const ocrPattern = ocr.pattern || ocr.label || null;
+    const ocrText = ocr.text || ocr.label || "";
+
     // Check if OCR falls inside or overlaps an existing element
     let matched = unifiedElements.find((el) => computeContainment(ocrBbox, el.bbox) > 0.5 || computeIoU(el.bbox, ocrBbox) > 0.4);
 
     if (matched) {
       if (!matched.sources.includes("Tesseract-OCR")) matched.sources.push("Tesseract-OCR");
-      matched.text = matched.text || ocr.text;
-      if (ocr.pattern) {
+      matched.text = matched.text || ocrText;
+      if (ocrPattern) {
         matched.isSensitive = true;
         matched.piiCategory = ocr.category || matched.piiCategory;
         matched.role = determineSemanticRole(null, ocr, null);
@@ -370,16 +377,16 @@ export function buildUnifiedPerceptionState({
         role: role,
         selector: "",
         tag: "TEXT",
-        text: ocr.text || "",
+        text: ocrText,
         placeholder: "",
-        label: ocr.pattern || "OCR Text",
+        label: ocrPattern || "OCR Text",
         bbox: ocrBbox,
         viewportBbox: { x: vx, y: vy, w: vw, h: vh },
-        isSensitive: Boolean(ocr.pattern),
-        piiCategory: ocr.category || (ocr.pattern ? "contactInfo" : "none"),
+        isSensitive: Boolean(ocrPattern),
+        piiCategory: ocr.category || (ocrPattern ? "contactInfo" : "none"),
         sources: ["Tesseract-OCR"],
         confidence: 0.90,
-        attributes: { ocrPattern: ocr.pattern || null },
+        attributes: { ocrPattern },
       });
     }
   }

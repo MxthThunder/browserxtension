@@ -227,15 +227,28 @@ export class LocalPrivacyReasoner {
       }
     }
 
+    // Developer trace: how this resolution was actually served
+    const trace = {
+      candidateCount: manifest.ambiguousElements.length,
+      cacheHits: manifest.ambiguousElements.length - uncachedItems.length,
+      batchSize: uncachedItems.length,
+      latencyMs: 0,
+      engine: "cache",
+      timedOut: false,
+    };
+
     // If uncached items exist, query Ollama in a Single-Pass Batch
     if (uncachedItems.length > 0) {
+      const tBatchStart = performance.now();
       const batchDecisions = await this._queryOllamaBatch(
         uncachedItems.map((item) => item.element || item),
         context
       );
+      trace.latencyMs = Math.round(performance.now() - tBatchStart);
 
       const model = await this.getPreferredOllamaModel();
       if (batchDecisions && Array.isArray(batchDecisions) && batchDecisions.length > 0) {
+        trace.engine = `ollama-${model}`;
         const resultMap = new Map(batchDecisions.map((r) => [String(r.id), r]));
         for (const item of uncachedItems) {
           const el = item.element || item;
@@ -264,6 +277,8 @@ export class LocalPrivacyReasoner {
         }
       } else {
         // Fallback for all uncached elements if Ollama is unreachable or timed out
+        trace.engine = "local-reasoner-fastpath";
+        trace.timedOut = true;
         for (const item of uncachedItems) {
           const el = item.element || item;
           const decisionRecord = this._fallbackReasoning(el, context);
@@ -312,6 +327,7 @@ export class LocalPrivacyReasoner {
       ambiguousCount: 0,
       resolvedCount: resolvedMap.size,
     };
+    manifest.reasonerTrace = trace;
 
     return manifest;
   }

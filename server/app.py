@@ -97,6 +97,12 @@ class DOMElement(BaseModel):
     text: Optional[str] = ""
     selector: Optional[str] = ""
     role: Optional[str] = None
+    # An empty input has no text and no value; its placeholder / aria-label is
+    # then the ONLY thing identifying it. content.js folds these into `text` as a
+    # fallback, but carrying them separately keeps the identity when `text` is
+    # occupied by a value.
+    placeholder: Optional[str] = ""
+    aria_label: Optional[str] = ""
     rect: Optional[Dict[str, Any]] = None
     is_interactive: Optional[bool] = True
     is_local_only: Optional[bool] = False
@@ -121,6 +127,10 @@ class ActRequest(BaseModel):
     max_steps: Optional[int] = 8
     history: Optional[List[Dict[str, Any]]] = []
     structured_data: Optional[Dict[str, Any]] = None
+    # Final-answer pass: the run is over (goal met, budget spent, or stuck) and
+    # the model should report what was found instead of planning another action.
+    synthesize_only: Optional[bool] = False
+    stop_reason: Optional[str] = None
 
 
 class ActionOutput(BaseModel):
@@ -130,6 +140,10 @@ class ActionOutput(BaseModel):
     value: Optional[str] = None
     explanation: str
     confidence: float
+    # The answer to the user's request, present on `finish`. A run used to end
+    # with only a stop reason ("Reached maximum step limit"), which told the user
+    # nothing about what it had actually found.
+    result: Optional[Dict[str, Any]] = None
 
 
 class ActResponse(BaseModel):
@@ -139,6 +153,11 @@ class ActResponse(BaseModel):
     audit: Dict[str, Any]
     server_latency_ms: float
     model_used: str
+    # Developer observability: which concrete model answered, what was asked
+    # for, and every provider attempt made on the way there.
+    model_id: Optional[str] = None
+    provider_requested: Optional[str] = None
+    provider_attempts: List[Dict[str, Any]] = []
 
 
 # Common field synonyms for flexible natural language matching
@@ -217,6 +236,66 @@ async def websocket_telemetry_endpoint(websocket: WebSocket):
         pass
 
 
+_gemini_models_cache: Optional[List[str]] = None
+
+
+async def get_available_gemini_models(api_key: str) -> List[str]:
+    """
+    Model ids this key can actually serve, cached for the process lifetime.
+
+    Guessing ids is how Gemini silently stops working: a name that does not
+    exist 404s per attempt and the agent quietly degrades to the fallback
+    engine. Asking the API removes that whole class of failure.
+    """
+    global _gemini_models_cache
+    if _gemini_models_cache is not None:
+        return _gemini_models_cache
+
+    version = os.getenv("GEMINI_API_VERSION", "v1beta")
+    try:
+        async with httpx.AsyncClient(timeout=8.0) as client:
+            resp = await client.get(
+                f"https://generativelanguage.googleapis.com/{version}/models?key={api_key}"
+            )
+            if resp.status_code == 200:
+                _gemini_models_cache = [
+                    m.get("name", "").replace("models/", "")
+                    for m in resp.json().get("models", [])
+                    if "generateContent" in m.get("supportedGenerationMethods", [])
+                ]
+                print(f"[Gemini] {len(_gemini_models_cache)} models available to this key")
+            else:
+                print(f"[Gemini] Could not list models (HTTP {resp.status_code}); using configured ids")
+                _gemini_models_cache = []
+    except Exception as exc:
+        print(f"[Gemini] Could not list models ({exc}); using configured ids")
+        _gemini_models_cache = []
+
+    return _gemini_models_cache
+
+
+def _record_attempt(
+    attempts: Optional[List[Dict[str, Any]]],
+    provider: str,
+    model_id: Optional[str],
+    ok: bool,
+    latency_ms: float = 0.0,
+    error: Optional[str] = None,
+    status_code: Optional[int] = None,
+) -> None:
+    """Appends one provider attempt to the trace the client will display."""
+    if attempts is None:
+        return
+    attempts.append({
+        "provider": provider,
+        "modelId": model_id,
+        "ok": ok,
+        "latencyMs": round(latency_ms, 1),
+        "error": error,
+        "statusCode": status_code,
+    })
+
+
 # Cache Ollama availability state to prevent network timeout latency
 _ollama_checked = False
 _ollama_online = False
@@ -225,12 +304,16 @@ _last_ollama_check_time = 0
 async def is_ollama_available(ollama_host: str) -> bool:
     global _ollama_checked, _ollama_online, _last_ollama_check_time
     now = time.time()
-    # Cache result for 30 seconds
-    if _ollama_checked and (now - _last_ollama_check_time < 30):
+    # Positive results are cached far longer than negative ones: a single
+    # unlucky probe should not blank out Qwen for the next half minute.
+    cache_window = 30 if _ollama_online else 5
+    if _ollama_checked and (now - _last_ollama_check_time < cache_window):
         return _ollama_online
 
     try:
-        async with httpx.AsyncClient(timeout=0.15) as client:
+        # 0.15s was tight enough that a cold model failed the probe and the
+        # server silently skipped Qwen altogether.
+        async with httpx.AsyncClient(timeout=1.5) as client:
             resp = await client.get(f"{ollama_host}/api/tags")
             _ollama_online = (resp.status_code == 200)
     except Exception:
@@ -241,6 +324,515 @@ async def is_ollama_available(ollama_host: str) -> bool:
     return _ollama_online
 
 
+# ── Shared action-planning prompt construction ───────────────────────────────
+# Gemini, OpenAI and Ollama previously carried three near-identical copies of
+# the digest, history and system prompt, which had already drifted apart. They
+# now share these builders so an accuracy fix lands once instead of three times.
+
+ACTION_TYPES = ["click", "type", "scroll", "select", "submit", "wait", "finish"]
+
+# Structured-output schema. Gemini enforces this server-side, so an action with
+# an invalid `type` or a missing field becomes impossible rather than something
+# to detect after the fact.
+ACTION_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "type": {"type": "STRING", "enum": ACTION_TYPES},
+        "target_ref": {
+            "type": "STRING",
+            "description": "Exact `ref` of the chosen element from Interactive Page Elements. Empty for scroll/wait/finish.",
+        },
+        "value": {
+            "type": "STRING",
+            "description": "Text to type, option to select, or scroll direction (down/up).",
+        },
+        "explanation": {"type": "STRING"},
+        "confidence": {"type": "NUMBER"},
+        "result": {
+            "type": "OBJECT",
+            "description": "The ANSWER to the user's request. Required on finish; omit otherwise.",
+            "properties": {
+                "summary": {"type": "STRING"},
+                "recommendation": {"type": "STRING"},
+                "candidates": {
+                    "type": "ARRAY",
+                    "items": {
+                        "type": "OBJECT",
+                        "properties": {
+                            "name": {"type": "STRING"},
+                            "detail": {"type": "STRING"},
+                            "why": {"type": "STRING"},
+                        },
+                        "required": ["name", "detail", "why"],
+                    },
+                },
+            },
+            # All three are required: a result carrying only a summary is what
+            # produced the useless "reached max steps" ending this replaced.
+            "required": ["summary", "recommendation", "candidates"],
+        },
+    },
+    "required": ["type", "explanation", "confidence"],
+}
+
+# The same contract in standard JSON Schema, for Ollama's structured-output
+# mode. Ollama's format:"json" only guarantees valid JSON, not the right shape.
+OLLAMA_ACTION_FORMAT = {
+    "type": "object",
+    "properties": {
+        "type": {"type": "string", "enum": ACTION_TYPES},
+        "target_ref": {"type": "string"},
+        "value": {"type": "string"},
+        "explanation": {"type": "string"},
+        "confidence": {"type": "number"},
+        "result": {
+            "type": "object",
+            "properties": {
+                "summary": {"type": "string"},
+                "recommendation": {"type": "string"},
+            },
+        },
+    },
+    "required": ["type", "explanation"],
+}
+
+MAX_DIGEST_ELEMENTS = 120
+MAX_FIELD_LEN = 90
+
+# Links are sorted last by content.js's priority sort (inputs 50, buttons 20,
+# links 0). On a search-results page that is exactly backwards: the results ARE
+# links, and a flat head-truncation deleted every one of them. Reserve a slice of
+# the budget for them so a shopping/search page stays navigable.
+MIN_LINK_SLOTS = 40
+
+
+def select_digest_elements(elements: List[DOMElement]) -> List[Tuple[int, DOMElement]]:
+    """
+    Chooses which elements make it into the digest, keeping their ORIGINAL index.
+
+    The index is the model's addressing key, so it must survive truncation --
+    that is why this returns (index, element) pairs rather than a filtered list.
+    """
+    indexed = list(enumerate(elements))
+    if len(indexed) <= MAX_DIGEST_ELEMENTS:
+        return indexed
+
+    links = [pair for pair in indexed if pair[1].tag == "a"]
+    others = [pair for pair in indexed if pair[1].tag != "a"]
+
+    link_quota = min(len(links), max(MIN_LINK_SLOTS, MAX_DIGEST_ELEMENTS - len(others)))
+    other_quota = MAX_DIGEST_ELEMENTS - link_quota
+
+    kept = others[:other_quota] + links[:link_quota]
+    kept.sort(key=lambda pair: pair[0])
+    return kept
+
+
+def build_elements_digest(elements: List[DOMElement]) -> List[Dict[str, Any]]:
+    """
+    Compact, ref-keyed view of the page.
+
+    `ref` is the element's ordinal position in the request, NOT its DOM id.
+    Keying on the DOM id was the bug that made the agent unusable on real sites:
+    modern class-name-driven pages (Flipkart, most SPAs) set almost no `id`
+    attributes, so every digest row came out as {"id": "", ...} and there was no
+    legal target the model could name. It scrolled instead, then hit the step cap.
+
+    The raw selector is still withheld on purpose: the model picks a ref and the
+    server resolves it back to a real selector, so a selector the model invented
+    can never reach the page.
+    """
+    digest = []
+    for idx, el in select_digest_elements(elements):
+        entry: Dict[str, Any] = {"ref": str(idx), "tag": el.tag}
+        for key, val in (
+            ("type", el.type),
+            ("text", el.text),
+            ("placeholder", el.placeholder),
+            ("aria_label", el.aria_label),
+            ("name", el.name),
+            ("role", el.role),
+            ("value", el.value),
+            ("dom_id", el.id),  # informational only -- never the addressing key
+        ):
+            cleaned = str(val).strip() if val else ""
+            if cleaned:
+                entry[key] = cleaned[:MAX_FIELD_LEN]
+        digest.append(entry)
+    return digest
+
+
+def build_history_text(history: Optional[List[Dict[str, Any]]], full_detail: bool = False) -> str:
+    """
+    Renders prior steps together with their OUTCOME.
+
+    Without the outcome the model cannot tell a click that worked from one that
+    hit nothing, which is how repetition loops start.
+
+    `full_detail` widens the per-step explanation cap. While planning, a short
+    cap keeps the prompt small and the explanations are just intent. In the
+    synthesis pass the explanations ARE the evidence -- the prices, ratings and
+    specs the run observed -- and clipping them at 120 chars silently discarded
+    every finding after the first.
+    """
+    cap = 900 if full_detail else 120
+    if not history:
+        return ""
+
+    lines = []
+    for i, h in enumerate(history):
+        parts = [
+            f"  - Step {h.get('step', i + 1)}: [{str(h.get('action', '')).upper()}]",
+            f" target='{h.get('selector') or 'page'}'",
+        ]
+        if h.get("value"):
+            parts.append(f" value='{h.get('value')}'")
+
+        if h.get("ok") is False:
+            parts.append(f" -> FAILED: {h.get('error') or 'action did not execute'}")
+        elif h.get("noOp"):
+            parts.append(" -> NO EFFECT: page did not change. Do NOT repeat it; try a different element.")
+        else:
+            parts.append(" -> ok")
+
+        if h.get("explanation"):
+            parts.append(f" ({str(h['explanation'])[:cap]})")
+        lines.append("".join(parts))
+
+    return "\n\nPrevious Actions Executed in this Session:\n" + "\n".join(lines)
+
+
+def build_telemetry_text(structured_data: Optional[Dict[str, Any]]) -> str:
+    if not structured_data:
+        return ""
+    return (
+        "\n\n=== REAL-TIME TELEMETRY & STRUCTURED APPLICATION DATA ===\n"
+        "[Exact parameters from the application data stream. Do NOT guess or OCR these values]\n"
+        f"{json.dumps(structured_data, indent=2)}\n"
+        "===========================================================\n"
+    )
+
+
+# Task-kind detection. Domain guidance is loaded only for the matching kind, so
+# e-commerce rules stop biasing form-filling and navigation tasks.
+SHOPPING_HINTS = (
+    "buy", "price", "cheap", "cheapest", "under ", "budget", "product",
+    "cart", "order", "deal", "discount", "rating", "review", "compare",
+)
+FORM_HINTS = (
+    "fill", "form", "apply", "application", "register", "sign up", "signup",
+    "enroll", "kyc", "checkout", "book a", "book an", "appointment",
+)
+SEARCH_HINTS = ("find", "search", "look up", "lookup", "research", "who ", "what ", "where ", "when ")
+
+TASK_GUIDANCE = {
+    "shopping": (
+        "TASK TYPE - SHOPPING / PRODUCT COMPARISON:\n"
+        "- If a search has already run, results are on screen: read the visible products, prices and ratings rather than searching again.\n"
+        "- Use scroll (value 'down') to reveal more results before concluding.\n"
+        "- Open a product only when you need specifications the listing does not show.\n"
+        "- Finish with the pick, its exact price and rating, and why it beats the alternatives.\n"
+    ),
+    "form": (
+        "TASK TYPE - FORM FILLING:\n"
+        "- Fill one field per turn using type, targeting that field's id.\n"
+        "- Values shown as VAULT placeholders are resolved on-device; pass them through unchanged.\n"
+        "- Never invent personal data. If a required value is unavailable, finish and name the blocking field.\n"
+        "- Submit only once every required field is filled.\n"
+    ),
+    "search": (
+        "TASK TYPE - SEARCH / RESEARCH:\n"
+        "- Type the query into the search field, then submit it.\n"
+        "- Once results are visible, read them instead of searching again.\n"
+        "- Finish with the answer itself, not a description of where to find it.\n"
+    ),
+    "general": (
+        "TASK TYPE - GENERAL NAVIGATION:\n"
+        "- Work toward the goal one concrete interaction at a time.\n"
+        "- Prefer visible, clearly labelled controls over ambiguous ones.\n"
+        "- If the page still appears to be loading, use wait once before retrying.\n"
+    ),
+}
+
+
+def detect_task_kind(task: str) -> str:
+    lowered = (task or "").lower()
+    if any(hint in lowered for hint in SHOPPING_HINTS):
+        return "shopping"
+    if any(hint in lowered for hint in FORM_HINTS):
+        return "form"
+    if any(hint in lowered for hint in SEARCH_HINTS):
+        return "search"
+    return "general"
+
+
+# The synthesis pass gets its OWN flat schema rather than reusing the action
+# schema's nested `result`. Gemini enforces `required` reliably at the top level
+# but was silently dropping `candidates` from the nested object, which is the one
+# field that carries the actual findings.
+SYNTHESIS_RESPONSE_SCHEMA = {
+    "type": "OBJECT",
+    "properties": {
+        "summary": {
+            "type": "STRING",
+            "description": "Direct answer to the user in one or two sentences.",
+        },
+        "recommendation": {
+            "type": "STRING",
+            "description": "The single best option, named.",
+        },
+        "candidates": {
+            "type": "ARRAY",
+            "description": "EVERY distinct option the session history mentions.",
+            "items": {
+                "type": "OBJECT",
+                "properties": {
+                    "name": {"type": "STRING"},
+                    "detail": {"type": "STRING", "description": "Price / rating / spec, as recorded."},
+                    "why": {"type": "STRING", "description": "Evidence justifying its rank."},
+                },
+                "required": ["name", "detail", "why"],
+            },
+        },
+    },
+    "required": ["summary", "recommendation", "candidates"],
+}
+
+SYNTHESIS_INSTRUCTION = (
+    "The browsing session is OVER. Do not plan another action.\n"
+    "Using ONLY the session history below, answer the user's original request as well as the "
+    "evidence allows.\n\n"
+    "Reply with exactly this JSON object and nothing else:\n"
+    '{"summary": "direct answer to the user, in plain language", '
+    '"recommendation": "the single best option, named", '
+    '"candidates": [{"name": "option", "detail": "price / rating / spec", "why": "why it ranks there"}]}\n\n'
+    "RULES, in order:\n"
+    "1. FIRST extract every distinct option named anywhere in the history into `candidates` - "
+    "one entry per option, with its price/rating/spec in `detail` exactly as recorded. "
+    "The history is evidence you already gathered; report it. Returning an empty `candidates` "
+    "list when options were seen is a failure.\n"
+    "2. THEN rank them against what the user actually asked for. A stated preference "
+    "(bass, budget, size, brand) beats a marginally higher rating: an option whose evidence "
+    "explicitly matches the request outranks one that merely scores well. "
+    "`recommendation` names that winner.\n"
+    "3. `why` cites the specific evidence that justifies each option's place.\n"
+    "4. `summary` answers the user directly in one or two sentences. Mention an incomplete check "
+    "(delivery, stock, an unapplied filter) as a caveat at the end - do not let it replace the answer, "
+    "and do not suggest the user redo work that the history shows was already done.\n"
+    "5. Never state a price, rating or specification that does not appear in the history, and never "
+    "invent an option that was not seen."
+)
+
+
+def build_system_instruction(
+    task: str,
+    step: int,
+    max_steps: int,
+    has_telemetry: bool = False,
+    synthesize_only: bool = False,
+    stop_reason: Optional[str] = None,
+) -> str:
+    if synthesize_only:
+        reason = f"\nWhy the session ended: {stop_reason}\n" if stop_reason else "\n"
+        return SYNTHESIS_INSTRUCTION + reason
+
+    parts = [
+        "You are an expert autonomous browser agent. Given a user goal, the session history and the "
+        "interactive elements visible on the page, choose the SINGLE next browser action.\n",
+        f"Session progress: step {step} of {max_steps}. Reach the goal before the budget runs out.\n",
+        "\nHARD RULES:\n",
+        "1. TARGETING: set target_ref to the exact `ref` value of one element listed under "
+        "'Interactive Page Elements'. A ref is a plain number, e.g. \"12\". "
+        "NEVER invent a CSS selector, XPath, class or id - the server resolves the ref for you, "
+        "so a selector you write cannot reach the page. "
+        "Refs are renumbered every step, so only ever use refs from the CURRENT list. "
+        "Identify an element by its text, placeholder, aria_label or role - most real pages set no id at all, "
+        "and a missing dom_id is never a reason to avoid an element.\n",
+        "2. target_ref is required for click, type, select and submit. Leave it empty for scroll, wait and finish.\n",
+        "3. DO NOT REPEAT A FAILED OR NO-EFFECT ACTION. Every prior step is marked 'ok', 'FAILED' or 'NO EFFECT'. "
+        "A step with no effect means that approach does not work on this page - choose a different element or strategy.\n",
+        "4. Exactly one action per turn. Prefer the most direct route to the goal.\n",
+        "5. FINISH as soon as the goal is met. On finish you MUST fill `result` with the actual "
+        "answer - result.summary in plain language, result.recommendation naming the single best "
+        "option, and result.candidates listing what you compared. The user sees `result`, not the "
+        "step log, so an empty result means they got nothing out of the run.\n",
+    ]
+    if has_telemetry:
+        parts.append(
+            "6. TELEMETRY: values under 'REAL-TIME TELEMETRY' come directly from the application data stream. "
+            "Treat them as ground truth; never OCR or guess them.\n"
+        )
+    parts.append("\n" + TASK_GUIDANCE[detect_task_kind(task)])
+    parts.append(
+        "\nOUTPUT FORMAT - reply with exactly this JSON object and nothing else:\n"
+        '{"type": "click|type|scroll|select|submit|wait|finish", '
+        '"target_ref": "ref number of one element from the list, or empty for scroll/wait/finish", '
+        '"value": "text to type, option to select, or down/up for scroll", '
+        '"explanation": "why this action moves the goal forward", '
+        '"confidence": 0.0-1.0, '
+        '"result": {"summary": "...", "recommendation": "...", "candidates": [...]}  // finish only\n'
+    )
+    return "".join(parts)
+
+
+def resolve_action_target(raw: Dict[str, Any], elements: List[DOMElement]):
+    """
+    Maps the model's target_ref back to a real CSS selector.
+
+    This is the guard that stops a hallucinated selector reaching the page.
+    Anything not corresponding to a listed element is caught here instead of
+    failing later in the content script with 'Target element not found in DOM'.
+
+    Returns (selector, matched).
+    """
+
+    def selector_for(el: DOMElement) -> str:
+        # content.js always computes a usable selector -- #id, [data-testid],
+        # [aria-label], [name], [placeholder], or a guaranteed [data-agent-id="N"]
+        # stamped onto the live node. The #id fallback is for older payloads only.
+        return el.selector or (f"#{el.id}" if el.id else "")
+
+    # `target_ref` is the current contract; `target_id` is accepted so a payload
+    # from an older extension build (or a model echoing the old prompt) still works.
+    candidate = str(
+        raw.get("target_ref") or raw.get("target_id") or raw.get("selector") or ""
+    ).strip()
+
+    if not candidate:
+        return None, True  # scroll / wait / finish legitimately have no target
+
+    # 1. Ordinal ref -- the normal path.
+    if candidate.isdigit():
+        idx = int(candidate)
+        if 0 <= idx < len(elements):
+            return selector_for(elements[idx]), True
+
+    # 2. DOM id, for pages that do have them.
+    by_id = {str(el.id): el for el in elements if el.id}
+    if candidate in by_id:
+        return selector_for(by_id[candidate]), True
+
+    for el in elements:
+        if candidate in (el.selector, f"#{el.id}", str(el.id)):
+            return selector_for(el), True
+
+    # Last resort: match on any visible label the element carries.
+    lowered = candidate.strip("#.").lower()
+    if lowered:
+        def labels(el: DOMElement):
+            return [
+                str(v or "").strip().lower()
+                for v in (el.text, el.placeholder, el.aria_label, el.name)
+            ]
+
+        for el in elements:
+            if lowered in labels(el):
+                return selector_for(el), True
+
+        # A unique substring hit is still unambiguous; an ambiguous one is not,
+        # so require exactly one match rather than taking the first.
+        partial = [el for el in elements if any(lab and lowered in lab for lab in labels(el))]
+        if len(partial) == 1:
+            return selector_for(partial[0]), True
+
+    return candidate, False
+
+
+# Actions that are meaningless without a target. scroll / wait / finish are not.
+TARGETED_ACTIONS = {"click", "type", "select", "submit"}
+
+TEXT_INPUT_TYPES = {"", "text", "search", "email", "tel", "url", "password", "number", "contenteditable"}
+
+
+def pick_fallback_target(action_type: str, elements: List[DOMElement]) -> Optional[str]:
+    """
+    Best-effort target when the model named none.
+
+    content.js already sorts the element list by interaction priority (text
+    inputs first, then buttons), so the first element of the right kind is the
+    most plausible candidate. This is a recovery path, not a guess presented as
+    certainty -- the caller drops confidence and labels it.
+    """
+    def usable(el: DOMElement) -> bool:
+        if action_type in ("type", "submit"):
+            return el.tag in ("input", "textarea") and str(el.type or "").lower() in TEXT_INPUT_TYPES
+        if action_type == "select":
+            return el.tag == "select"
+        return el.tag in ("button", "a") or str(el.role or "") == "button"
+
+    for el in elements:
+        if usable(el) and (el.selector or el.id):
+            return el.selector or f"#{el.id}"
+    return None
+
+
+def build_synthesis_output(raw: Dict[str, Any], provider_label: str) -> ActionOutput:
+    """
+    Wraps a flat synthesis response ({summary, recommendation, candidates}) into
+    the ActionOutput the caller expects. Always a `finish` -- the session is over.
+    """
+    summary = str(raw.get("summary") or "").strip()
+    result = {
+        "summary": summary or "The run ended without establishing an answer.",
+        "recommendation": str(raw.get("recommendation") or "").strip(),
+        "candidates": raw.get("candidates") if isinstance(raw.get("candidates"), list) else [],
+    }
+    return ActionOutput(
+        type="finish",
+        selector=None,
+        value=None,
+        explanation=f"[{provider_label}] {result['summary']}",
+        confidence=float(raw.get("confidence") or 0.8),
+        result=result,
+    )
+
+
+def build_action_output(raw: Dict[str, Any], elements: List[DOMElement], provider_label: str) -> ActionOutput:
+    """Normalises a raw model response into a validated ActionOutput."""
+    action_type = str(raw.get("type", "finish")).lower()
+    if action_type not in ACTION_TYPES:
+        action_type = "finish"
+
+    selector, matched = resolve_action_target(raw, elements)
+    confidence = float(raw.get("confidence") or 0.9)
+    explanation = str(raw.get("explanation") or "Action planned.")
+
+    if selector is None and action_type in TARGETED_ACTIONS:
+        # The model named no target at all for an action that cannot work
+        # without one. Previously this returned matched=True and shipped a null
+        # selector, so the step failed silently in the content script and burned
+        # a turn. Fall back to the best-typed element and say so.
+        fallback = pick_fallback_target(action_type, elements)
+        if fallback:
+            selector = fallback
+            confidence = min(confidence, 0.4)
+            explanation = f"[no target given; using best {action_type} candidate] {explanation}"
+        else:
+            matched = False
+
+    if not matched:
+        # The target does not exist on the page. Keep the action so the content
+        # script's fuzzy fallback can still try, but say so and drop confidence
+        # rather than presenting a guess as certainty.
+        confidence = min(confidence, 0.35)
+        explanation = f"[unverified target '{selector}'] {explanation}"
+
+    result = raw.get("result")
+    if action_type == "finish" and not isinstance(result, dict):
+        # Guarantee the caller always has something to show, even from a model
+        # that ignored the result field.
+        result = {"summary": explanation}
+
+    return ActionOutput(
+        type=action_type,
+        selector=selector,
+        value=raw.get("value"),
+        explanation=f"[{provider_label}] {explanation}",
+        confidence=confidence,
+        result=result if isinstance(result, dict) else None,
+    )
+
+
 async def try_ollama_qwen(
     task: str,
     elements: List[DOMElement],
@@ -249,56 +841,43 @@ async def try_ollama_qwen(
     step: int = 1,
     max_steps: int = 8,
     structured_data: Optional[Dict[str, Any]] = None,
+    synthesize_only: bool = False,
+    stop_reason: Optional[str] = None,
+    attempts: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[ActionOutput]:
     """
     Attempts reasoning using local Ollama (Qwen2.5-VL / Qwen2.5-Coder / Qwen3).
     Only invoked if Ollama is actively running.
     """
     ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
-    if not await is_ollama_available(ollama_host):
-        return None
 
-    model = os.getenv("OLLAMA_MODEL", "isro-privacy-qwen")
-
-    elements_digest = [
-        {
-            "id": el.id,
-            "tag": el.tag,
-            "type": el.type,
-            "name": el.name,
-            "text": el.text,
-            "selector": el.selector,
-            "role": el.role,
-            "value": el.value or "",
-            "is_interactive": el.is_interactive
-        }
-        for el in elements[:80]
-    ]
-
-    history_text = ""
-    if history and len(history) > 0:
-        history_text = "\nPrevious Actions:\n" + "\n".join(
-            f"- Step {h.get('step', i+1)}: [{h.get('action', '').upper()}] {h.get('selector', '')}: {h.get('explanation', '')}"
-            for i, h in enumerate(history)
+    # Action planning and privacy classification are DIFFERENT jobs and need
+    # different models. OLLAMA_MODEL (isro-privacy-qwen) is fine-tuned to emit
+    # {"decisions": [...]} for ALLOW/REDACT/BLOCK and is used by the extension's
+    # local reasoner. Pointing action planning at it produces a privacy verdict
+    # instead of a browser action every single time, which silently demotes the
+    # agent to the heuristic fallback. Keep these two settings distinct.
+    model = os.getenv("OLLAMA_ACTION_MODEL", "qwen2.5:1.5b")
+    privacy_model = os.getenv("OLLAMA_MODEL", "isro-privacy-qwen")
+    if model == privacy_model:
+        print(
+            f"[Ollama] WARNING: OLLAMA_ACTION_MODEL is set to the privacy classifier "
+            f"'{model}'. It cannot return browser actions; set OLLAMA_ACTION_MODEL to a "
+            f"general instruct model such as qwen2.5:1.5b."
         )
 
-    telemetry_text = ""
-    if structured_data:
-        telemetry_text = "\n\n=== REAL-TIME TELEMETRY & STRUCTURED DATA ===\n" + json.dumps(structured_data, indent=2) + "\n============================================\n"
+    if not await is_ollama_available(ollama_host):
+        _record_attempt(attempts, "ollama-qwen", model, False, error="ollama not reachable")
+        return None
 
-    system_prompt = (
-        "You are an expert autonomous browser agent. You receive a user goal, session history, and visible web elements.\n"
-        f"Progress: Step {step} of {max_steps}.\n"
-        "RULES:\n"
-        "1. DO NOT REPEAT ACTIONS: If search was already done, do NOT search again. Inspect products or scroll down!\n"
-        "2. To explore more results, use type: 'scroll', value: 'down'.\n"
-        "3. Once best product is found, use type: 'finish' with your recommendation summary in explanation.\n"
-        "4. If 'REAL-TIME TELEMETRY & STRUCTURED DATA' is provided below, treat those values as verified exact parameters.\n"
-        "Respond strictly with JSON: "
-        '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
-        '"selector": "CSS selector or element id", "value": "text or scroll direction", '
-        '"explanation": "reasoning and findings", "confidence": 0.0-1.0}'
-    )
+    elements_digest = build_elements_digest(elements)
+
+    history_text = build_history_text(history, full_detail=synthesize_only)
+
+    telemetry_text = build_telemetry_text(structured_data)
+
+    system_prompt = build_system_instruction(task, step, max_steps, bool(structured_data),
+                                            synthesize_only=synthesize_only, stop_reason=stop_reason)
 
     user_prompt = f"User Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
 
@@ -306,24 +885,40 @@ async def try_ollama_qwen(
         "model": model,
         "prompt": f"{system_prompt}\n\n{user_prompt}",
         "stream": False,
-        "format": "json"
+        "format": OLLAMA_ACTION_FORMAT,
+        # Pin the model in memory. The extension already does this; without it
+        # the server path paid a cold start on every single call.
+        "keep_alive": -1,
+        "options": {"temperature": 0.1},
     }
 
+    attempt_start = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=30.0) as client:
             resp = await client.post(f"{ollama_host}/api/generate", json=payload)
+            latency_ms = (time.perf_counter() - attempt_start) * 1000
             if resp.status_code == 200:
                 data = resp.json()
                 raw_json = json.loads(data.get("response", "{}"))
-                if "type" in raw_json:
-                    return ActionOutput(
-                        type=raw_json.get("type", "finish"),
-                        selector=raw_json.get("selector"),
-                        value=raw_json.get("value"),
-                        explanation=f"[Qwen] " + raw_json.get("explanation", "Action planned by local model."),
-                        confidence=float(raw_json.get("confidence", 0.92))
-                    )
-    except Exception:
+                if "type" in raw_json or (synthesize_only and "summary" in raw_json):
+                    _record_attempt(attempts, "ollama-qwen", model, True, latency_ms=latency_ms)
+                    return (build_synthesis_output(raw_json, "Qwen") if synthesize_only
+                            else build_action_output(raw_json, elements, "Qwen"))
+
+                # A privacy-classifier response to an action-planning prompt: say
+                # so explicitly, because the generic "unusable response" hid this
+                # misconfiguration behind a silent fallback.
+                reason = (
+                    f"model '{model}' returned a privacy verdict, not an action - it is a "
+                    f"classifier; set OLLAMA_ACTION_MODEL to a general instruct model"
+                    if "decisions" in raw_json
+                    else "response missing 'type'"
+                )
+                _record_attempt(attempts, "ollama-qwen", model, False, latency_ms=latency_ms,
+                                error=reason, status_code=resp.status_code)
+    except Exception as e:
+        _record_attempt(attempts, "ollama-qwen", model, False,
+                        latency_ms=(time.perf_counter() - attempt_start) * 1000, error=str(e)[:120])
         return None
     return None
 
@@ -336,6 +931,9 @@ async def try_gemini(
     step: int = 1,
     max_steps: int = 8,
     structured_data: Optional[Dict[str, Any]] = None,
+    synthesize_only: bool = False,
+    stop_reason: Optional[str] = None,
+    attempts: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[ActionOutput]:
     """
     Attempts reasoning using Google Gemini API (gemini-3.5-flash-lite / gemini-3.7-flash).
@@ -346,55 +944,14 @@ async def try_gemini(
     if not api_key:
         return None
 
-    elements_digest = [
-        {
-            "id": el.id,
-            "tag": el.tag,
-            "type": el.type,
-            "name": el.name,
-            "text": el.text,
-            "selector": el.selector,
-            "role": el.role,
-            "value": el.value or "",
-            "is_interactive": el.is_interactive,
-        }
-        for el in elements[:80]
-    ]
+    elements_digest = build_elements_digest(elements)
 
-    history_text = ""
-    if history and len(history) > 0:
-        history_lines = [
-            f"  - Step {h.get('step', i+1)}: [{h.get('action', '').upper()}] selector='{h.get('selector', '') or 'page'}' value='{h.get('value', '')}': {h.get('explanation', '')}"
-            for i, h in enumerate(history)
-        ]
-        history_text = "\n\nPrevious Actions Executed in this Session:\n" + "\n".join(history_lines)
+    history_text = build_history_text(history, full_detail=synthesize_only)
 
-    telemetry_text = ""
-    if structured_data:
-        telemetry_text = (
-            "\n\n=== REAL-TIME TELEMETRY & STRUCTURED APPLICATION DATA ===\n"
-            "[Direct binary/WebSocket stream - exact parameters received by browser. Do NOT guess or attempt visual OCR on strip charts for these values]\n"
-            f"{json.dumps(structured_data, indent=2)}\n"
-            "===========================================================\n"
-        )
+    telemetry_text = build_telemetry_text(structured_data)
 
-    system_instruction = (
-        "You are an expert autonomous browser agent. You receive a user goal, session history, and visible web elements.\n"
-        f"Session Progress: Step {step} of {max_steps}.\n\n"
-        "CRITICAL RULES:\n"
-        "1. DO NOT REPEAT ACTIONS: Check 'Previous Actions Executed'. If a search has ALREADY been performed in Step 1 or 2, NEVER type in the search bar or click search again!\n"
-        "2. RESEARCH & COMPARISON TASKS (e.g. 'find me best headphones under 3000'):\n"
-        "   - Search results are already on screen! Examine visible products, prices, and star ratings.\n"
-        "   - To see more products and compare prices, use {\"type\": \"scroll\", \"value\": \"down\", \"explanation\": \"Scrolling down to inspect more products and compare prices\"}.\n"
-        "   - If a product looks promising, you can click on its title link to view full specifications.\n"
-        "   - Once you have found the best product that satisfies the user's constraints (e.g. under budget with high rating), FINISH the task with {\"type\": \"finish\", \"explanation\": \"Detailed summary of your top pick: product name, exact price, rating, and key features\"}.\n"
-        "3. FORM SUBMISSION: To submit a search or form, click the submit/send button or use type: 'submit'.\n"
-        "4. STRUCTURED TELEMETRY & APP DATA: If 'REAL-TIME TELEMETRY & STRUCTURED APPLICATION DATA' is provided below, treat those numerical values, status states, and limits as ground-truth facts received directly from the application data stream. Do NOT guess or attempt visual OCR for those parameters.\n"
-        "5. Respond strictly with a JSON object: "
-        '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
-        '"selector": "CSS selector or element id", "value": "text to type, select, or scroll direction (down/up)", '
-        '"explanation": "reasoning and findings", "confidence": 0.0-1.0}'
-    )
+    system_instruction = build_system_instruction(task, step, max_steps, bool(structured_data),
+                                            synthesize_only=synthesize_only, stop_reason=stop_reason)
 
     parts: List[Dict[str, Any]] = [
         {"text": f"{system_instruction}\n\nUser Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"}
@@ -415,37 +972,75 @@ async def try_gemini(
         if fallback not in candidate_models:
             candidate_models.append(fallback)
 
+    # Prefer models the key can really serve. Without this, a preference list
+    # full of ids this account does not have burns every attempt on a 404 and
+    # never reaches the ones that would have worked.
+    available = await get_available_gemini_models(api_key)
+    if available:
+        servable = [m for m in candidate_models if m in available]
+        if not servable:
+            # None of the preferred ids exist for this key: fall back to whatever
+            # flash-class model it does have, then anything at all.
+            servable = [m for m in available if "flash" in m] or available
+            print(f"[Gemini] No preferred model available; using {servable[0]}")
+        candidate_models = servable
+
+    # Only try a couple of models. The full list at 45s each could burn several
+    # minutes against a 60s client timeout, so the local Qwen fallback was
+    # effectively unreachable whenever Gemini was having a bad day.
+    max_candidates = int(os.getenv("GEMINI_MAX_CANDIDATES", "2"))
+    candidate_models = candidate_models[:max_candidates]
+    per_attempt_timeout = float(os.getenv("GEMINI_ATTEMPT_TIMEOUT", "12"))
+    total_budget_s = float(os.getenv("GEMINI_TOTAL_BUDGET", "20"))
+    budget_start = time.perf_counter()
+
     payload = {
         "contents": [{"parts": parts}],
         "generationConfig": {
             "response_mime_type": "application/json",
-            "temperature": 0.2
+            # Enforced server-side: an invalid action type or a missing
+            # required field can no longer come back at all.
+            "response_schema": SYNTHESIS_RESPONSE_SCHEMA if synthesize_only else ACTION_RESPONSE_SCHEMA,
+            "temperature": 0.1
         }
     }
 
-    async with httpx.AsyncClient(timeout=45.0) as client:
+    async with httpx.AsyncClient(timeout=per_attempt_timeout) as client:
         for model in candidate_models:
-            url = f"https://generativelanguage.googleapis.com/v1/models/{model}:generateContent?key={api_key}"
+            if (time.perf_counter() - budget_start) > total_budget_s:
+                _record_attempt(attempts, "gemini", model, False,
+                                latency_ms=0, error="gemini budget exhausted, falling through")
+                print("[Gemini] Total budget exhausted; falling through to next provider.")
+                break
+
+            api_version = os.getenv("GEMINI_API_VERSION", "v1beta")
+            url = f"https://generativelanguage.googleapis.com/{api_version}/models/{model}:generateContent?key={api_key}"
+            attempt_start = time.perf_counter()
             try:
                 resp = await client.post(url, json=payload)
+                latency_ms = (time.perf_counter() - attempt_start) * 1000
                 if resp.status_code == 200:
                     data = resp.json()
                     text_response = data["candidates"][0]["content"]["parts"][0]["text"]
                     raw_json = json.loads(text_response)
-                    if "type" in raw_json:
-                        return ActionOutput(
-                            type=raw_json.get("type", "finish"),
-                            selector=raw_json.get("selector"),
-                            value=raw_json.get("value"),
-                            explanation=f"[Gemini ({model})] " + raw_json.get("explanation", "Action planned by Gemini."),
-                            confidence=float(raw_json.get("confidence", 0.95)),
-                        )
+                    if "type" in raw_json or (synthesize_only and "summary" in raw_json):
+                        _record_attempt(attempts, "gemini", model, True, latency_ms=latency_ms)
+                        return (build_synthesis_output(raw_json, f"Gemini ({model})") if synthesize_only
+                                else build_action_output(raw_json, elements, f"Gemini ({model})"))
+                    _record_attempt(attempts, "gemini", model, False, latency_ms=latency_ms,
+                                    error="response missing 'type'", status_code=200)
                 elif resp.status_code == 429:
+                    _record_attempt(attempts, "gemini", model, False, latency_ms=latency_ms,
+                                    error="rate limited", status_code=429)
                     print(f"[Gemini] {model} hit rate limit (429), trying fallback model...")
                     continue
                 else:
+                    _record_attempt(attempts, "gemini", model, False, latency_ms=latency_ms,
+                                    error=resp.text[:120], status_code=resp.status_code)
                     print(f"[Gemini] {model} API error {resp.status_code}: {resp.text[:200]}")
             except Exception as e:
+                _record_attempt(attempts, "gemini", model, False,
+                                latency_ms=(time.perf_counter() - attempt_start) * 1000, error=str(e)[:120])
                 print(f"[Gemini] {model} Exception: {e}")
     return None
 
@@ -459,6 +1054,9 @@ async def try_openai(
     step: int = 1,
     max_steps: int = 8,
     structured_data: Optional[Dict[str, Any]] = None,
+    synthesize_only: bool = False,
+    stop_reason: Optional[str] = None,
+    attempts: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[ActionOutput]:
     """
     Attempts reasoning using OpenAI API (gpt-4o-mini / gpt-4o).
@@ -470,47 +1068,14 @@ async def try_openai(
         return None
 
     model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
-    elements_digest = [
-        {
-            "id": el.id,
-            "tag": el.tag,
-            "type": el.type,
-            "name": el.name,
-            "text": el.text,
-            "selector": el.selector,
-            "role": el.role,
-            "value": el.value or "",
-            "is_interactive": el.is_interactive,
-        }
-        for el in elements[:80]
-    ]
+    elements_digest = build_elements_digest(elements)
 
-    history_text = ""
-    if history and len(history) > 0:
-        history_lines = [
-            f"  - Step {h.get('step', i+1)}: [{h.get('action', '').upper()}] selector='{h.get('selector', '') or 'page'}' value='{h.get('value', '')}': {h.get('explanation', '')}"
-            for i, h in enumerate(history)
-        ]
-        history_text = "\n\nPrevious Actions Executed in this Session:\n" + "\n".join(history_lines)
+    history_text = build_history_text(history, full_detail=synthesize_only)
 
-    telemetry_text = ""
-    if structured_data:
-        telemetry_text = (
-            "\n\n=== REAL-TIME TELEMETRY & STRUCTURED APPLICATION DATA ===\n"
-            "[Direct binary/WebSocket stream - exact parameters received by browser. Do NOT guess or attempt visual OCR on strip charts for these values]\n"
-            f"{json.dumps(structured_data, indent=2)}\n"
-            "===========================================================\n"
-        )
+    telemetry_text = build_telemetry_text(structured_data)
 
-    system_prompt = (
-        "You are an expert autonomous browser agent. Select the next single concrete browser action. "
-        "To submit a form or send a message in chat/search interfaces (e.g. ChatGPT, Google), click the submit/send button or use the 'submit' action type on the input field. "
-        "If 'REAL-TIME TELEMETRY & STRUCTURED APPLICATION DATA' is provided, use those exact numerical parameters directly. "
-        "Respond strictly with a JSON object: "
-        '{"type": "click"|"type"|"scroll"|"select"|"submit"|"wait"|"finish", '
-        '"selector": "CSS selector or element id", "value": "text to type or select", '
-        '"explanation": "reasoning", "confidence": 0.0-1.0}'
-    )
+    system_prompt = build_system_instruction(task, step, max_steps, bool(structured_data),
+                                            synthesize_only=synthesize_only, stop_reason=stop_reason)
 
     user_content: Any = f"User Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
     if image_base64 and len(image_base64) > 100:
@@ -527,7 +1092,8 @@ async def try_openai(
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": user_content}
         ],
-        "temperature": 0.2
+        "response_format": {"type": "json_object"},
+        "temperature": 0.1
     }
 
     try:
@@ -540,14 +1106,9 @@ async def try_openai(
             if resp.status_code == 200:
                 data = resp.json()
                 raw_json = json.loads(data["choices"][0]["message"]["content"])
-                if "type" in raw_json:
-                    return ActionOutput(
-                        type=raw_json.get("type", "finish"),
-                        selector=raw_json.get("selector"),
-                        value=raw_json.get("value"),
-                        explanation=f"[OpenAI] " + raw_json.get("explanation", "Action planned by OpenAI."),
-                        confidence=float(raw_json.get("confidence", 0.95)),
-                    )
+                if "type" in raw_json or (synthesize_only and "summary" in raw_json):
+                    return (build_synthesis_output(raw_json, "OpenAI") if synthesize_only
+                            else build_action_output(raw_json, elements, "OpenAI"))
             else:
                 print(f"[OpenAI] API error {resp.status_code}: {resp.text[:300]}")
     except Exception as e:
@@ -793,6 +1354,77 @@ def universal_nlp_reasoner(
     )
 
 
+@app.get("/api/diagnostics/models")
+async def diagnostics_models():
+    """
+    Reports what reasoning is actually reachable right now.
+
+    Exists because a missing GEMINI_API_KEY or a model id the key cannot serve
+    both fail the same silent way: the provider is skipped and the agent quietly
+    degrades to the heuristic engine. This names the problem instead.
+    """
+    report: Dict[str, Any] = {
+        "gemini": {"configured": bool(os.getenv("GEMINI_API_KEY"))},
+        "openai": {"configured": bool(os.getenv("OPENAI_API_KEY"))},
+        "ollama": {},
+    }
+
+    # Which Gemini models this key can actually serve.
+    if report["gemini"]["configured"]:
+        key = os.getenv("GEMINI_API_KEY")
+        configured = [os.getenv("GEMINI_MODEL", "gemini-3.5-flash-lite")]
+        try:
+            async with httpx.AsyncClient(timeout=10.0) as client:
+                resp = await client.get(
+                    f"https://generativelanguage.googleapis.com/v1beta/models?key={key}"
+                )
+                if resp.status_code == 200:
+                    available = [
+                        m.get("name", "").replace("models/", "")
+                        for m in resp.json().get("models", [])
+                        if "generateContent" in m.get("supportedGenerationMethods", [])
+                    ]
+                    report["gemini"]["available"] = available
+                    report["gemini"]["configured_model_is_available"] = {
+                        m: (m in available) for m in configured
+                    }
+                else:
+                    report["gemini"]["error"] = f"HTTP {resp.status_code}: {resp.text[:200]}"
+        except Exception as exc:
+            report["gemini"]["error"] = str(exc)[:200]
+
+    # Which Ollama models are pulled, and whether the two roles are set sanely.
+    ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
+    action_model = os.getenv("OLLAMA_ACTION_MODEL", "qwen2.5:1.5b")
+    privacy_model = os.getenv("OLLAMA_MODEL", "isro-privacy-qwen")
+    try:
+        async with httpx.AsyncClient(timeout=3.0) as client:
+            resp = await client.get(f"{ollama_host}/api/tags")
+            pulled = [m.get("name", "") for m in resp.json().get("models", [])]
+    except Exception as exc:
+        pulled = []
+        report["ollama"]["error"] = str(exc)[:200]
+
+    report["ollama"].update({
+        "pulled": pulled,
+        "action_model": action_model,
+        "privacy_model": privacy_model,
+        "action_model_pulled": any(p.split(":")[0] == action_model.split(":")[0] for p in pulled),
+        "privacy_model_pulled": any(p.split(":")[0] == privacy_model.split(":")[0] for p in pulled),
+        "roles_collide": action_model == privacy_model,
+    })
+
+    report["effective_provider_order"] = [
+        p for p, on in (
+            ("gemini", report["gemini"]["configured"]),
+            ("openai", report["openai"]["configured"]),
+            ("ollama-qwen", bool(pulled)),
+            ("universal-nlp-engine", True),
+        ) if on
+    ]
+    return report
+
+
 @app.post("/api/act", response_model=ActResponse)
 async def act_endpoint(payload: ActRequest):
     start_time = time.perf_counter()
@@ -803,9 +1435,14 @@ async def act_endpoint(payload: ActRequest):
 
     model_used = "universal-nlp-engine"
     action = None
+    attempts: List[Dict[str, Any]] = []
+    requested = payload.model_provider or "auto"
+    # An explicitly chosen provider is honoured: only "auto" cascades. Previously
+    # asking for Gemini still silently fell through to OpenAI/Ollama/NLP.
+    is_auto = requested == "auto"
 
     # Priority 1: Google Gemini (Primary Cloud VLM for intelligent multi-step browser actions)
-    if payload.model_provider == "gemini" or (payload.model_provider == "auto" and os.getenv("GEMINI_API_KEY")):
+    if requested == "gemini" or (is_auto and os.getenv("GEMINI_API_KEY")):
         print(f"[Reasoner] Delegating action planning to Gemini Cloud VLM (Step {payload.step or 1}/{payload.max_steps or 8})...")
         action = await try_gemini(
             payload.task,
@@ -815,12 +1452,15 @@ async def act_endpoint(payload: ActRequest):
             step=payload.step or 1,
             max_steps=payload.max_steps or 8,
             structured_data=payload.structured_data,
+            synthesize_only=bool(payload.synthesize_only),
+            stop_reason=payload.stop_reason,
+            attempts=attempts,
         )
         if action:
             model_used = "gemini"
 
     # Priority 2: OpenAI Cloud VLM (if explicitly selected or auto fallback with key)
-    if not action and (payload.model_provider == "openai" or (payload.model_provider == "auto" and os.getenv("OPENAI_API_KEY"))):
+    if not action and (requested == "openai" or (is_auto and os.getenv("OPENAI_API_KEY"))):
         print("[Reasoner] Delegating action planning to OpenAI Cloud VLM...")
         action = await try_openai(
             payload.task,
@@ -830,12 +1470,15 @@ async def act_endpoint(payload: ActRequest):
             step=payload.step or 1,
             max_steps=payload.max_steps or 8,
             structured_data=payload.structured_data,
+            synthesize_only=bool(payload.synthesize_only),
+            stop_reason=payload.stop_reason,
+            attempts=attempts,
         )
         if action:
             model_used = "openai"
 
     # Priority 3: Local Ollama / Qwen model (if explicitly selected or fallback)
-    if not action and (payload.model_provider == "ollama_qwen" or payload.model_provider == "auto"):
+    if not action and (requested == "ollama_qwen" or is_auto):
         print("[Reasoner] Delegating action planning to Local Ollama Qwen...")
         action = await try_ollama_qwen(
             payload.task,
@@ -845,6 +1488,9 @@ async def act_endpoint(payload: ActRequest):
             step=payload.step or 1,
             max_steps=payload.max_steps or 8,
             structured_data=payload.structured_data,
+            synthesize_only=bool(payload.synthesize_only),
+            stop_reason=payload.stop_reason,
+            attempts=attempts,
         )
         if action:
             model_used = "ollama-qwen"
@@ -858,6 +1504,10 @@ async def act_endpoint(payload: ActRequest):
             redactions=payload.redaction_manifest or [],
             has_image=has_image,
         )
+        _record_attempt(attempts, "universal-nlp-engine", "heuristic", True)
+
+    # The concrete model that actually answered, e.g. which Gemini variant.
+    model_id = next((a["modelId"] for a in reversed(attempts) if a["ok"]), None)
 
     elapsed_ms = (time.perf_counter() - start_time) * 1000
 
@@ -875,7 +1525,10 @@ async def act_endpoint(payload: ActRequest):
         action=action,
         audit=audit_report,
         server_latency_ms=round(elapsed_ms, 2),
-        model_used=model_used
+        model_used=model_used,
+        model_id=model_id,
+        provider_requested=requested,
+        provider_attempts=attempts,
     )
 
 

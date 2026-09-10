@@ -63,6 +63,8 @@ export class AgentClient {
       name: el.name || "",
       type: el.type || "",
       text: el.text || "",
+      placeholder: el.placeholder || "",
+      aria_label: el.ariaLabel || el.aria_label || "",
       selector: el.selector || (el.id ? `#${el.id}` : el.name ? `[name="${el.name}"]` : ""),
       role: el.role || null,
       rect: el.bbox || el.rect || null,
@@ -82,11 +84,17 @@ export class AgentClient {
       })),
       viewport: params.viewport || null,
       url: params.url || null,
-      model_provider: params.modelProvider || "auto",
+      // Fall back to the persisted setting: callers other than the popup
+      // (HUD, background-initiated runs) never passed one, so an explicit
+      // model choice in Settings was silently ignored.
+      model_provider: params.modelProvider || settings.modelProvider || "auto",
       step: params.step || 1,
-      max_steps: params.maxSteps || 8,
+      max_steps: params.maxSteps || settings.maxSteps || 25,
       history: params.history || [],
-      structured_data: params.structuredData || null
+      structured_data: params.structuredData || null,
+      // Final-answer pass: no further browsing, just report what was found.
+      synthesize_only: Boolean(params.synthesizeOnly),
+      stop_reason: params.stopReason || null
     };
 
     const startTime = performance.now();
@@ -123,7 +131,10 @@ export class AgentClient {
         audit: data.audit || {},
         latencyMs: Math.round(elapsedMs),
         serverLatencyMs: data.server_latency_ms || 0,
-        modelUsed: data.model_used || "vlm-server"
+        modelUsed: data.model_used || "vlm-server",
+        modelId: data.model_id || null,
+        providerRequested: data.provider_requested || null,
+        providerAttempts: data.provider_attempts || []
       };
     } catch (err) {
       const elapsedMs = performance.now() - startTime;

@@ -1,125 +1,145 @@
 <!DOCTYPE html>
-<html lang="en">
+<html lang="en" data-theme="dark">
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>PriviBrowse-X — Analytics & Privacy Assurance Dashboard</title>
+  <title>Privacy Agent — Analytics</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="theme.css" />
   <link rel="stylesheet" href="dashboard.css" />
 </head>
 <body>
   <div class="dashboard-layout">
-    <!-- Top Header -->
+
+    <!-- Header -->
     <header class="dashboard-header">
-      <div class="brand-group">
-        <div class="shield-badge">🛡️</div>
-        <div>
-          <div class="title-row">
-            <h1>PriviBrowse-X Analytics</h1>
-            <span class="badge-tag">ISRO PS #26171</span>
-          </div>
-          <p class="subtitle">Real-time telemetry, on-device perception metrics, and zero-leakage verification</p>
+      <div class="brand">
+        <span class="shield-icon" aria-hidden="true">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
+            <path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7L12 2z" fill="currentColor" opacity="0.15" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+            <path d="M9 12l2 2 4-4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+        </span>
+        <div class="brand-text">
+          <span class="brand-name">Privacy Agent</span>
+          <span class="brand-sub">Analytics</span>
         </div>
       </div>
-      <div class="header-actions">
-        <button id="btnRefresh" class="btn btn-secondary">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M23 4v6h-6"></path><path d="M1 20v-6h6"></path>
-            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path>
+
+      <div class="header-right">
+        <button id="btnRefresh" class="btn btn-ghost">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/>
+            <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
           </svg>
-          Refresh
+          <span id="btnRefreshLabel">Refresh</span>
         </button>
-        <button id="btnExportLogs" class="btn btn-secondary">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
-            <polyline points="7 10 12 15 17 10"></polyline>
-            <line x1="12" y1="15" x2="12" y2="3"></line>
+        <button id="btnExportLogs" class="btn btn-ghost">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+            <polyline points="7 10 12 15 17 10"/>
+            <line x1="12" y1="15" x2="12" y2="3"/>
           </svg>
-          Export Audit JSON
+          Export
         </button>
-        <button id="btnOpenOptions" class="btn btn-primary">Settings</button>
+
+        <span class="header-sep" aria-hidden="true"></span>
+
+        <button id="btnDevMode" class="icon-btn" title="Toggle developer mode" aria-label="Toggle developer mode" aria-pressed="false">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="16 18 22 12 16 6"/><polyline points="8 6 2 12 8 18"/>
+          </svg>
+        </button>
+
+        <button id="btnTheme" class="icon-btn" title="Toggle light/dark mode" aria-label="Toggle theme">
+          <svg class="icon-sun" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="5"/><line x1="12" y1="1" x2="12" y2="3"/><line x1="12" y1="21" x2="12" y2="23"/>
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"/><line x1="18.36" y1="18.36" x2="19.78" y2="19.78"/>
+            <line x1="1" y1="12" x2="3" y2="12"/><line x1="21" y1="12" x2="23" y2="12"/>
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"/><line x1="18.36" y1="5.64" x2="19.78" y2="4.22"/>
+          </svg>
+          <svg class="icon-moon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z"/>
+          </svg>
+        </button>
+        <button id="btnOpenOptions" class="icon-btn" title="Settings" aria-label="Open settings">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <circle cx="12" cy="12" r="3"/>
+            <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+          </svg>
+        </button>
       </div>
     </header>
 
-    <!-- Key Metrics Ribbon -->
+    <!-- Key Metrics -->
     <section class="metrics-grid">
       <div class="metric-card">
-        <div class="metric-icon red">🔒</div>
-        <div class="metric-body">
-          <span class="metric-label">Shielded Entities</span>
-          <span class="metric-val" id="metricTotalShielded">0</span>
-          <span class="metric-sub">0 raw pixels exported</span>
-        </div>
+        <svg class="metric-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
+        <span class="metric-label">Shielded Entities</span>
+        <span class="metric-val" id="metricTotalShielded">0</span>
+        <span class="metric-sub">0 raw pixels exported</span>
       </div>
       <div class="metric-card">
-        <div class="metric-icon green">🛡️</div>
-        <div class="metric-body">
-          <span class="metric-label">Zero-Leakage Assurance</span>
-          <span class="metric-val" id="metricAssuranceRate">100%</span>
-          <span class="metric-sub">Fail-closed air-gapped</span>
-        </div>
+        <svg class="metric-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M12 2L3 7v5c0 5.25 3.75 10.15 9 11.35C17.25 22.15 21 17.25 21 12V7L12 2z"/><path d="M9 12l2 2 4-4"/></svg>
+        <span class="metric-label">Zero-Leakage Assurance</span>
+        <span class="metric-val" id="metricAssuranceRate">100%</span>
+        <span class="metric-sub">Fail-closed, air-gapped</span>
       </div>
       <div class="metric-card">
-        <div class="metric-icon cyan">⚡</div>
-        <div class="metric-body">
-          <span class="metric-label">Mean Perception Latency</span>
-          <span class="metric-val" id="metricAvgLatency">38 ms</span>
-          <span class="metric-sub">On-device WebGPU accelerated</span>
-        </div>
+        <svg class="metric-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
+        <span class="metric-label">Mean Perception Latency</span>
+        <span class="metric-val" id="metricAvgLatency">38 ms</span>
+        <span class="metric-sub">On-device, hardware accelerated</span>
       </div>
       <div class="metric-card">
-        <div class="metric-icon purple">🧠</div>
-        <div class="metric-body">
-          <span class="metric-label">Qwen Local Evaluations</span>
-          <span class="metric-val" id="metricQwenDecisions">0</span>
-          <span class="metric-sub">Selective local ambiguity model</span>
-        </div>
+        <svg class="metric-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
+        <span class="metric-label">Local Model Evaluations</span>
+        <span class="metric-val" id="metricQwenDecisions">0</span>
+        <span class="metric-sub">Selective ambiguity reasoning</span>
       </div>
     </section>
 
-    <!-- Visual Charts Grid -->
+    <!-- Charts -->
     <div class="charts-grid">
-      <!-- PII Category Donut Chart -->
+      <!-- Category distribution -->
       <section class="card chart-card">
         <div class="card-header">
           <div>
             <h3>PII Category Distribution</h3>
-            <p class="card-desc">Breakdown of shielded entities across active browser sessions</p>
+            <p class="card-desc">Shielded entities across active browser sessions</p>
           </div>
-          <span class="pill-badge" id="pillTotalEntities">0 Total</span>
+          <span class="pill-badge" id="pillTotalEntities">0 total</span>
         </div>
         <div class="donut-chart-container">
           <div class="donut-wrapper">
             <svg id="svgDonut" class="donut-svg" viewBox="0 0 240 240">
-              <circle cx="120" cy="120" r="80" fill="none" stroke="#1a1e26" stroke-width="32"></circle>
-              <!-- Dynamic SVG slices injected by dashboard.js -->
+              <circle cx="120" cy="120" r="80" fill="none" stroke="var(--surface-2)" stroke-width="28"></circle>
             </svg>
             <div class="donut-center-label">
               <span class="donut-count" id="donutTotalCount">0</span>
               <span class="donut-sub">Entities</span>
             </div>
           </div>
-          <div class="donut-legend" id="donutLegend">
-            <!-- Dynamic legend injected by dashboard.js -->
-          </div>
+          <div class="donut-legend" id="donutLegend"></div>
         </div>
       </section>
 
-      <!-- Zero-Leakage Assurance Gauge & Hardware Health -->
+      <!-- Assurance + hardware -->
       <section class="card gauge-card">
         <div class="card-header">
           <div>
-            <h3>Security Assurance & Hardware Stack</h3>
+            <h3>Security Assurance</h3>
             <p class="card-desc">Verified client-side enforcement integrity</p>
           </div>
-          <span class="status-indicator-live">● Active</span>
+          <span class="status-indicator-live">Active</span>
         </div>
 
         <div class="gauge-wrapper">
           <svg class="gauge-svg" viewBox="0 0 200 120">
-            <!-- Gauge arc background -->
-            <path d="M 20 110 A 80 80 0 0 1 180 110" fill="none" stroke="#1a1e26" stroke-width="18" stroke-linecap="round"/>
-            <!-- Gauge active arc (100%) -->
-            <path id="gaugeArc" d="M 20 110 A 80 80 0 0 1 180 110" fill="none" stroke="#10b981" stroke-width="18" stroke-linecap="round"
+            <path d="M 20 110 A 80 80 0 0 1 180 110" fill="none" stroke="var(--surface-2)" stroke-width="16" stroke-linecap="round"/>
+            <path id="gaugeArc" d="M 20 110 A 80 80 0 0 1 180 110" fill="none" stroke="var(--green)" stroke-width="16" stroke-linecap="round"
                   stroke-dasharray="251.2" stroke-dashoffset="0"/>
             <text x="100" y="95" text-anchor="middle" class="gauge-text">100%</text>
             <text x="100" y="112" text-anchor="middle" class="gauge-sub">Zero-Leakage Guarantee</text>
@@ -128,104 +148,85 @@
 
         <div class="hardware-stack-list">
           <div class="stack-item">
-            <span class="stack-icon">⚙️</span>
+            <svg class="stack-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 9h6v6H9z"/></svg>
             <div class="stack-info">
               <span class="stack-name">DOM Sanitization Engine</span>
-              <span class="stack-status green">Active • Top-Frame Target</span>
+              <span class="stack-status green">Active · top-frame target</span>
             </div>
           </div>
           <div class="stack-item">
-            <span class="stack-icon">⚡</span>
+            <svg class="stack-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><polygon points="13 2 3 14 12 14 11 22 21 10 12 10 13 2"/></svg>
             <div class="stack-info">
-              <span class="stack-name">WebGPU Canvas Redactor</span>
-              <span class="stack-status green" id="lblWebGPUStatus">Ready • Cryptographic SHA-256</span>
+              <span class="stack-name">Canvas Redactor</span>
+              <span class="stack-status green" id="lblWebGPUStatus">Ready · cryptographic SHA-256</span>
             </div>
           </div>
           <div class="stack-item">
-            <span class="stack-icon">🧠</span>
+            <svg class="stack-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><rect x="9" y="9" width="6" height="6"/><line x1="9" y1="1" x2="9" y2="4"/><line x1="15" y1="1" x2="15" y2="4"/><line x1="9" y1="20" x2="9" y2="23"/><line x1="15" y1="20" x2="15" y2="23"/><line x1="20" y1="9" x2="23" y2="9"/><line x1="20" y1="14" x2="23" y2="14"/><line x1="1" y1="9" x2="4" y2="9"/><line x1="1" y1="14" x2="4" y2="14"/></svg>
             <div class="stack-info">
-              <span class="stack-name">Qwen Local Ambiguity Reasoner</span>
-              <span class="stack-status cyan" id="lblQwenStatus">Ollama / Fastpath Fallback</span>
+              <span class="stack-name">Local Ambiguity Reasoner</span>
+              <span class="stack-status muted" id="lblQwenStatus">Ollama / fastpath fallback</span>
             </div>
           </div>
           <div class="stack-item">
-            <span class="stack-icon">🛡️</span>
+            <svg class="stack-icon" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></svg>
             <div class="stack-info">
-              <span class="stack-name">Prompt-Guard & Vault</span>
-              <span class="stack-status green">Enforcing • Fail-Closed</span>
+              <span class="stack-name">Prompt-Guard &amp; Vault</span>
+              <span class="stack-status green">Enforcing · fail-closed</span>
             </div>
           </div>
         </div>
       </section>
     </div>
 
-    <!-- Perception Layer Latency Waterfall -->
+    <!-- Latency breakdown -->
     <section class="card waterfall-card">
       <div class="card-header">
         <div>
-          <h3>Perception Pipeline Latency Breakdown</h3>
-          <p class="card-desc">Sub-second execution budgets across perception and reasoning tiers</p>
+          <h3>Perception Pipeline Latency</h3>
+          <p class="card-desc">Sub-second execution budget across perception and reasoning stages</p>
         </div>
-        <span class="pill-badge" id="lblTotalPipelineLatency">~42 ms Total</span>
+        <span class="pill-badge" id="lblTotalPipelineLatency">~42 ms total</span>
       </div>
 
-      <div class="waterfall-bars">
-        <div class="waterfall-row">
-          <div class="bar-meta">
-            <span class="bar-title">1. DOM Heuristic Scanner</span>
-            <span class="bar-val" id="latDom">3 ms</span>
-          </div>
-          <div class="bar-track">
-            <div class="bar-fill cyan" style="width: 8%;"></div>
-          </div>
-        </div>
-        <div class="waterfall-row">
-          <div class="bar-meta">
-            <span class="bar-title">2. MediaPipe Face & Biometrics</span>
-            <span class="bar-val" id="latFace">24 ms</span>
-          </div>
-          <div class="bar-track">
-            <div class="bar-fill green" style="width: 32%;"></div>
-          </div>
-        </div>
-        <div class="waterfall-row">
-          <div class="bar-meta">
-            <span class="bar-title">3. OCR Text Spotting</span>
-            <span class="bar-val" id="latOcr">45 ms</span>
-          </div>
-          <div class="bar-track">
-            <div class="bar-fill amber" style="width: 48%;"></div>
-          </div>
-        </div>
-        <div class="waterfall-row">
-          <div class="bar-meta">
-            <span class="bar-title">4. Qwen Local Reasoner</span>
-            <span class="bar-val" id="latQwen">75 ms</span>
-          </div>
-          <div class="bar-track">
-            <div class="bar-fill purple" style="width: 60%;"></div>
-          </div>
-        </div>
-        <div class="waterfall-row">
-          <div class="bar-meta">
-            <span class="bar-title">5. Canvas Cryptographic Redaction</span>
-            <span class="bar-val" id="latCanvas">8 ms</span>
-          </div>
-          <div class="bar-track">
-            <div class="bar-fill red" style="width: 12%;"></div>
-          </div>
-        </div>
-      </div>
+      <div class="waterfall-bars" id="pipelineBars"></div>
     </section>
 
-    <!-- Compliance Audit Stream Table -->
+    <!-- Developer: detection + reasoning attribution -->
+    <div class="charts-grid dev-only">
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h3>Detection Attribution by Layer</h3>
+            <p class="card-desc">Which perception layer caught the PII, and its mean cost</p>
+          </div>
+        </div>
+        <div class="waterfall-bars" id="layerAttribution"></div>
+      </section>
+
+      <section class="card">
+        <div class="card-header">
+          <div>
+            <h3>Reasoning Attribution</h3>
+            <p class="card-desc">Which model answered each agent step</p>
+          </div>
+          <div class="dev-actions">
+            <button id="btnExportTraces" class="btn btn-ghost">Export traces</button>
+            <button id="btnClearTraces" class="btn btn-ghost btn-danger-ghost">Clear</button>
+          </div>
+        </div>
+        <div class="hardware-stack-list" id="reasoningAttribution"></div>
+      </section>
+    </div>
+
+    <!-- Audit stream -->
     <section class="card audit-card">
       <div class="card-header">
         <div>
           <h3>Compliance Audit Stream</h3>
-          <p class="card-desc">Tamper-evident verification log of redacted entities and agent actions</p>
+          <p class="card-desc">Verification log of redacted entities and agent actions</p>
         </div>
-        <button id="btnClearLogs" class="btn btn-danger-ghost">Clear Log</button>
+        <button id="btnClearLogs" class="btn btn-ghost btn-danger-ghost">Clear log</button>
       </div>
 
       <div class="table-container">
@@ -233,29 +234,25 @@
           <thead>
             <tr>
               <th>Timestamp</th>
-              <th>Task / Event</th>
-              <th>Action Type</th>
-              <th>Engine / Model</th>
+              <th>Task / event</th>
+              <th>Action</th>
+              <th>Engine / model</th>
               <th>Redactions</th>
               <th>Latency</th>
               <th>Status</th>
             </tr>
           </thead>
           <tbody id="auditTableBody">
-            <tr>
-              <td colspan="7" class="empty-state">Loading audit history...</td>
-            </tr>
+            <tr><td colspan="7" class="empty-state">Loading audit history…</td></tr>
           </tbody>
         </table>
       </div>
     </section>
 
     <footer class="dashboard-footer">
-      <span>PriviBrowse-X • Visual Perception Privacy Agent for Autonomous Browser Automation</span>
-      <span class="footer-separator">•</span>
+      <span>Privacy Agent — visual perception privacy layer for autonomous browser automation</span>
+      <span class="footer-separator">·</span>
       <span>ISRO PS #26171</span>
-      <span class="footer-separator">•</span>
-      <span>Zero-Leakage Guarantee Verified</span>
     </footer>
   </div>
 
