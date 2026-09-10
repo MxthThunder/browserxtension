@@ -1,0 +1,153 @@
+<!DOCTYPE html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Dashboard preview (dev harness)</title>
+  <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
+  <link rel="stylesheet" href="theme.css" />
+  <link rel="stylesheet" href="dashboard.css" />
+</head>
+<body>
+<!--
+  DEV HARNESS — not part of the shipped extension.
+
+  Renders the real dashboard.html markup with the real dashboard.js against a
+  seeded chrome.storage shim, so the layout can be reviewed without loading the
+  extension and generating live traffic. Delete this file before packaging.
+
+  Serve it over http (file:// blocks the fetch of dashboard.html):
+      python -m http.server 8777      then open  /dashboard.preview.html
+-->
+<script>
+(function seedChromeShim() {
+  const now = Date.now();
+  const rnd = (seed) => { let x = Math.sin(seed) * 10000; return x - Math.floor(x); };
+
+  const CATEGORIES = ["govIds", "creditCards", "contactInfo", "passwords", "faces", "names", "screens"];
+  const SOURCES = ["DOM", "OWL-ViT", "MediaPipe-Face", "OCR", "Ollama"];
+  const SITES = [
+    ["https://mail.example.com/inbox", "Inbox — 3 unread"],
+    ["https://shop.example.in/checkout", "Checkout — order #4821"],
+    ["https://portal.example.gov/kyc", "KYC verification"],
+    ["https://dash.example.com/team", "Team directory"],
+  ];
+
+  const auditLogs = [];
+  const devTraces = [];
+
+  for (let i = 0; i < 26; i++) {
+    const r = rnd(i + 1);
+    const site = SITES[i % SITES.length];
+    const ts = new Date(now - (26 - i) * 7 * 60 * 1000).toISOString();
+    const redactions = 2 + Math.floor(r * 11);
+    const latency = 28 + Math.round(rnd(i + 40) * 95);
+
+    const manifest = [];
+    for (let b = 0; b < redactions; b++) {
+      manifest.push({
+        x: 10, y: 10, w: 80, h: 20,
+        source: SOURCES[Math.floor(rnd(i * 31 + b) * SOURCES.length)],
+        category: CATEGORIES[Math.floor(rnd(i * 17 + b) * CATEGORIES.length)],
+        confidence: 0.55 + rnd(i * 7 + b) * 0.45,
+      });
+    }
+
+    const traceId = `trace_${i}`;
+    auditLogs.push({
+      id: `log_${i}`, timestamp: ts, type: i % 4 === 0 ? "AGENT_LOOP_STEP" : "CAPTURE",
+      traceId, url: site[0], tabTitle: site[1],
+      redactions, redactionsCount: redactions, redactionManifest: manifest,
+      backend: "local", latencyMs: latency,
+      task: i % 4 === 0 ? "Summarise this page" : null,
+      actionType: i % 4 === 0 ? "scroll" : null,
+      modelId: i % 4 === 0 ? "gemini-3.5-flash-lite" : null,
+    });
+
+    if (i >= 12) {
+      const counts = {}; const categories = {};
+      for (const box of manifest) {
+        counts[box.source] = (counts[box.source] || 0) + 1;
+        categories[box.category] = (categories[box.category] || 0) + 1;
+      }
+      const g3Engine = ["cache", "ollama-qwen2.5:1.5b", "unavailable"][Math.floor(rnd(i * 5) * 3)];
+      devTraces.unshift({
+        traceId, timestamp: ts, kind: i % 4 === 0 ? "agent_step" : "capture",
+        step: i % 4 === 0 ? 1 + (i % 3) : undefined,
+        url: site[0], redactions, latencyMs: latency,
+        perception: {
+          counts, categories,
+          nmsSuppressed: Math.floor(rnd(i * 3) * 4),
+          timings: {
+            totalRedactionLatencyMs: latency,
+            imageLoadMs: 3 + rnd(i) * 5,
+            domScanMs: 4 + rnd(i + 2) * 7, domMapMs: 1 + rnd(i + 3) * 2,
+            owlvitMs: 12 + rnd(i + 4) * 30, faceMs: 5 + rnd(i + 5) * 9,
+            ocrLatencyMs: 18 + rnd(i + 6) * 44, nmsMs: 0.6 + rnd(i + 7) * 1.9,
+            paintLatencyMs: 2 + rnd(i + 8) * 4, guardMs: 1 + rnd(i + 9) * 2.5,
+            g3Ms: g3Engine === "unavailable" ? 0 : 40 + rnd(i + 10) * 220,
+            g3Engine, g3CandidatesFound: Math.floor(rnd(i + 11) * 6),
+            g3CandidatesQueried: Math.floor(rnd(i + 12) * 4), g3Count: Math.floor(rnd(i + 13) * 3),
+            ocrRegionsScanned: 2 + Math.floor(rnd(i + 14) * 5),
+            ocrRegionsSkipped: Math.floor(rnd(i + 15) * 3),
+          },
+          guard: {
+            enabled: true, checked: true,
+            residualFound: rnd(i + 16) > 0.88,
+            emergencyBlackout: rnd(i + 17) > 0.94,
+            unreadable: false, failures: [],
+          },
+        },
+        reasoning: i % 4 === 0 ? {
+          providerRequested: "auto", provider: "gemini", modelId: "gemini-3.5-flash-lite",
+          serverLatencyMs: 900 + Math.round(rnd(i + 18) * 2400), clientLatencyMs: 1200,
+          attempts: [
+            { provider: "gemini", modelId: "gemini-3.5-flash-lite", ok: true, latencyMs: 1400 },
+            ...(rnd(i + 19) > 0.7 ? [{ provider: "ollama-qwen", modelId: "qwen2.5:1.5b", ok: false, error: "not reachable" }] : []),
+          ],
+        } : {},
+        qwen: {
+          invoked: rnd(i + 20) > 0.5, trigger: "keyword-prefilter",
+          candidateCount: 2, batchSize: 2, latencyMs: 180, engine: "ollama",
+          cacheHits: 1, timedOut: false,
+          decisions: [{ elementId: "el_1", decision: "REDACT", category: "names", engine: "ollama", reason: "person name in a delivery field" }],
+        },
+      });
+    }
+  }
+
+  const store = { settings: { theme: "dark", devMode: true }, auditLogs, devTraces };
+
+  window.chrome = {
+    storage: {
+      local: {
+        get(keys, cb) {
+          const out = {};
+          for (const k of [].concat(keys)) if (k in store) out[k] = store[k];
+          setTimeout(() => cb(out), 0);
+        },
+        set(obj, cb) { Object.assign(store, obj); setTimeout(() => cb && cb(), 0); },
+      },
+    },
+    runtime: {
+      lastError: null,
+      sendMessage: () => Promise.resolve({ ok: false }),
+      openOptionsPage: () => window.open("options.html", "_blank"),
+    },
+  };
+})();
+</script>
+
+<script type="module">
+  // Pull the REAL markup so this harness can never drift from the shipped page.
+  const html = await (await fetch("dashboard.html")).text();
+  const parsed = new DOMParser().parseFromString(html, "text/html");
+  document.body.insertAdjacentHTML("beforeend", parsed.body.innerHTML);
+
+  // innerHTML-injected <script> tags never execute, so load the controller
+  // ourselves — then fire the event it is waiting on, which already passed.
+  await import("./dashboard.js");
+  document.dispatchEvent(new Event("DOMContentLoaded"));
+</script>
+</body>
+</html>

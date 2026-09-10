@@ -32,18 +32,52 @@ export const BROWSER_ACTION_TYPES = new Set([
 /**
  * Cheap stable fingerprint of the interactive page state (FNV-1a).
  * Used only to tell "the page changed" from "nothing happened".
+ *
+ * Scroll position is folded in: a long article exposes zero new interactive
+ * elements as you scroll down (no buttons, no inputs appear in the static
+ * digest just because the viewport moved), so without the scrollY component
+ * every scroll step hashes identically and trips the no-op detector. A real
+ * reading task would be aborted after three productive scrolls.
  */
-function digestElements(elements = []) {
+function digestElements(elements = [], scrollY = 0) {
   const shape = elements
     .map((el) => `${el.id || ""}|${el.tagName || el.tag || ""}|${el.value || ""}|${(el.text || "").slice(0, 40)}`)
     .join("~");
 
   let hash = 0x811c9dc5;
-  for (let i = 0; i < shape.length; i++) {
-    hash ^= shape.charCodeAt(i);
+  const buf = `${shape}|y=${Math.round(scrollY)}`;
+  for (let i = 0; i < buf.length; i++) {
+    hash ^= buf.charCodeAt(i);
     hash = Math.imul(hash, 0x01000193) >>> 0;
   }
   return `${shape.length}:${hash.toString(16)}`;
+}
+
+/**
+ * The vault's inventory as `category.key` paths, for the model to address.
+ *
+ * ZERO-LEAKAGE INVARIANT: names only, never values. `vault.listKeys()` also
+ * carries `maskedValue`, so the shape is rebuilt from scratch here rather than
+ * filtered — a field added to listKeys() later cannot then ride along into a
+ * network payload. Every path is re-validated, so nothing but
+ * `category.key` can leave.
+ */
+const VAULT_PATH_RE = /^[a-z0-9_]+\.[a-z0-9_]+$/i;
+
+export function listVaultTokenPaths() {
+  try {
+    if (!vault.isUnlocked()) return [];
+    const paths = [];
+    for (const [category, entries] of Object.entries(vault.listKeys() || {})) {
+      for (const entry of entries || []) {
+        const path = `${category}.${entry.key}`;
+        if (VAULT_PATH_RE.test(path)) paths.push(path);
+      }
+    }
+    return paths.sort();
+  } catch {
+    return [];               // locked or uninitialised vault reads as "nothing on file"
+  }
 }
 
 /**
@@ -171,6 +205,7 @@ export class AutonomousAgentLoop {
         let domElements = [];
         let structuredData = null;
         let pageContent = [];
+        let viewportScrollY = 0;
         try {
           const tab = await this._getActiveTab();
           if (tab && tab.id) {
@@ -179,6 +214,9 @@ export class AutonomousAgentLoop {
               if (domResp.interactiveElements) domElements = domResp.interactiveElements;
               if (domResp.structuredData) structuredData = domResp.structuredData;
               if (domResp.pageContent) pageContent = domResp.pageContent;
+              if (domResp.viewport && typeof domResp.viewport.scrollY === "number") {
+                viewportScrollY = domResp.viewport.scrollY;
+              }
             }
           }
         } catch {
@@ -256,8 +294,9 @@ export class AutonomousAgentLoop {
 
         // No-op detection: if the page looks identical to the last observation,
         // the previous action changed nothing. Without this the loop can repeat
-        // a dead action until it runs out of steps.
-        const domDigest = digestElements(sanitizedElements);
+        // a dead action until it runs out of steps. scrollY is folded in so a
+        // reading task's scroll-only progress is recognised as productive.
+        const domDigest = digestElements(sanitizedElements, viewportScrollY);
         if (this._lastDomDigest && this._lastDomDigest === domDigest && this.stepHistory.length > 0) {
           const previous = this.stepHistory[this.stepHistory.length - 1];
           previous.noOp = true;
@@ -330,6 +369,12 @@ export class AutonomousAgentLoop {
           openTabs = await this._listAgentTabs();
         } catch {}
 
+        // Which personal fields the user has stored, as token paths ONLY.
+        // Without this the model cannot tell "the user has an email on file" from
+        // "there is no email", so it either guesses a token that resolves to
+        // nothing or gives up on a form it could actually have completed.
+        const vaultKeys = listVaultTokenPaths();
+
         // ── Phase 3: Query Main Agent LLM / VLM (Sanitized Context Only) ───────
         const actionResult = await agentClient.requestAction({
           task: userTask,
@@ -345,6 +390,7 @@ export class AutonomousAgentLoop {
           history: historyDigest,
           openTabs,
           pageContent,
+          vaultKeys,
           plan: this._plan,
           planStep: this._planStep
         });
@@ -816,7 +862,19 @@ export class AutonomousAgentLoop {
           if (tab && tab.id) return tab;
         } catch {}
       }
+      // An agent run started from the HUD, dashboard or options page must not
+      // target that page itself — those are the tool, not the subject.
+      const isWebPage = (t) => t && t.id && /^(https?|file):/i.test(t.url || "");
+
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+      if (isWebPage(tab)) return tab;
+
+      const activeElsewhere = (await chrome.tabs.query({ active: true })).find(isWebPage);
+      if (activeElsewhere) return activeElsewhere;
+
+      const anyWeb = (await chrome.tabs.query({ currentWindow: true })).filter(isWebPage);
+      if (anyWeb.length) return anyWeb[anyWeb.length - 1];
+
       if (tab && tab.id) return tab;
       const allTabs = await chrome.tabs.query({ active: true });
       return allTabs[0];

@@ -35,6 +35,7 @@ const catFaces = document.getElementById("catFaces");
 const catContactInfo = document.getElementById("catContactInfo");
 const catScreens = document.getElementById("catScreens");
 const catNames = document.getElementById("catNames");
+const chkOllamaNames = document.getElementById("chkOllamaNames");
 
 const txtServerUrl = document.getElementById("txtServerUrl");
 const txtHealthUrl = document.getElementById("txtHealthUrl");
@@ -171,6 +172,7 @@ async function loadAndRenderSettings() {
   chkEnabled.checked = Boolean(settings.enabled);
   chkFailClosed.checked = Boolean(settings.failClosed);
   chkShowPageBadge.checked = Boolean(settings.showPageBadge);
+  chkOllamaNames.checked = settings.ollamaNameDisambiguation !== false;
 
   selEngineMode.value = settings.engineMode || "auto";
   numConfidence.value = settings.detectionConfidence || 0.65;
@@ -272,6 +274,7 @@ btnSave.addEventListener("click", async () => {
     enabled: chkEnabled.checked,
     failClosed: chkFailClosed.checked,
     showPageBadge: chkShowPageBadge.checked,
+    ollamaNameDisambiguation: chkOllamaNames.checked,
     engineMode: selEngineMode.value,
     detectionConfidence: parseFloat(numConfidence.value),
     faceProxyPercent: parseFloat(numFaceProxy.value),

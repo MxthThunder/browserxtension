@@ -143,7 +143,14 @@ export class AgentClient {
         active: Boolean(t.active),
         title: semanticRedactor.sanitizeText(t.title || "").slice(0, 90),
         url: sanitizeUrlForModel(t.url || ""),
-      }))
+      })),
+      // Names of the personal details the user has stored, so the model knows
+      // which {{VAULT:...}} tokens it is allowed to ask for. Values NEVER appear
+      // here. The caller already filters, but this is the last checkpoint before
+      // the network, so the pattern is enforced again rather than trusted.
+      vault_keys: (params.vaultKeys || [])
+        .filter((k) => typeof k === "string" && /^[a-z0-9_]+\.[a-z0-9_]+$/i.test(k))
+        .slice(0, 40),
     };
 
     const startTime = performance.now();

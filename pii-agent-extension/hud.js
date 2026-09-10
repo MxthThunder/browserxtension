@@ -27,7 +27,7 @@ let lastResultPayload = null;
 
 async function runCapture() {
   btnCapture.disabled = true;
-  btnCapture.textContent = "⏳ Capturing & Processing...";
+  btnCapture.textContent = "Capturing…";
 
   try {
     let result = null;
@@ -56,7 +56,7 @@ async function runCapture() {
     alert("Capture Error: " + err.message);
   } finally {
     btnCapture.disabled = false;
-    btnCapture.textContent = "📷 Capture & Redact Active Tab";
+    btnCapture.textContent = "Capture & redact";
   }
 }
 
@@ -166,27 +166,45 @@ async function runStandaloneDemoCapture() {
 }
 
 function renderHUD(data) {
-  // 1. Hardware Badge & Latency
-  backendBadge.textContent = data.backend === "WebGPU" ? "⚡ WebGPU Hardware Accelerated" : "⚠️ WASM CPU Fallback";
-  backendBadge.className = `badge ${data.backend === "WebGPU" ? "badge-webgpu" : "badge-wasm"}`;
+  // The offscreen pipeline and the standalone demo engine return different
+  // shapes. Normalise once here: the real pipeline nests its measurements under
+  // `timings` and names the raw frame `rawImageUrl`, which is why the HUD used
+  // to show "undefined ms" and a broken raw image on a live capture.
+  const t = data.timings || {};
+  const latencyMs = data.inferenceLatencyMs ?? t.totalRedactionLatencyMs ?? null;
+  const engine = data.backend || (t.owlvitMs > 0 ? "WebGPU" : "WASM");
+  const rawUrl = data.inspectedRawImageUrl || data.rawImageUrl || null;
 
-  valLatency.innerHTML = `${data.inferenceLatencyMs} <span class="unit">ms</span>`;
-  valBackendDesc.textContent = `${data.backend} Runtime (${data.resolution?.width || 0}x${data.resolution?.height || 0}px)`;
+  const domCount = data.domBoxesCount ?? t.domCount ?? 0;
+  const visionCount = data.visionDetectionsCount
+    ?? ((t.owlvitCount || 0) + (t.faceCount || 0) + (t.ocrCount || 0));
 
-  valDomPii.textContent = `${data.domBoxesCount || 0} fields`;
-  valVision.textContent = `${data.visionDetectionsCount || 0} objects`;
+  const isGpu = engine === "WebGPU";
+  backendBadge.textContent = isGpu ? "WebGPU" : "WASM";
+  backendBadge.className = `badge ${isGpu ? "badge-webgpu" : "badge-wasm"}`;
+
+  valLatency.innerHTML = latencyMs === null
+    ? `— <span class="unit">ms</span>`
+    : `${Math.round(latencyMs)} <span class="unit">ms</span>`;
+
+  const w = data.resolution?.width;
+  const h = data.resolution?.height;
+  valBackendDesc.textContent = w && h ? `${engine} · ${w}×${h}` : `${engine} runtime`;
+
+  valDomPii.textContent = String(domCount);
+  valVision.textContent = String(visionCount);
 
   // 2. Dual Viewport
-  if (data.inspectedRawImageUrl) {
-    rawImage.src = data.inspectedRawImageUrl;
-    rawImage.style.display = "block";
-    rawPlaceholder.style.display = "none";
+  if (rawUrl) {
+    rawImage.src = rawUrl;
+    rawImage.hidden = false;
+    rawPlaceholder.hidden = true;
   }
 
   if (data.sanitizedImageUrl) {
     sanitizedImage.src = data.sanitizedImageUrl;
-    sanitizedImage.style.display = "block";
-    sanitizedPlaceholder.style.display = "none";
+    sanitizedImage.hidden = false;
+    sanitizedPlaceholder.hidden = true;
   }
 
   // 3. Audit Table
@@ -207,7 +225,7 @@ function renderHUD(data) {
         <td><span class="${badgeClass}">${item.source}</span></td>
         <td><strong>${item.label}</strong></td>
         <td><code>[${item.x}, ${item.y}, ${item.w}, ${item.h}]</code></td>
-        <td><span style="color: #34d399;">✔ Redacted (Canvas Blackout)</span></td>
+        <td>Blacked out</td>
       `;
       auditTableBody.appendChild(tr);
     });
@@ -218,8 +236,8 @@ function renderHUD(data) {
     schemaVersion: "v1-zero-leakage",
     timestamp: data.timestamp,
     clientTelemetry: {
-      backend: data.backend,
-      inferenceLatencyMs: data.inferenceLatencyMs,
+      backend: engine,
+      inferenceLatencyMs: latencyMs,
       totalRedactedRegions: list.length,
     },
     sanitizedVisualContext: {
@@ -244,12 +262,12 @@ btnAutoSync.addEventListener("click", () => {
   isAutoSyncRunning = !isAutoSyncRunning;
   if (isAutoSyncRunning) {
     btnAutoSync.classList.add("active");
-    btnAutoSync.textContent = "⏹ Stop Live Stream";
+    btnAutoSync.textContent = "Stop";
     runCapture();
     autoSyncInterval = setInterval(runCapture, 3000);
   } else {
     btnAutoSync.classList.remove("active");
-    btnAutoSync.textContent = "🔄 Live Stream (3s)";
+    btnAutoSync.textContent = "Live";
     clearInterval(autoSyncInterval);
     autoSyncInterval = null;
   }
@@ -308,7 +326,7 @@ btnDispatchTask.addEventListener("click", async () => {
   }
 
   btnDispatchTask.disabled = true;
-  btnDispatchTask.textContent = "⏳ Executing Loop...";
+  btnDispatchTask.textContent = "Running…";
   agentStatusLog.innerHTML = "";
   logAgent(`Step 1: Initiating client-side sanitization for task: "${task}"...`, "client");
 
@@ -366,7 +384,7 @@ btnDispatchTask.addEventListener("click", async () => {
     logAgent(`ERROR: ${err.message}. Make sure server is running at http://127.0.0.1:8001`, "error");
   } finally {
     btnDispatchTask.disabled = false;
-    btnDispatchTask.textContent = "🚀 Send Sanitized Screen to Server & Execute";
+    btnDispatchTask.textContent = "Run";
   }
 });
 
@@ -406,17 +424,17 @@ async function loadBenchmarkData() {
 }
 
 btnViewMetrics.addEventListener("click", () => {
-  metricsModal.style.display = "flex";
+  metricsModal.hidden = false;
   loadBenchmarkData();
 });
 
 btnCloseMetrics.addEventListener("click", () => {
-  metricsModal.style.display = "none";
+  metricsModal.hidden = true;
 });
 
 metricsModal.addEventListener("click", (e) => {
   if (e.target === metricsModal) {
-    metricsModal.style.display = "none";
+    metricsModal.hidden = true;
   }
 });
 

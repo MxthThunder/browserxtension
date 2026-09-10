@@ -5,7 +5,7 @@
  * Run: node scripts/test-ocr-localisation.mjs
  */
 import fs from 'node:fs';
-import { findNames } from '../pii-agent-extension/name_detector.js';
+import { findNames, findNameCandidates } from '../pii-agent-extension/name_detector.js';
 
 const SRC = 'C:/BrowserExt/browserxtension-2-working/pii-agent-extension/offscreen.js';
 const src = fs.readFileSync(SRC, 'utf8');
@@ -15,26 +15,31 @@ const patterns = src.slice(src.indexOf('const OCR_PII_PATTERNS = ['),
                            src.indexOf('];', src.indexOf('const OCR_PII_PATTERNS = [')) + 2);
 const extract = src.slice(src.indexOf('function extractOcrWords'),
                           src.indexOf('\n}\n', src.indexOf('function extractOcrWords')) + 3);
-const nameFn = src.slice(src.indexOf('function matchOcrNames'),
-                         src.indexOf('\n}\n', src.indexOf('function matchOcrNames')) + 3);
+// One contiguous block: joinWordsWithOffsets, mapHitsToWordRanges, matchOcrNames
+// (G2) and matchNameCandidates (G3 candidate extraction) all sit together.
+const nameFns = src.slice(src.indexOf('function joinWordsWithOffsets'),
+                          src.indexOf('\n}\n', src.indexOf('function matchNameCandidates')) + 3);
 const fullMatchFn = src.slice(src.indexOf('function fullMatch'),
                               src.indexOf('\n}\n', src.indexOf('function fullMatch')) + 3);
 const ocrFn = src.slice(src.indexOf('async function ocrRegion'),
                         src.indexOf('\n}\n', src.indexOf('async function ocrRegion')) + 3);
 
-// findNames is passed in rather than re-declared, so the harness exercises the
-// real shared detector instead of a copy that could drift from it.
+// findNames/findNameCandidates are passed in rather than re-declared, so the
+// harness exercises the real shared detector instead of a copy that could drift.
 const harness = `
 let tessWorker = null, tessReady = true;
 const logEvent = () => {};
 ${patterns}
 ${extract}
-${nameFn}
+${nameFns}
 ${fullMatchFn}
 ${ocrFn}
 return { setWorker: (w) => { tessWorker = w; }, ocrRegion };
 `;
-const { setWorker, ocrRegion } = new Function('findNames', harness)(findNames);
+const { setWorker, ocrRegion: ocrRegionRaw } = new Function('findNames', 'findNameCandidates', harness)(findNames, findNameCandidates);
+// Most existing assertions expect a plain array of redaction boxes (the old
+// return shape); ocrRegion now also returns G3 candidates alongside them.
+const ocrRegion = async (...args) => (await ocrRegionRaw(...args)).matched;
 
 // A figure 900x600 in page coords, with an email and phone rendered inside it.
 const word = (text, x0, y0, x1, y1) => ({ text, bbox: { x0, y0, x1, y1 } });
@@ -252,6 +257,71 @@ check('unlocalisable hit is labelled as such', coarse[0].label.includes('unlocal
 setWorker({ recognize: async () => ({ data: { text: '   ', blocks: [] } }) });
 check('blank OCR yields nothing',
   (await ocrRegion({ toDataURL: () => 'data:,' }, REGION, {})).length === 0);
+
+// Layer G3: candidates are spans G1+G2 could NOT confirm - a cue-less,
+// non-gazetteer name ("Whitfield" alone) must surface as a candidate for
+// Ollama, while an already-confirmed name (from the WORDS fixture, "Daniel
+// Whitfield" behind "Person") must NOT be re-offered as a candidate too.
+console.log('\nOCR G3 candidates');
+setWorker({
+  recognize: async () => ({
+    data: {
+      text: WORDS.map((w) => w.text).join(' '),
+      blocks: [{ paragraphs: [{ lines: [{ words: WORDS }] }] }],
+    },
+  }),
+});
+const fullResult = await ocrRegionRaw({ toDataURL: () => 'data:,' }, REGION, {});
+check('a confirmed name is not also offered as a G3 candidate',
+  !fullResult.candidates.some((c) => c.text === 'Daniel Whitfield' || c.text.includes('Whitfield')));
+
+const unconfirmedWord = word('Zhang', 600, 260, 660, 280);
+setWorker({
+  recognize: async () => ({
+    data: {
+      text: 'Uploaded by Zhang yesterday',
+      blocks: [{ paragraphs: [{ lines: [{ words: [
+        word('Uploaded', 200, 260, 280, 280),
+        word('by', 285, 260, 305, 280),
+        unconfirmedWord,
+        word('yesterday', 665, 260, 760, 280),
+      ] }] }] }],
+    },
+  }),
+});
+const candidateResult = await ocrRegionRaw({ toDataURL: () => 'data:,' }, REGION, {});
+check('a cue-less, non-gazetteer capitalised name surfaces as a G3 candidate',
+  candidateResult.candidates.some((c) => c.text === 'Zhang'));
+check('the G3 candidate is not ALSO redacted outright (additive layer, not a third detector)',
+  candidateResult.matched.filter((h) => h.category === 'names').length === 0);
+check('the G3 candidate carries surrounding-word context for the model prompt',
+  candidateResult.candidates.some((c) => c.text === 'Zhang' && c.contextBefore.includes('by') && c.contextAfter.includes('yesterday')));
+
+setWorker({
+  recognize: async () => ({
+    data: {
+      text: 'Add to Cart Free Delivery Best Sellers',
+      blocks: [{ paragraphs: [{ lines: [{ words: [
+        word('Add', 10, 10, 40, 25), word('to', 45, 10, 60, 25), word('Cart', 65, 10, 100, 25),
+        word('Free', 10, 40, 45, 55), word('Delivery', 50, 40, 120, 55),
+        word('Best', 10, 70, 45, 85), word('Sellers', 50, 70, 110, 85),
+      ] }] }] }],
+    },
+  }),
+});
+const chromeResult = await ocrRegionRaw({ toDataURL: () => 'data:,' }, REGION, {});
+check('UI chrome produces no G3 candidates either', chromeResult.candidates.length === 0);
+
+setWorker({
+  recognize: async () => ({
+    data: {
+      text: WORDS.map((w) => w.text).join(' '),
+      blocks: [{ paragraphs: [{ lines: [{ words: WORDS }] }] }],
+    },
+  }),
+});
+const namesOffResult = await ocrRegionRaw({ toDataURL: () => 'data:,' }, REGION, { names: false });
+check('names:false disables G3 candidate extraction too', namesOffResult.candidates.length === 0);
 
 console.log(`\n${pass} passed, ${fail} failed`);
 process.exit(fail ? 1 : 0);

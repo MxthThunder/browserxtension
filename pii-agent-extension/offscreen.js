@@ -15,7 +15,7 @@ import { buildUnifiedPerceptionState } from "./perception.js";
 import { defaultPrivacyEngine } from "./privacy_engine.js";
 import { defaultPrivacyReasoner } from "./local_reasoner.js";
 import { logEvent } from "./telemetry.js";
-import { findNames } from "./name_detector.js";
+import { findNames, findNameCandidates } from "./name_detector.js";
 
 
 // ── Console Telemetry & C++ WASM Filter ─────────────────────────────────────
@@ -340,10 +340,8 @@ function extractOcrWords(data) {
  * @param {Set<number>} claimed Word indices already covered by another pattern
  * @returns {Array<{start: number, end: number, text: string, via: string}>} word-index ranges
  */
-function matchOcrNames(words, claimed) {
-  if (!words.length) return [];
-
-  // Joined with single spaces so each word's character span is exactly derivable.
+/** Joins OCR words into one string, recording each word's char offset within it. */
+function joinWordsWithOffsets(words) {
   const offsets = [];
   let text = "";
   for (const w of words) {
@@ -351,9 +349,13 @@ function matchOcrNames(words, claimed) {
     offsets.push(text.length);
     text += w.text;
   }
+  return { text, offsets };
+}
 
+/** Maps character-offset hits (from findNames/findNameCandidates) back onto word-index ranges. */
+function mapHitsToWordRanges(words, offsets, hits, claimed) {
   const ranges = [];
-  for (const hit of findNames(text)) {
+  for (const hit of hits) {
     const hitEnd = hit.index + hit.length;
     let start = -1;
     let end = -1;
@@ -373,6 +375,28 @@ function matchOcrNames(words, claimed) {
     ranges.push({ start, end, text: hit.text, via: hit.via });
   }
   return ranges;
+}
+
+function matchOcrNames(words, claimed) {
+  if (!words.length) return [];
+  const { text, offsets } = joinWordsWithOffsets(words);
+  return mapHitsToWordRanges(words, offsets, findNames(text), claimed);
+}
+
+/**
+ * Layer G3 input: capitalised runs G1+G2 could not confirm, localised to
+ * word ranges with a short surrounding-word context for the model prompt.
+ * Returns candidates only - it never decides redact/safe itself.
+ */
+function matchNameCandidates(words, claimed) {
+  if (!words.length) return [];
+  const { text, offsets } = joinWordsWithOffsets(words);
+  const ranges = mapHitsToWordRanges(words, offsets, findNameCandidates(text), claimed);
+  return ranges.map((r) => ({
+    ...r,
+    contextBefore: words.slice(Math.max(0, r.start - 3), r.start).map((w) => w.text).join(" "),
+    contextAfter: words.slice(r.end, Math.min(words.length, r.end + 3)).map((w) => w.text).join(" "),
+  }));
 }
 
 /**
@@ -407,12 +431,12 @@ function fullMatch(re, str) {
 }
 
 async function ocrRegion(cropCanvas, regionBox, categories) {
-  if (!tessWorker || !tessReady) return [];
+  if (!tessWorker || !tessReady) return { matched: [], candidates: [] };
   try {
     const dataUrl = cropCanvas.toDataURL("image/png");
     const { data } = await tessWorker.recognize(dataUrl, {}, { text: true, blocks: true });
     const text = data?.text || "";
-    if (!text.trim()) return [];
+    if (!text.trim()) return { matched: [], candidates: [] };
 
     const words = extractOcrWords(data).filter((w) => w && w.text && w.bbox);
     const matched = [];
@@ -548,9 +572,26 @@ async function ocrRegion(cropCanvas, regionBox, categories) {
       }
     }
 
-    return matched;
+    // Layer G3 input: spans G1+G2 could not confirm. Region offset is applied
+    // now so the caller can add a box straight from a candidate's own fields
+    // without needing to see `regionBox` or `words` again.
+    const candidates = categories.names !== false
+      ? matchNameCandidates(words, claimed).map((c) => ({
+          text: c.text,
+          contextBefore: c.contextBefore,
+          contextAfter: c.contextAfter,
+          x: regionBox.x + Math.max(0, Math.min(...words.slice(c.start, c.end).map((w) => w.bbox.x0)) - PAD),
+          y: regionBox.y + Math.max(0, Math.min(...words.slice(c.start, c.end).map((w) => w.bbox.y0)) - PAD),
+          w: Math.max(1, Math.max(...words.slice(c.start, c.end).map((w) => w.bbox.x1))
+                        - Math.min(...words.slice(c.start, c.end).map((w) => w.bbox.x0)) + PAD * 2),
+          h: Math.max(1, Math.max(...words.slice(c.start, c.end).map((w) => w.bbox.y1))
+                        - Math.min(...words.slice(c.start, c.end).map((w) => w.bbox.y0)) + PAD * 2),
+        }))
+      : [];
+
+    return { matched, candidates };
   } catch {
-    return [];
+    return { matched: [], candidates: [] };
   }
 }
 
@@ -867,6 +908,7 @@ async function processAndRedactFrame(payload) {
   // ── L4: OCR on candidate visual regions (only when unclassified visual targets exist) ──
   const tStartOCR = performance.now();
   const ocrRedactions = [];
+  const nameCandidates = [];
   let ocrRegionsScanned = 0;
   let ocrRegionsSkipped = 0;
 
@@ -930,7 +972,8 @@ async function processAndRedactFrame(payload) {
           });
 
           const hits = await ocrRegion({ toDataURL: () => dataUrl }, { ...region, x: rx, y: ry, w: rw, h: rh }, categories);
-          ocrRedactions.push(...hits);
+          ocrRedactions.push(...hits.matched);
+          nameCandidates.push(...hits.candidates);
         }
 
         if (skipped > 0) {
@@ -952,8 +995,47 @@ async function processAndRedactFrame(payload) {
 
   const tEndOCR = performance.now();
 
+  // ── L4b: Layer G3 — Ollama as an ADDITIVE name disambiguator ─────────────
+  // Runs only over spans G1+G2 could not confirm, and only when there are
+  // any (most frames have none, so most frames pay nothing here). A verdict
+  // of true ADDS a box; anything else (false, timeout, unreachable Ollama,
+  // malformed JSON) leaves the frame exactly at the G1+G2 floor - this layer
+  // cannot remove a detection the deterministic layers already made, so it
+  // cannot regress the measured recall baseline by construction.
+  const tStartG3 = performance.now();
+  let g3Redactions = [];
+  let g3Trace = { engine: "skipped", candidatesFound: nameCandidates.length, candidatesQueried: 0, added: 0, latencyMs: 0 };
+
+  if (categories.names !== false && options.ollamaNameDisambiguation !== false && nameCandidates.length > 0) {
+    try {
+      const { verdicts, engine, latencyMs } = await defaultPrivacyReasoner.resolveNameCandidates(nameCandidates);
+      let added = 0;
+      verdicts.forEach((isName, i) => {
+        if (!isName) return;
+        const c = nameCandidates[i];
+        g3Redactions.push({
+          source:     "Ollama",
+          label:      "Ollama: Person Name (G3)",
+          category:   "names",
+          confidence: 0.75,
+          x: c.x, y: c.y, w: c.w, h: c.h,
+        });
+        added++;
+      });
+      g3Trace = { engine, candidatesFound: nameCandidates.length, candidatesQueried: Math.min(nameCandidates.length, defaultPrivacyReasoner.maxNameCandidatesPerBatch), added, latencyMs };
+      if (added > 0) {
+        logEvent("offscreen", `Layer G3 (${engine}) added ${added} name redaction(s) G1+G2 missed`, null, "info");
+      }
+    } catch (err) {
+      // Additive-only: a failure here must never block the frame or drop a
+      // deterministic detection, so it is swallowed and simply adds nothing.
+      g3Trace = { engine: "error", candidatesFound: nameCandidates.length, candidatesQueried: 0, added: 0, latencyMs: Math.round(performance.now() - tStartG3) };
+    }
+  }
+  const g3Ms = performance.now() - tStartG3;
+
   // ── L5: Merge all redaction boxes + NMS ──────────────────────────────────
-  const merged = [...domRedactions, ...owlRedactions, ...faceRedactions, ...ocrRedactions];
+  const merged = [...domRedactions, ...owlRedactions, ...faceRedactions, ...ocrRedactions, ...g3Redactions];
   const tStartNms = performance.now();
   const finalRedactionBoxes = applyNMS(merged, 0.45);
   const nmsMs = performance.now() - tStartNms;
@@ -1026,12 +1108,13 @@ async function processAndRedactFrame(payload) {
 
   logEvent(
     "offscreen",
-    `Step 6/6: Redaction complete in ${Math.round(totalTime)}ms! (DOM=${domRedactions.length}, OWL=${owlRedactions.length}, Face=${faceRedactions.length}, OCR=${ocrRedactions.length}, Total=${finalRedactionBoxes.length})`
+    `Step 6/6: Redaction complete in ${Math.round(totalTime)}ms! (DOM=${domRedactions.length}, OWL=${owlRedactions.length}, Face=${faceRedactions.length}, OCR=${ocrRedactions.length}, G3=${g3Redactions.length}, Total=${finalRedactionBoxes.length})`
   );
 
-  // ── L7: Perception State (local engine only — no Ollama here) ────────────
-  // Note: Ollama ambiguity resolution is handled by agent_loop.js to avoid
-  // double LLM calls which cause 8-16s delays per capture cycle.
+  // ── L7: Perception State ──────────────────────────────────────────────────
+  // Form-field ambiguity resolution (a different Ollama use than Layer G3
+  // above) still happens in agent_loop.js, not here, to avoid stacking two
+  // separate LLM round-trips onto one capture cycle.
   const unifiedPerceptionState = buildUnifiedPerceptionState({
     domElements: payload.interactiveElements || [],
     domSensitiveBoxes: domBoxes || [],
@@ -1097,6 +1180,11 @@ async function processAndRedactFrame(payload) {
       owlvitCount:      owlRedactions.length,
       faceCount:        faceRedactions.length,
       ocrCount:         ocrRedactions.length,
+      g3Ms,
+      g3Engine:            g3Trace.engine,
+      g3CandidatesFound:   g3Trace.candidatesFound,
+      g3CandidatesQueried: g3Trace.candidatesQueried,
+      g3Count:             g3Redactions.length,
     },
   };
 }

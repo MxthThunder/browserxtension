@@ -66,10 +66,12 @@ const NAME_STOPWORDS = new Set([
   "address", "addresses", "payment", "payments", "wallet", "card", "upi",
   // Field labels. These sit directly beside the value they describe, so without
   // them a run happily swallows "Daniel Whitfield Email" as a three-token name.
-  "name", "names", "person", "email", "mail", "phone", "mobile", "tel",
-  "contact", "customer", "patient", "employee", "passenger", "guest", "member",
-  "holder", "cardholder", "beneficiary", "nominee", "applicant", "recipient",
-  "buyer", "seller", "client", "student", "candidate", "dear", "regards",
+  "name", "names", "person", "persons", "email", "mail", "phone", "mobile", "tel",
+  "contact", "customer", "customers", "patient", "patients", "employee", "employees",
+  "passenger", "passengers", "guest", "guests", "member", "members",
+  "holder", "holders", "cardholder", "beneficiary", "nominee", "applicant", "applicants",
+  "recipient", "recipients", "buyer", "buyers", "seller", "sellers", "client", "clients",
+  "student", "students", "candidate", "candidates", "dear", "regards",
   "invoice", "receipt", "date", "total", "amount", "qty", "quantity", "status",
   // Time words
   "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
@@ -303,6 +305,66 @@ export function findNames(text, options = {}) {
   }
 
   return hits.sort((a, b) => a.index - b.index);
+}
+
+/**
+ * Layer G3 candidate extraction: capitalised runs that LOOK name-shaped
+ * (proper case, not UI-chrome, 1-3 tokens) but that `findNames` could not
+ * confirm — no adjacent cue, and the leading token is not in the seed
+ * gazetteer. This is deliberately the SAME structural filter as `claimRun`
+ * (stopwords, run length, contiguity) minus the two deterministic signals,
+ * so the candidate set is exactly "plausible name, undecided" rather than
+ * "any capitalised word" — sending nav labels and brand names to the model
+ * in bulk would swamp the latency budget for no benefit.
+ *
+ * Deliberately returns candidates only; it never redacts anything itself.
+ * The caller (Ollama, Layer G3) decides redact/safe, and a caller that
+ * never asks is simply left at the G1+G2 deterministic baseline.
+ *
+ * @param {string} text
+ * @returns {Array<{text: string, index: number, length: number}>}
+ */
+export function findNameCandidates(text) {
+  if (!text || typeof text !== "string") return [];
+  const tokens = [];
+  CAPITALISED_TOKEN_RE.lastIndex = 0;
+  let t;
+  while ((t = CAPITALISED_TOKEN_RE.exec(text)) !== null) {
+    tokens.push({ text: t[0], index: t.index, end: t.index + t[0].length });
+  }
+  if (tokens.length === 0) return [];
+
+  // Skip spans findNames already confirmed, so a cued/gazetteer name is
+  // never ALSO sent to the model as an "undecided" candidate.
+  const confirmed = findNames(text).map((h) => [h.index, h.index + h.length]);
+  const overlapsConfirmed = (start, end) => confirmed.some(([s, e]) => start < e && end > s);
+
+  const candidates = [];
+  for (let i = 0; i < tokens.length; i++) {
+    let claimedSpan = 0;
+    for (let span = Math.min(3, tokens.length - i); span >= 1; span--) {
+      const run = tokens.slice(i, i + span);
+      let contiguous = true;
+      for (let k = 1; k < run.length; k++) {
+        if (!/^\s+$/.test(text.slice(run[k - 1].end, run[k].index))) { contiguous = false; break; }
+      }
+      if (!contiguous) continue;
+      if (!runLooksLikeName(run.map((r) => r.text).join(" "))) continue;
+
+      const start = run[0].index;
+      const end = run[run.length - 1].end;
+      if (overlapsConfirmed(start, end)) { claimedSpan = span; break; }
+      // Gazetteer hits are already found by findNames above; re-asking the
+      // model about them would just waste a batch slot.
+      if (GIVEN_NAMES.has(foldToken(run[0].text))) { claimedSpan = span; break; }
+
+      candidates.push({ text: text.slice(start, end), index: start, length: end - start });
+      claimedSpan = span;
+      break;
+    }
+    if (claimedSpan > 1) i += claimedSpan - 1;
+  }
+  return candidates;
 }
 
 /**

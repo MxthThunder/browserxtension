@@ -57,6 +57,11 @@ export const DEFAULT_SETTINGS = {
   ocrLanguages: "eng",
   ocrMaxRegions: 8,       // was a hard-coded 2, which left most cards unscanned
   ocrBudgetMs: 2500,      // time budget; skipped regions are logged, never silent
+  // Layer G3: local Ollama disambiguates capitalised OCR spans G1+G2 could not
+  // confirm as a name or not. Additive-only (can add a box, never remove one),
+  // so leaving this on cannot lower the deterministic recall floor - the only
+  // cost is latency on frames that actually contain an unconfirmed span.
+  ollamaNameDisambiguation: true,
 
   // Developer Observability
   devMode: false,        // Dashboard: reveal model/layer attribution panels

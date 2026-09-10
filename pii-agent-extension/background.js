@@ -169,11 +169,88 @@ function updateBadge(enabled, piiCount = 0) {
   }
 }
 
-async function getActiveTab() {
+/**
+ * Pages the capture pipeline can actually work on. `chrome://`, the Web Store
+ * and our own `chrome-extension://` pages are either un-capturable or are the
+ * tool itself — capturing those is never what the user meant.
+ */
+const CAPTURABLE_URL = /^(https?|file):/i;
+
+/** Last normal web tab the user looked at, so the HUD does not capture itself. */
+let lastContentTabId = null;
+
+function rememberContentTab(tab) {
+  if (tab && tab.id && CAPTURABLE_URL.test(tab.url || "")) lastContentTabId = tab.id;
+}
+
+chrome.tabs.onActivated.addListener(async ({ tabId }) => {
+  try { rememberContentTab(await chrome.tabs.get(tabId)); } catch {}
+});
+chrome.tabs.onUpdated.addListener((tabId, info, tab) => {
+  if (info.status === "complete" && tab?.active) rememberContentTab(tab);
+});
+
+/**
+ * Resolves the tab to operate on.
+ *
+ * With `forCapture`, an extension page (HUD, dashboard, options) is never
+ * returned: opening the HUD makes it the active tab, so the naive query
+ * captured the HUD itself instead of the page being inspected.
+ */
+async function getActiveTab({ forCapture = false } = {}) {
   const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
+  if (tab && tab.id && (!forCapture || CAPTURABLE_URL.test(tab.url || ""))) {
+    rememberContentTab(tab);
+    return tab;
+  }
+
+  if (forCapture) {
+    // The active tab is one of our own pages. Prefer the last real page the
+    // user was on, then any active web tab, then the most recent web tab.
+    if (lastContentTabId !== null) {
+      try {
+        const remembered = await chrome.tabs.get(lastContentTabId);
+        if (remembered && CAPTURABLE_URL.test(remembered.url || "")) return remembered;
+      } catch { lastContentTabId = null; }
+    }
+    const activeElsewhere = (await chrome.tabs.query({ active: true }))
+      .filter((t) => CAPTURABLE_URL.test(t.url || ""));
+    if (activeElsewhere.length) return activeElsewhere[0];
+
+    const anyWeb = (await chrome.tabs.query({ currentWindow: true }))
+      .filter((t) => CAPTURABLE_URL.test(t.url || ""));
+    if (anyWeb.length) return anyWeb[anyWeb.length - 1];
+  }
+
   if (tab && tab.id) return tab;
   const allTabs = await chrome.tabs.query({ active: true });
   return allTabs[0];
+}
+
+/**
+ * Runs `fn` with `tab` frontmost in its window, then puts focus back.
+ *
+ * `captureVisibleTab` photographs whatever is *visible*, not a tab id, so a
+ * target sitting behind the HUD in the same window has to be brought forward
+ * for the length of the capture. A tab that is already visible is left alone,
+ * so the common case has no flicker at all.
+ */
+async function withTabVisible(tab, fn) {
+  let restoreTabId = null;
+  try {
+    if (!tab.active) {
+      const [previous] = await chrome.tabs.query({ active: true, windowId: tab.windowId });
+      if (previous && previous.id !== tab.id) restoreTabId = previous.id;
+      await chrome.tabs.update(tab.id, { active: true });
+      // Let the compositor paint the newly revealed tab before photographing it.
+      await new Promise((r) => setTimeout(r, 220));
+    }
+    return await fn();
+  } finally {
+    if (restoreTabId !== null) {
+      try { await chrome.tabs.update(restoreTabId, { active: true }); } catch {}
+    }
+  }
 }
 
 async function sendTabMessage(tabId, message) {
@@ -229,12 +306,18 @@ async function captureAndRedactActiveTab(options = {}) {
     }
   }
   if (!tab || !tab.id) {
-    tab = await getActiveTab();
+    tab = await getActiveTab({ forCapture: true });
   }
 
   if (!tab || !tab.id) {
     logEvent("background", "No active tab found to capture!", null, "error");
     throw new Error("No active tab found to capture. Please focus a web tab.");
+  }
+
+  if (!CAPTURABLE_URL.test(tab.url || "")) {
+    throw new Error(
+      "No web page to capture — open a normal http(s) page in this window, then run the capture again."
+    );
   }
   logEvent("background", `2/6: Active tab identified: ID=${tab.id}, Title="${tab.title || ''}", URL="${tab.url || ''}"`);
 
@@ -266,23 +349,27 @@ async function captureAndRedactActiveTab(options = {}) {
   logEvent("background", "4/6: Capturing tab viewport screenshot...");
   const windowId = options.windowId || tab.windowId;
   let screenshotUrl;
-  try {
-    screenshotUrl = await chrome.tabs.captureVisibleTab(windowId, {
-      format: "jpeg",
-      quality: 90,
-    });
-  } catch (err) {
-    logEvent("background", `captureVisibleTab(windowId=${windowId}) note: ${err.message}. Retrying with active window...`, null, "warn");
+  // The target must be the visible tab of its window for the duration of the
+  // shot, otherwise we photograph whatever is in front of it (the HUD).
+  await withTabVisible(tab, async () => {
     try {
-      screenshotUrl = await chrome.tabs.captureVisibleTab(null, {
+      screenshotUrl = await chrome.tabs.captureVisibleTab(windowId, {
         format: "jpeg",
         quality: 90,
       });
-    } catch (err2) {
-      logEvent("background", `captureVisibleTab(null) failed: ${err2.message}`, null, "error");
-      throw new Error(`Screenshot capture failed: ${err2.message}`);
+    } catch (err) {
+      logEvent("background", `captureVisibleTab(windowId=${windowId}) note: ${err.message}. Retrying with active window...`, null, "warn");
+      try {
+        screenshotUrl = await chrome.tabs.captureVisibleTab(null, {
+          format: "jpeg",
+          quality: 90,
+        });
+      } catch (err2) {
+        logEvent("background", `captureVisibleTab(null) failed: ${err2.message}`, null, "error");
+        throw new Error(`Screenshot capture failed: ${err2.message}`);
+      }
     }
-  }
+  });
   if (!screenshotUrl) {
     throw new Error("Failed to capture tab screenshot: empty data returned.");
   }
@@ -300,6 +387,10 @@ async function captureAndRedactActiveTab(options = {}) {
     categories: settings.categories,
     failClosed: settings.failClosed,
     ocrEnabled: settings.ocrEnabled,
+    ocrLanguages: settings.ocrLanguages,
+    ocrMaxRegions: settings.ocrMaxRegions,
+    ocrBudgetMs: settings.ocrBudgetMs,
+    ollamaNameDisambiguation: settings.ollamaNameDisambiguation,
     secondPassGuard: settings.secondPassGuard,
     ...options,
   };
@@ -407,7 +498,7 @@ async function executeTaskWithServer(task, options = {}) {
   // 2. Fetch interactive DOM elements from active tab
   let domElements = [];
   try {
-    const tab = await getActiveTab();
+    const tab = await getActiveTab({ forCapture: true });
     if (tab && tab.id) {
       const domResponse = await sendTabMessage(tab.id, { type: "GET_DOM_PII_BOXES" });
       if (domResponse?.interactiveElements) {
@@ -480,7 +571,7 @@ async function executeTaskWithServer(task, options = {}) {
         error: `'${execAction.type}' is a browser-level action; run it from the agent loop, not a single capture.`,
       };
     } else {
-      const tab = await getActiveTab();
+      const tab = await getActiveTab({ forCapture: true });
       if (tab && tab.id) {
         executionResult = await sendTabMessage(tab.id, {
           type: "EXECUTE_ACTION",

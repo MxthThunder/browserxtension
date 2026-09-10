@@ -1405,6 +1405,12 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         width: window.innerWidth,
         height: window.innerHeight,
         devicePixelRatio: window.devicePixelRatio || 1,
+        // The server-side reading task guidance depends on these: a
+        // 'summarize this page' agent needs to know whether the document is
+        // taller than the viewport, and how much of it is still below the fold,
+        // so it can decide whether to keep scrolling before calling finish.
+        scrollY: window.scrollY || window.pageYOffset || 0,
+        scrollHeight: document.documentElement.scrollHeight || document.body.scrollHeight || 0,
       },
     });
     })();

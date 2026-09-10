@@ -138,6 +138,10 @@ class ActRequest(BaseModel):
     # The plan established on step 1, replayed back so the goal does not decay.
     plan: Optional[List[str]] = []
     plan_step: Optional[int] = None
+    # Names of personal details the user stored on-device ("contact.email"),
+    # never the values. Lets the model choose a {{VAULT:...}} token it knows
+    # will actually resolve, instead of guessing or giving up on a form.
+    vault_keys: Optional[List[str]] = []
     # Result rows read from the page (prices, ratings, delivery). Sanitized
     # on-device before it is put here — see agent_client.js.
     page_content: Optional[List[Dict[str, Any]]] = []
@@ -686,6 +690,66 @@ def build_tabs_text(open_tabs: Optional[List[Dict[str, Any]]]) -> str:
     )
 
 
+VAULT_KEY_RE = re.compile(r"^[a-z0-9_]+\.[a-z0-9_]+$", re.I)
+
+
+def build_vault_text(vault_keys: Optional[List[str]]) -> str:
+    """
+    Lists the personal details the user has on file, as token paths.
+
+    The agent could always emit {{VAULT:...}} tokens, but it was never told what
+    the user had actually stored -- so on a checkout form it either guessed a
+    path that resolved to nothing, or refused a form it could have completed.
+    Values never appear here; the extension substitutes them on-device at the
+    moment of typing, so the model reasons about a name it can address and never
+    about the datum itself.
+    """
+    keys = [k for k in (vault_keys or []) if isinstance(k, str) and VAULT_KEY_RE.match(k)]
+    if not keys:
+        return (
+            "\n\nSaved personal details: NONE on file.\n"
+            "If the task needs personal data you cannot see on the page, do not invent it -- "
+            "finish and tell the user which detail to add to their vault.\n"
+        )
+
+    listed = "\n".join(f"- {{{{VAULT:{k}}}}}" for k in sorted(set(keys))[:40])
+    return (
+        "\n\nSaved personal details you may fill (type the token EXACTLY as written; "
+        "it is replaced with the real value on the user's device, and you never see it):\n"
+        f"{listed}\n"
+        "Use a token only for the field it names. If a form needs a detail that is not "
+        "in this list, do not invent one -- finish and say which detail is missing.\n"
+    )
+
+
+def build_viewport_text(viewport: Optional[Dict[str, Any]]) -> str:
+    """
+    Renders the visible-viewport geometry so the model can decide whether it
+    has actually read the whole page or only the slice in front of it.
+
+    Without this, a 'summarize this page' task looks at the screenshot, sees
+    content, and calls finish -- never knowing the page is three viewports
+    tall. The agent must scroll to the bottom before finishing a reading task,
+    so the geometry needs to be explicit, not implied.
+    """
+    if not viewport:
+        return ""
+    width  = viewport.get("width")
+    height = viewport.get("height")
+    scrollY = viewport.get("scrollY")
+    scrollHeight = viewport.get("scrollHeight")
+    if not (width and height):
+        return ""
+    parts = [f"viewport {width}x{height}px"]
+    if isinstance(scrollHeight, (int, float)) and isinstance(scrollY, (int, float)):
+        remaining = max(0, scrollHeight - (scrollY + height))
+        if remaining > 0:
+            parts.append(f"scroll position {int(scrollY)} of {int(scrollHeight)} (~{int(remaining)}px still below the fold)")
+        else:
+            parts.append("fully scrolled to bottom")
+    return "\n\nPage geometry: " + ", ".join(parts)
+
+
 def build_telemetry_text(structured_data: Optional[Dict[str, Any]]) -> str:
     if not structured_data:
         return ""
@@ -708,6 +772,23 @@ FORM_HINTS = (
     "enroll", "kyc", "checkout", "book a", "book an", "appointment",
 )
 SEARCH_HINTS = ("find", "search", "look up", "lookup", "research", "who ", "what ", "where ", "when ")
+# Reading / summarization / page-consumption tasks. These MUST be a separate
+# kind from `search` -- a `find` task starts with a query, but a `summarize`
+# task starts with the assumption that the page itself is the source of truth
+# and the goal is to walk the whole of it, not search within it.
+READING_HINTS = (
+    "summarize", "summary", "summarise", "summarise this", "summarize this",
+    "analyze the page", "analyze the entire page", "analyse the page",
+    "analyse the entire page", "analyze this page", "analyze the article",
+    "analyse the article", "read this page", "read the page", "what does this page say",
+    "what is on this page", "what's on this page", "tell me about this page",
+    "explain this page", "give me a summary", "main points", "key points",
+    "main takeaways", "key takeaways",
+)
+BROWSE_HINTS = (
+    "browse", "navigate to", "go to ", "open ", "visit ", "show me ",
+    "log into", "log in to", "sign in to", "click on", "go back", "scroll",
+)
 
 TASK_GUIDANCE = {
     "shopping": (
@@ -733,16 +814,70 @@ TASK_GUIDANCE = {
     ),
     "form": (
         "TASK TYPE - FORM FILLING:\n"
-        "- Fill one field per turn using type, targeting that field's id.\n"
-        "- Values shown as VAULT placeholders are resolved on-device; pass them through unchanged.\n"
-        "- Never invent personal data. If a required value is unavailable, finish and name the blocking field.\n"
-        "- Submit only once every required field is filled.\n"
+        "- Before typing into any field, READ ITS LABEL OR PLACEHOLDER. The label tells you what "
+        "the site expects (name, email, phone, ID, password, captcha, OTP) and a wrong value will "
+        "fail client-side validation and waste a step.\n"
+        "- Fill one field per turn using type, targeting that field's ref. "
+        "Use the field's placeholder, aria-label or visible label to pick the right ref; never "
+        "guess from the position on screen.\n"
+        "- VALUES SHOWN AS VAULT PLACEHOLDERS like {{VAULT:...}} are resolved on the user's device. "
+        "Pass them through unchanged -- they will be substituted before the page receives them. "
+        "Never invent personal data: if a required value is unavailable in the vault, finish and "
+        "name the blocking field instead of making one up.\n"
+        "- FOR PASSWORDS, OTPS, 2FA CODES, CVVS AND PINS: type into the field and submit only "
+        "when the value is provided by the user (or by the vault). If the user has not supplied "
+        "it this turn, ASK instead of guessing.\n"
+        "- SUBMIT only once every required field is filled. After submit, FINISH with what the "
+        "page confirmed -- a confirmation number, a 'submitted' message, the next page -- not "
+        "just 'done'.\n"
+        "- If the page has a captcha, an MFA challenge, or a step you cannot automate, FINISH and "
+        "name the manual step the user must complete.\n"
     ),
     "search": (
         "TASK TYPE - SEARCH / RESEARCH:\n"
-        "- Type the query into the search field, then submit it.\n"
-        "- Once results are visible, read them instead of searching again.\n"
-        "- Finish with the answer itself, not a description of where to find it.\n"
+        "- Type the query into the search field, then submit it. Use the site's own search box; "
+        "do not paste a query into a chat box or another field type.\n"
+        "- Once results are visible, READ the result excerpts (titles, snippets, structured data) "
+        "before opening any of them. The first hit is rarely the best one.\n"
+        "- If a results page has many links, OPEN 2-3 of the most promising in new_tab so the "
+        "results page stays available, then switch_tab back when you have read each one.\n"
+        "- Finish with the answer itself, not a description of where to find it. If the user "
+        "asked 'what is the capital of X', 'X is Y' is the answer; a list of links is not.\n"
+    ),
+    "reading": (
+        "TASK TYPE - READING / SUMMARIZING / PAGE ANALYSIS:\n"
+        "The PAGE is the source of truth. The user wants what is on it, not what a search box "
+        "could find. Approach it as a careful reader, not a searcher:\n"
+        "1. SCAN THE WHOLE PAGE FIRST. Check the Viewport section -- if the page has a known "
+        "total height and you are not at the bottom, the page is not fully read. The visible "
+        "viewport is only a slice; long pages, articles, dashboards and chat threads hide the "
+        "second half (and the third) below the fold. Scroll all the way to the bottom once "
+        "before you finish -- most summarization failures are 'I summarized the first 30% and "
+        "called it done'.\n"
+        "2. DO NOT CLICK A SEARCH BOX. Reading tasks have nothing to type into the site's "
+        "search; doing so resets the page state and loses the content you were asked to read.\n"
+        "3. USE THE PAGE CONTENT THE EXTENSION ALREADY GAVE YOU. The 'Page Content' block in "
+        "your context is the page's structured rows (titles, prices, ratings, badges, chat "
+        "turns, headings) - already extracted for you. Summarize from there first; only reach "
+        "for scroll once that block is empty or the next batch is needed.\n"
+        "4. EXTRACT, DON'T PARAPHRASE THE TITLE. The first line of result.summary should be "
+        "the page's actual title and what it is (a product page, an article, a chat log), so "
+        "the user can verify the right page was read.\n"
+        "5. ORGANISE THE SUMMARY by what the page actually contains - main sections, key facts, "
+        "quoted phrases if the user asked for them. Don't invent a structure the page doesn't have.\n"
+        "6. FINISH with the summary in result.summary, NOT a list of what you saw. The user "
+        "asked 'what does this page say', not 'list what you did'.\n"
+    ),
+    "browse": (
+        "TASK TYPE - GENERAL BROWSING / NAVIGATION:\n"
+        "- For a URL the user named (e.g. 'go to amazon.in'), use navigate -- it is one step, "
+        "it does not depend on anything being on the page, and it is the most reliable. Do not "
+        "type the URL into the address bar of the page or into a search box.\n"
+        "- To open a NEW page or NEW tab without losing what you are looking at, use new_tab.\n"
+        "- To return to the previous page in this tab, use go_back.\n"
+        "- Prefer the site's own search box over clicking through category links when the user "
+        "named a query; prefer category links over search when they named a topic.\n"
+        "- Finish with one sentence describing where you ended up and why.\n"
     ),
     "general": (
         "TASK TYPE - GENERAL NAVIGATION:\n"
@@ -759,6 +894,10 @@ def detect_task_kind(task: str) -> str:
         return "shopping"
     if any(hint in lowered for hint in FORM_HINTS):
         return "form"
+    if any(hint in lowered for hint in READING_HINTS):
+        return "reading"
+    if any(hint in lowered for hint in BROWSE_HINTS):
+        return "browse"
     if any(hint in lowered for hint in SEARCH_HINTS):
         return "search"
     return "general"
@@ -1311,6 +1450,8 @@ async def try_ollama_qwen(
     plan_step: Optional[int] = None,
     page_content: Optional[List[Dict[str, Any]]] = None,
     attempts: Optional[List[Dict[str, Any]]] = None,
+    viewport: Optional[Dict[str, Any]] = None,
+    vault_keys: Optional[List[str]] = None,
 ) -> Optional[ActionOutput]:
     """
     Attempts reasoning using local Ollama (Qwen2.5-VL / Qwen2.5-Coder / Qwen3).
@@ -1346,11 +1487,13 @@ async def try_ollama_qwen(
     plan_text = build_plan_text(plan, plan_step)
     content_text = build_page_content_text(page_content)
     checkpoint_hint = build_checkpoint_hint(plan, plan_step, elements_digest)
+    viewport_text = build_viewport_text(viewport)
+    vault_text = build_vault_text(vault_keys)
 
     system_prompt = build_system_instruction(task, step, max_steps, bool(structured_data),
                                             synthesize_only=synthesize_only, stop_reason=stop_reason)
 
-    user_prompt = f"User Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"
+    user_prompt = f"User Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{viewport_text}{vault_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"
 
     payload = {
         "model": model,
@@ -1409,6 +1552,8 @@ async def try_gemini(
     plan_step: Optional[int] = None,
     page_content: Optional[List[Dict[str, Any]]] = None,
     attempts: Optional[List[Dict[str, Any]]] = None,
+    viewport: Optional[Dict[str, Any]] = None,
+    vault_keys: Optional[List[str]] = None,
 ) -> Optional[ActionOutput]:
     """
     Attempts reasoning using Google Gemini API (gemini-3.5-flash-lite / gemini-3.7-flash).
@@ -1428,12 +1573,14 @@ async def try_gemini(
     plan_text = build_plan_text(plan, plan_step)
     content_text = build_page_content_text(page_content)
     checkpoint_hint = build_checkpoint_hint(plan, plan_step, elements_digest)
+    viewport_text = build_viewport_text(viewport)
+    vault_text = build_vault_text(vault_keys)
 
     system_instruction = build_system_instruction(task, step, max_steps, bool(structured_data),
                                             synthesize_only=synthesize_only, stop_reason=stop_reason)
 
     parts: List[Dict[str, Any]] = [
-        {"text": f"{system_instruction}\n\nUser Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"}
+        {"text": f"{system_instruction}\n\nUser Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{viewport_text}{vault_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"}
     ]
 
     if image_base64 and len(image_base64) > 100:
@@ -1540,6 +1687,8 @@ async def try_openai(
     plan_step: Optional[int] = None,
     page_content: Optional[List[Dict[str, Any]]] = None,
     attempts: Optional[List[Dict[str, Any]]] = None,
+    viewport: Optional[Dict[str, Any]] = None,
+    vault_keys: Optional[List[str]] = None,
 ) -> Optional[ActionOutput]:
     """
     Attempts reasoning using OpenAI API (gpt-4o-mini / gpt-4o).
@@ -1560,15 +1709,17 @@ async def try_openai(
     plan_text = build_plan_text(plan, plan_step)
     content_text = build_page_content_text(page_content)
     checkpoint_hint = build_checkpoint_hint(plan, plan_step, elements_digest)
+    viewport_text = build_viewport_text(viewport)
+    vault_text = build_vault_text(vault_keys)
 
     system_prompt = build_system_instruction(task, step, max_steps, bool(structured_data),
                                             synthesize_only=synthesize_only, stop_reason=stop_reason)
 
-    user_content: Any = f"User Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"
+    user_content: Any = f"User Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{viewport_text}{vault_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"
     if image_base64 and len(image_base64) > 100:
         clean_b64 = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
         user_content = [
-            {"type": "text", "text": f"User Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"},
+            {"type": "text", "text": f"User Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{viewport_text}{vault_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"},
             {"type": "image_url", "image_url": {"url": clean_b64, "detail": "low"}}
         ]
 
@@ -1946,6 +2097,8 @@ async def act_endpoint(payload: ActRequest):
             plan_step=payload.plan_step,
             page_content=payload.page_content,
             attempts=attempts,
+            viewport=payload.viewport,
+            vault_keys=payload.vault_keys,
         )
         if action:
             model_used = "gemini"
@@ -1968,6 +2121,8 @@ async def act_endpoint(payload: ActRequest):
             plan_step=payload.plan_step,
             page_content=payload.page_content,
             attempts=attempts,
+            viewport=payload.viewport,
+            vault_keys=payload.vault_keys,
         )
         if action:
             model_used = "openai"
@@ -1990,6 +2145,8 @@ async def act_endpoint(payload: ActRequest):
             plan_step=payload.plan_step,
             page_content=payload.page_content,
             attempts=attempts,
+            viewport=payload.viewport,
+            vault_keys=payload.vault_keys,
         )
         if action:
             model_used = "ollama-qwen"
