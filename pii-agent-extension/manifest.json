@@ -60,7 +60,9 @@
     {
       "matches": ["<all_urls>"],
       "js": ["content.js"],
-      "run_at": "document_idle"
+      "run_at": "document_idle",
+      "all_frames": true,
+      "match_about_blank": true
     }
   ],
   "content_security_policy": {
@@ -81,6 +83,7 @@
         "local_reasoner.js",
         "vault.js",
         "semantic_redactor.js",
+        "name_detector.js",
         "telemetry.js",
         "agent_client.js",
         "action_engine.js",

@@ -15,6 +15,7 @@ import { buildUnifiedPerceptionState } from "./perception.js";
 import { defaultPrivacyEngine } from "./privacy_engine.js";
 import { defaultPrivacyReasoner } from "./local_reasoner.js";
 import { logEvent } from "./telemetry.js";
+import { findNames } from "./name_detector.js";
 
 
 // ── Console Telemetry & C++ WASM Filter ─────────────────────────────────────
@@ -58,6 +59,31 @@ const rawCtx    = rawCanvas.getContext("2d");
 // ── OWL-ViT: zero-shot PII object detection ──────────────────────────────────
 const OWL_VIT_MODEL     = "Xenova/owlvit-base-patch32";
 const OWL_VIT_THRESHOLD = 0.12; // Sensitive threshold for open-vocabulary zero-shot queries
+
+/**
+ * Per-category acceptance thresholds, applied AFTER the model's own scan.
+ *
+ * A single uniform 0.12 across all 22 queries treats every query as equally
+ * reliable, which they are not: "credit card" and "passport" are visually
+ * distinctive and score confidently, while "confidential document" and
+ * "official document" are near-unbounded descriptions that fire on any page of
+ * printed text. Tuning per category buys precision on the vague queries without
+ * giving up recall on the sharp ones.
+ *
+ * The scan itself still runs at the lowest of these, so nothing is lost before
+ * this filter can see it. Values are keyed by the mapped category, and any
+ * category absent here keeps the base threshold.
+ */
+const OWL_VIT_CATEGORY_THRESHOLDS = {
+  creditCards: 0.12, // distinctive rectangular objects; keep recall high
+  govIds:      0.14,
+  faces:       0.12, // BlazeFace is the primary face detector; this is a backstop
+  screens:     0.20, // "monitor"/"laptop screen" fire on any bright rectangle
+};
+
+/** Queries whose wording is broad enough to need their own, stricter floor. */
+const OWL_VIT_VAGUE_QUERY_RE = /confidential|official document|government document|printed financial/i;
+const OWL_VIT_VAGUE_THRESHOLD = 0.22;
 
 /** 22 zero-shot text queries covering physical PII objects */
 const PII_VISUAL_QUERIES = [
@@ -186,6 +212,7 @@ function detectFaces(img, imgWidth, imgHeight) {
 let tessWorker    = null;
 let tessReady     = false;
 let tessInitPromise = null;
+let activeOcrLanguages = "eng";
 
 /** PII regex patterns applied against OCR text output */
 const OCR_PII_PATTERNS = [
@@ -195,38 +222,77 @@ const OCR_PII_PATTERNS = [
   { category: "govIds",      label: "PAN Card",           re: /\b[A-Z]{5}\d{4}[A-Z]\b/ },
   { category: "govIds",      label: "Passport Number",    re: /\b[A-Z]\d{7}\b/ },
   { category: "contactInfo", label: "Email Address",      re: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/ },
-  { category: "contactInfo", label: "Phone Number",       re: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/ },
+  // Grouping-agnostic (see content.js's INLINE_PII_PATTERNS.PHONE for the
+  // full rationale): the previous 3-3-4-only pattern missed the Indian
+  // mobile format and Korean-style 3-4-4 numbers, both verified misses.
+  { category: "contactInfo", label: "Phone Number",       re: /\b\+?\(?\d{2,5}\)?(?:[-.\s]\d{2,5}){1,4}\b/ },
   { category: "govIds",      label: "Bank IFSC Code",     re: /\b[A-Z]{4}0[A-Z0-9]{6}\b/ },
   { category: "govIds",      label: "Account Number",     re: /\b\d{9,18}\b/ },
 ];
 
-async function initOCR() {
+/**
+ * Languages the OCR worker is initialised with.
+ *
+ * KNOWN RECALL GAP: only `eng.traineddata.gz` is bundled, so text in Devanagari,
+ * Tamil, Bengali and every other non-Latin script is currently invisible to
+ * Layer 2C — a live blind spot on Indian government and e-commerce pages. The
+ * language set is configurable rather than hard-coded so this can be closed
+ * without a code change: drop the matching `<lang>.traineddata.gz` files into
+ * `lib/tesseract/` (from tessdata_fast) and set `ocrLanguages` in Settings to a
+ * "+"-joined list, e.g. "eng+hin+tam+ben".
+ *
+ * Adding a language costs both download size (~1-15MB each) and per-frame
+ * latency, which is why this is a deliberate choice and not a default.
+ */
+const DEFAULT_OCR_LANGUAGES = "eng";
+
+async function initOCR(languages) {
   if (tessReady) return tessWorker;
   if (tessInitPromise) return tessInitPromise;
 
+  const requested = String(languages || DEFAULT_OCR_LANGUAGES).trim() || DEFAULT_OCR_LANGUAGES;
+
   tessInitPromise = (async () => {
-    try {
-      // Tesseract.js does not expose a native ESM — use the UMD global loaded via offscreen.html
-      // We load via a dynamic script injection trick in the offscreen document
-      if (typeof Tesseract === "undefined") {
-        console.warn("[Offscreen] Tesseract global not found; OCR disabled.");
-        return null;
-      }
-      tessWorker = await Tesseract.createWorker("eng", 1, {
-        workerPath:    chrome.runtime.getURL("lib/tesseract/worker.min.js"),
-        corePath:      chrome.runtime.getURL("lib/tesseract/tesseract-core.wasm.js"),
-        langPath:      chrome.runtime.getURL("lib/tesseract/"),
-        workerBlobURL: false,
-        cacheMethod:   "write",
-        logger:        () => {},
-      });
-      tessReady = true;
-      console.log("[Offscreen] Tesseract OCR ready");
-      return tessWorker;
-    } catch (err) {
-      console.warn("[Offscreen] Tesseract init failed:", err?.message || err);
+    // Tesseract.js does not expose a native ESM — use the UMD global loaded via offscreen.html
+    if (typeof Tesseract === "undefined") {
+      console.warn("[Offscreen] Tesseract global not found; OCR disabled.");
       return null;
     }
+
+    const options = {
+      workerPath:    chrome.runtime.getURL("lib/tesseract/worker.min.js"),
+      corePath:      chrome.runtime.getURL("lib/tesseract/tesseract-core.wasm.js"),
+      langPath:      chrome.runtime.getURL("lib/tesseract/"),
+      workerBlobURL: false,
+      cacheMethod:   "write",
+      logger:        () => {},
+    };
+
+    // Try the requested set, then fall back to English. A missing traineddata
+    // file must degrade OCR to the bundled language, never disable it outright —
+    // losing the whole layer over one absent file would be a large, silent drop
+    // in redaction coverage.
+    for (const langs of [requested, DEFAULT_OCR_LANGUAGES]) {
+      try {
+        tessWorker = await Tesseract.createWorker(langs, 1, options);
+        tessReady = true;
+        activeOcrLanguages = langs;
+        if (langs !== requested) {
+          logEvent(
+            "offscreen",
+            `OCR languages "${requested}" unavailable; running with "${langs}". ` +
+            `Add the missing .traineddata.gz files to lib/tesseract/ to enable them.`,
+            null,
+            "warn"
+          );
+        }
+        console.log(`[Offscreen] Tesseract OCR ready (${langs})`);
+        return tessWorker;
+      } catch (err) {
+        console.warn(`[Offscreen] Tesseract init failed for "${langs}":`, err?.message || err);
+      }
+    }
+    return null;
   })();
   return tessInitPromise;
 }
@@ -261,6 +327,85 @@ function extractOcrWords(data) {
  * regions were small object detections but blacks out an entire figure once
  * page-sized images become OCR targets. Word boxes localise the hit instead.
  */
+/**
+ * Layer G2: person names in OCR'd text, localised to word boxes.
+ *
+ * Kept separate from OCR_PII_PATTERNS because names are not a regex: they are
+ * decided by an adjacent cue ("Name:", "Deliver to", "Dr") or by a gazetteer
+ * hit, and the deciding cue sits in NEIGHBOURING words. Matching therefore runs
+ * over the joined line text and maps character offsets back onto words, so a hit
+ * covers exactly the name and not the label in front of it.
+ *
+ * @param {Array<{text: string, bbox: Object}>} words
+ * @param {Set<number>} claimed Word indices already covered by another pattern
+ * @returns {Array<{start: number, end: number, text: string, via: string}>} word-index ranges
+ */
+function matchOcrNames(words, claimed) {
+  if (!words.length) return [];
+
+  // Joined with single spaces so each word's character span is exactly derivable.
+  const offsets = [];
+  let text = "";
+  for (const w of words) {
+    if (text) text += " ";
+    offsets.push(text.length);
+    text += w.text;
+  }
+
+  const ranges = [];
+  for (const hit of findNames(text)) {
+    const hitEnd = hit.index + hit.length;
+    let start = -1;
+    let end = -1;
+    for (let i = 0; i < words.length; i++) {
+      const wordStart = offsets[i];
+      const wordEnd = wordStart + words[i].text.length;
+      if (wordEnd <= hit.index || wordStart >= hitEnd) continue;
+      if (start === -1) start = i;
+      end = i + 1;
+    }
+    if (start === -1) continue;
+    let overlapsClaimed = false;
+    for (let i = start; i < end; i++) {
+      if (claimed.has(i)) { overlapsClaimed = true; break; }
+    }
+    if (overlapsClaimed) continue;
+    ranges.push({ start, end, text: hit.text, via: hit.via });
+  }
+  return ranges;
+}
+
+/**
+ * True when `re` matches the ENTIRE string, not merely somewhere inside it.
+ *
+ * Used only to decide whether to WIDEN an already-found box by one more word
+ * (see the extension loop in ocrRegion): a plain `.test()` there would keep
+ * growing into an unrelated neighbour whenever the combined text happens to
+ * contain a match anywhere, e.g. prepending "Order#1234" onto a real phone
+ * number "555-0123" — `.test("Order#1234 555-0123")` is true (a phone pattern
+ * exists somewhere in there), but "Order#1234" is not part of the number.
+ * Requiring the WHOLE combined string to be consumed rules that out while
+ * still allowing a genuine multi-word number ("(415) 555-0123") to grow.
+ */
+function fullMatch(re, str) {
+  const m = str.match(re);
+  if (!m) return false;
+
+  // Not a strict m[0] === str check: \b cannot attach directly before a
+  // non-word character, so a leading "(" or "+" is always excluded from the
+  // matched text even when it visually belongs to the number (verified against
+  // the phone pattern — "(415) 555-0123" matches only "415) 555-0123"). That is
+  // harmless for the box itself, which is built from whole-word bounding boxes
+  // rather than character offsets, but it would make a naive equality check
+  // reject a perfectly good extension. Tolerate ONLY that specific wrapper
+  // punctuation before/after the match; anything else left over (letters,
+  // digits, '#', ':' ...) means the match did not really consume the whole
+  // string, and the candidate extension must still be rejected.
+  const before = str.slice(0, m.index);
+  const after = str.slice(m.index + m[0].length);
+  return /^[+(\s]*$/.test(before) && /^[)\s]*$/.test(after);
+}
+
 async function ocrRegion(cropCanvas, regionBox, categories) {
   if (!tessWorker || !tessReady) return [];
   try {
@@ -278,41 +423,83 @@ async function ocrRegion(cropCanvas, regionBox, categories) {
       if (categories[category] === false) continue;
       if (!re.test(text)) continue;
 
-      let localised = false;
+      // A region can contain the SAME pattern more than once (e.g. a phone
+      // number quoted once by the user and echoed back once by a reply on the
+      // same screen) - keep searching for fresh, non-overlapping occurrences
+      // until a full pass finds none, instead of stopping at the first hit.
+      // `claimed` prevents re-finding the same words, so each pass only sees
+      // what the previous ones left unclaimed.
+      let foundCount = 0;
+      for (;;) {
+        let localised = false;
 
-      // Walk runs of up to 5 adjacent words: an email is one word, a phone
-      // number is often two or three. Span is the OUTER loop so the tightest
-      // match wins - starting from the word index would let a run beginning at
-      // the "Email" label swallow the label and the rows beneath it.
-      for (let span = 1; span <= 5 && !localised; span++) {
-        for (let i = 0; i + span <= words.length; i++) {
-          const run = words.slice(i, i + span);
-          if (run.some((_, k) => claimed.has(i + k))) continue;
-          if (!re.test(run.map((w) => w.text).join(" "))) continue;
+        // Walk runs of up to 5 adjacent words: an email is one word, a phone
+        // number is often two or three. Span is the OUTER loop so the tightest
+        // match wins - starting from the word index would let a run beginning at
+        // the "Email" label swallow the label and the rows beneath it.
+        for (let span = 1; span <= 5 && !localised; span++) {
+          for (let i = 0; i + span <= words.length; i++) {
+            const run0 = words.slice(i, i + span);
+            if (run0.some((_, k) => claimed.has(i + k))) continue;
+            // Substring test here, as before: this only decides "is there a
+            // detection at all", and recall matters more than precision at that
+            // point (a glued OCR token like "Email:john@x.com" must still be
+            // caught). The stricter whole-string check below is for deciding
+            // how far to WIDEN an already-found box, where the trade-off flips.
+            if (!re.test(run0.map((w) => w.text).join(" "))) continue;
 
-          const x0 = Math.min(...run.map((w) => w.bbox.x0));
-          const y0 = Math.min(...run.map((w) => w.bbox.y0));
-          const x1 = Math.max(...run.map((w) => w.bbox.x1));
-          const y1 = Math.max(...run.map((w) => w.bbox.y1));
+            // Grow the anchor outward while doing so still yields a SINGLE
+            // whole-string match. Needed for patterns whose minimum structure a
+            // trailing fragment can also satisfy alone - e.g. the phone pattern
+            // matches "555-0123" (2 groups) by itself, so without this the
+            // tightest-span search stops there and leaves the "(415)" area code
+            // in the word before it unboxed and unredacted. Growing only ever
+            // extends a match already found by the safe smallest-span search
+            // above, so the original swallow-the-page failure mode (a match
+            // starting at a label and absorbing unrelated rows) cannot recur.
+            let start = i, end = i + span;
+            for (;;) {
+              if (start > 0 && !claimed.has(start - 1) &&
+                  fullMatch(re, words.slice(start - 1, end).map((w) => w.text).join(" "))) {
+                start -= 1;
+                continue;
+              }
+              if (end < words.length && !claimed.has(end) &&
+                  fullMatch(re, words.slice(start, end + 1).map((w) => w.text).join(" "))) {
+                end += 1;
+                continue;
+              }
+              break;
+            }
 
-          // Crop is drawn 1:1, so local coordinates need only the region offset.
-          matched.push({
-            source:     "OCR",
-            label:      `OCR: ${label}`,
-            category,
-            confidence: 0.9,
-            x: regionBox.x + Math.max(0, x0 - PAD),
-            y: regionBox.y + Math.max(0, y0 - PAD),
-            w: Math.max(1, x1 - x0 + PAD * 2),
-            h: Math.max(1, y1 - y0 + PAD * 2),
-          });
-          run.forEach((_, k) => claimed.add(i + k));
-          localised = true;
-          break;
+            const run = words.slice(start, end);
+            const x0 = Math.min(...run.map((w) => w.bbox.x0));
+            const y0 = Math.min(...run.map((w) => w.bbox.y0));
+            const x1 = Math.max(...run.map((w) => w.bbox.x1));
+            const y1 = Math.max(...run.map((w) => w.bbox.y1));
+
+            // Crop is drawn 1:1, so local coordinates need only the region offset.
+            matched.push({
+              source:     "OCR",
+              label:      `OCR: ${label}`,
+              category,
+              confidence: 0.9,
+              x: regionBox.x + Math.max(0, x0 - PAD),
+              y: regionBox.y + Math.max(0, y0 - PAD),
+              w: Math.max(1, x1 - x0 + PAD * 2),
+              h: Math.max(1, y1 - y0 + PAD * 2),
+            });
+            for (let k = start; k < end; k++) claimed.add(k);
+            localised = true;
+            foundCount++;
+            break;
+          }
         }
+
+        if (!localised) break;
       }
 
-      if (!localised) {
+      if (foundCount === 0) {
         // The text is in there but could not be placed. Fail closed by covering
         // the region - but never silently swallow a hit.
         logEvent(
@@ -331,6 +518,33 @@ async function ocrRegion(cropCanvas, regionBox, categories) {
           w: regionBox.w,
           h: regionBox.h,
         });
+      }
+    }
+
+    // Layer G2: names. Runs after the regex patterns so numeric and email spans
+    // are already claimed and cannot be re-covered as part of a name run.
+    if (categories.names !== false) {
+      for (const range of matchOcrNames(words, claimed)) {
+        const run = words.slice(range.start, range.end);
+        const x0 = Math.min(...run.map((w) => w.bbox.x0));
+        const y0 = Math.min(...run.map((w) => w.bbox.y0));
+        const x1 = Math.max(...run.map((w) => w.bbox.x1));
+        const y1 = Math.max(...run.map((w) => w.bbox.y1));
+
+        matched.push({
+          source:     "OCR",
+          label:      `OCR: Person Name (${range.via})`,
+          category:   "names",
+          // A cued name is near-certain; a gazetteer hit is a shared-token guess
+          // ("Rose" as a colour) and is scored lower so NMS prefers any
+          // overlapping deterministic detection.
+          confidence: range.via === "cue" ? 0.9 : 0.7,
+          x: regionBox.x + Math.max(0, x0 - PAD),
+          y: regionBox.y + Math.max(0, y0 - PAD),
+          w: Math.max(1, x1 - x0 + PAD * 2),
+          h: Math.max(1, y1 - y0 + PAD * 2),
+        });
+        for (let i = range.start; i < range.end; i++) claimed.add(i);
       }
     }
 
@@ -595,6 +809,7 @@ async function processAndRedactFrame(payload) {
   // ── Map OWL-ViT detections → PII redaction boxes ──────────────────────────
   const owlRedactions = [];
   const owlDetections = owlResult.value ?? [];
+  let owlBelowThreshold = 0;
 
   for (const det of owlDetections) {
     const { label, score, box: { xmin, ymin, xmax, ymax } } = det;
@@ -612,6 +827,18 @@ async function processAndRedactFrame(payload) {
     }
 
     if (categories[category] === false) continue;
+
+    // Per-category / per-query floor. The scan ran at the permissive base
+    // threshold so nothing was discarded before this point.
+    const floor = Math.max(
+      threshold,
+      OWL_VIT_CATEGORY_THRESHOLDS[category] ?? threshold,
+      OWL_VIT_VAGUE_QUERY_RE.test(labelLower) ? OWL_VIT_VAGUE_THRESHOLD : 0
+    );
+    if (score < floor) {
+      owlBelowThreshold += 1;
+      continue;
+    }
 
     owlRedactions.push({
       source:     "OWL-ViT",
@@ -640,6 +867,8 @@ async function processAndRedactFrame(payload) {
   // ── L4: OCR on candidate visual regions (only when unclassified visual targets exist) ──
   const tStartOCR = performance.now();
   const ocrRedactions = [];
+  let ocrRegionsScanned = 0;
+  let ocrRegionsSkipped = 0;
 
   // Was gated on `categories.ocr`, a key that never existed in settings — so
   // the toggle was inert. `ocrEnabled` is a real setting, defaulting to on.
@@ -664,12 +893,27 @@ async function processAndRedactFrame(payload) {
     );
 
     if (unclassifiedVisualTargets.length > 0) {
-      await initOCR();
+      await initOCR(options.ocrLanguages);
       if (tessReady) {
         const cropCanvas = new OffscreenCanvas(1, 1);
         const cropCtx    = cropCanvas.getContext("2d");
 
-        for (const region of unclassifiedVisualTargets.slice(0, 2)) {
+        // Budget by TIME, not by a fixed count. The old `slice(0, 2)` scanned at
+        // most two regions per frame, so a page with six image cards left four
+        // completely unexamined regardless of how fast they would have been.
+        // Ordering is largest-first from content.js, so the highest-value
+        // regions are still done first if the budget runs out.
+        const ocrBudgetMs = options.ocrBudgetMs ?? 2500;
+        const maxRegions  = options.ocrMaxRegions ?? 8;
+        const ocrStart    = performance.now();
+        let scanned = 0, skipped = 0;
+
+        for (const region of unclassifiedVisualTargets.slice(0, maxRegions)) {
+          if (scanned > 0 && performance.now() - ocrStart > ocrBudgetMs) {
+            skipped = unclassifiedVisualTargets.length - scanned;
+            break;
+          }
+          scanned += 1;
           const rx = Math.max(0, Math.min(region.x, width - 1));
           const ry = Math.max(0, Math.min(region.y, height - 1));
           const rw = Math.max(1, Math.min(region.w, width - rx));
@@ -688,6 +932,20 @@ async function processAndRedactFrame(payload) {
           const hits = await ocrRegion({ toDataURL: () => dataUrl }, { ...region, x: rx, y: ry, w: rw, h: rh }, categories);
           ocrRedactions.push(...hits);
         }
+
+        if (skipped > 0) {
+          // Never silent: an unscanned region is unredacted text, and the
+          // operator needs to see that the budget is costing coverage.
+          logEvent(
+            "offscreen",
+            `OCR budget (${ocrBudgetMs}ms) reached after ${scanned} region(s); ` +
+            `${skipped} region(s) went unscanned and may contain unredacted text.`,
+            null,
+            "warn"
+          );
+        }
+        ocrRegionsScanned = scanned;
+        ocrRegionsSkipped = skipped;
       }
     }
   }
@@ -824,6 +1082,12 @@ async function processAndRedactFrame(payload) {
       domScanMs:        payload.domScanMs ?? null,
       domMapMs,
       ocrLatencyMs:     tEndOCR    - tStartOCR,
+      // Coverage, not just cost: skipped regions are unexamined text, so the
+      // dashboard can show when the latency budget is buying a recall loss.
+      ocrRegionsScanned,
+      ocrRegionsSkipped,
+      ocrLanguages:     activeOcrLanguages,
+      owlBelowThreshold,
       nmsMs,
       nmsSuppressed,
       guardMs,

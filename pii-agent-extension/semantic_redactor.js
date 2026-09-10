@@ -11,6 +11,8 @@
  * - Sensitive visual bounding boxes are physically obliterated on an offscreen canvas.
  */
 
+import { findNames } from "./name_detector.js";
+
 export const REDACTION_TYPES = {
   PERSON: "PERSON",
   EMAIL: "EMAIL",
@@ -164,8 +166,10 @@ export class SemanticRedactor {
       this.getOrCreatePlaceholder(match, REDACTION_TYPES.EMAIL)
     );
 
-    // Phone Numbers
-    sanitized = sanitized.replace(/\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/g, (match) =>
+    // Phone Numbers. Grouping-agnostic (see content.js's INLINE_PII_PATTERNS.PHONE
+    // for the full rationale): the previous 3-3-4-only pattern missed the
+    // Indian mobile format (98765 43210) and Korean-style 3-4-4 numbers.
+    sanitized = sanitized.replace(/\b\+?\(?\d{2,5}\)?(?:[-.\s]\d{2,5}){1,4}\b/g, (match) =>
       this.getOrCreatePlaceholder(match, REDACTION_TYPES.PHONE)
     );
 
@@ -183,6 +187,37 @@ export class SemanticRedactor {
     sanitized = sanitized.replace(/\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b/g, (match) =>
       this.getOrCreatePlaceholder(match, REDACTION_TYPES.GOV_ID)
     );
+
+    // Passport (1 letter + 7 digits)
+    sanitized = sanitized.replace(/\b[A-Z]\d{7}\b/g, (match) =>
+      this.getOrCreatePlaceholder(match, REDACTION_TYPES.GOV_ID)
+    );
+
+    // Bank IFSC
+    sanitized = sanitized.replace(/\b[A-Z]{4}0[A-Z0-9]{6}\b/g, (match) =>
+      this.getOrCreatePlaceholder(match, REDACTION_TYPES.GOV_ID)
+    );
+
+    // Indian pincode, only when nearby words say it is one. A bare 6-digit run
+    // is far more often a price, an order id or a product code, so the label or
+    // a delivery cue has to be present. "Delivery by Fri to 560001" counts:
+    // on a real page that number is the user's own address.
+    sanitized = sanitized.replace(
+      /\b(pin\s?code|pin|postal\s?code|zip|deliver(?:y|ing)?(?:\s+\w+){0,3}?\s+to|ship(?:ping)?\s+to)\b(\s*[:\-]?\s*)(\d{6})\b/gi,
+      (_m, label, sep, digits) =>
+        `${label}${sep}${this.getOrCreatePlaceholder(digits, REDACTION_TYPES.ADDRESS)}`
+    );
+
+    // Person names. Applied LAST so the numeric and email patterns above have
+    // already claimed their spans and cannot be re-matched inside a placeholder.
+    // Replaced back-to-front so each index stays valid as the string shortens.
+    for (const nameHit of findNames(sanitized).reverse()) {
+      const placeholder = this.getOrCreatePlaceholder(nameHit.text, REDACTION_TYPES.PERSON);
+      sanitized =
+        sanitized.slice(0, nameHit.index) +
+        placeholder +
+        sanitized.slice(nameHit.index + nameHit.length);
+    }
 
     return sanitized;
   }

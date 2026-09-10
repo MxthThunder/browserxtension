@@ -44,9 +44,11 @@ export class LocalPermissionEngine {
    * @param {Object} action Structured action {type, selector, value, coordinates, explanation}
    * @param {HTMLElement|Object} [targetElement] The resolved DOM element or element descriptor
    * @param {Object} [privacyDecisionManifest] Output from LocalPrivacyEngine
+   * @param {Object} [context] {currentUrl} — page the agent is acting from, used
+   *   to judge whether a navigation leaves the current site.
    * @returns {{outcome: string, riskLevel: string, reason: string, requiresModal: boolean}}
    */
-  evaluate(action, targetElement = null, privacyDecisionManifest = null) {
+  evaluate(action, targetElement = null, privacyDecisionManifest = null, context = {}) {
     if (!action || !action.type) {
       return {
         outcome: PERMISSION_OUTCOMES.BLOCK,
@@ -72,7 +74,54 @@ export class LocalPermissionEngine {
       }
     }
 
-    // 2. Low Risk Actions: Scroll, Wait, Finish
+    // 2. Browser-level actions. An agent that can open arbitrary URLs has a much
+    //    larger blast radius than one that can only click inside a page, so
+    //    leaving the current site needs the user's consent. Staying on the same
+    //    origin — a product page, a filtered search — is ordinary navigation.
+    if (["navigate", "new_tab"].includes(actType)) {
+      const destination = String(action.value || "");
+      const originOf = (u) => { try { return new URL(u).origin; } catch { return ""; } };
+      const from = originOf(context.currentUrl || "");
+      const to = originOf(destination);
+
+      if (!to) {
+        return {
+          outcome: PERMISSION_OUTCOMES.BLOCK,
+          riskLevel: ACTION_RISK_LEVELS.CRITICAL,
+          reason: `Unparseable navigation target: "${destination.substring(0, 60)}"`,
+          requiresModal: false
+        };
+      }
+
+      if (from && to === from) {
+        return {
+          outcome: PERMISSION_OUTCOMES.ALLOW,
+          riskLevel: ACTION_RISK_LEVELS.LOW,
+          reason: `Same-site navigation within ${to}`,
+          requiresModal: false
+        };
+      }
+
+      return {
+        outcome: PERMISSION_OUTCOMES.REQUIRE_CONFIRMATION,
+        riskLevel: ACTION_RISK_LEVELS.HIGH,
+        reason: `Agent wants to open a different site: ${to}`,
+        requiresModal: true
+      };
+    }
+
+    // Tab management moves focus but cannot read or mutate page content itself;
+    // whatever the new tab shows is captured and redacted like any other frame.
+    if (["switch_tab", "close_tab", "go_back"].includes(actType)) {
+      return {
+        outcome: PERMISSION_OUTCOMES.ALLOW,
+        riskLevel: ACTION_RISK_LEVELS.LOW,
+        reason: `Tab management: ${actType}`,
+        requiresModal: false
+      };
+    }
+
+    // 3. Low Risk Actions: Scroll, Wait, Finish
     if (["scroll", "wait", "finish"].includes(actType)) {
       return {
         outcome: PERMISSION_OUTCOMES.ALLOW,

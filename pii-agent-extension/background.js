@@ -18,7 +18,7 @@ import {
   summarizeRedactions,
   DEFAULT_SETTINGS,
 } from "./storage.js";
-import { agentLoop } from "./agent_loop.js";
+import { agentLoop, BROWSER_ACTION_TYPES } from "./agent_loop.js";
 import { vault } from "./vault.js";
 import { semanticRedactor } from "./semantic_redactor.js";
 import { logEvent } from "./telemetry.js";
@@ -469,12 +469,24 @@ async function executeTaskWithServer(task, options = {}) {
       resolvedValue = semanticRedactor.deAnonymize(resolvedValue);
     }
     const execAction = { ...action, value: resolvedValue };
-    const tab = await getActiveTab();
-    if (tab && tab.id) {
-      executionResult = await sendTabMessage(tab.id, {
-        type: "EXECUTE_ACTION",
-        action: execAction,
-      });
+
+    if (BROWSER_ACTION_TYPES.has(execAction.type)) {
+      // This is the one-shot capture path; it has no loop to re-capture after a
+      // navigation, so acting here would leave the caller reasoning about a page
+      // that no longer exists. Report it instead of sending it to the content
+      // script, which would only answer "Unknown action type".
+      executionResult = {
+        ok: false,
+        error: `'${execAction.type}' is a browser-level action; run it from the agent loop, not a single capture.`,
+      };
+    } else {
+      const tab = await getActiveTab();
+      if (tab && tab.id) {
+        executionResult = await sendTabMessage(tab.id, {
+          type: "EXECUTE_ACTION",
+          action: execAction,
+        });
+      }
     }
   }
 

@@ -34,7 +34,16 @@ const INLINE_PII_PATTERNS = {
   SSN: /\b\d{3}-\d{2}-\d{4}\b/,
   AADHAAR: /\b\d{4}\s\d{4}\s\d{4}\b/,
   EMAIL: /\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Z|a-z]{2,}\b/,
-  PHONE: /\b(?:\+?\d{1,3}[-.\s]?)?\(?\d{3}\)?[-.\s]?\d{3}[-.\s]?\d{4}\b/,
+  // Grouping-agnostic: the old 3-3-4-only pattern missed the Indian mobile
+  // format (98765 43210, 5+5) and Korean-style numbers (010-1000-0001,
+  // 3-4-4) — both verified misses, the Indian one especially significant for
+  // this product's primary market. Matches 2-5 groups of 2-5 digits joined by
+  // '-', '.' or space; a comma (as in prices "2,499") is deliberately not a
+  // recognised separator, and a lone 1-digit group (as in ratings "4.3") is
+  // too short to qualify, so those are not caught. Trade-off: an occasional
+  // date ("2024-01-15") or decimal now over-redacts — cosmetic, and preferred
+  // to the alternative of an unredacted phone number.
+  PHONE: /\b\+?\(?\d{2,5}\)?(?:[-.\s]\d{2,5}){1,4}\b/,
   PAN: /\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b/,
   DELIVERY_LOCATION: /\b(?:deliver(?:ing)?|ship(?:ping)?|dispatch|send)\s+to\s+[^,\n\r<]{2,50}/i,
   PINCODE_LOCATION: /\b[A-Za-z]{2,25}\s+[1-9][0-9]{5}\b/i,
@@ -58,6 +67,72 @@ let lastSpaMutationTime = Date.now();
 /**
  * Classifies an individual DOM element for sensitivity.
  */
+/**
+ * Layer G1 name detection.
+ *
+ * content.js is a classic content script, not a module, so `import` is not
+ * available: the shared detector is pulled in dynamically from the extension's
+ * web-accessible resources. Until it resolves — and if it never does — the
+ * inline fallback below still fires, because a privacy detector must not fail
+ * open just because a module load was slow.
+ */
+let nameDetectorModule = null;
+
+const FALLBACK_NAME_FIELD_RE =
+  /\b(full[\s_-]?name|first[\s_-]?name|last[\s_-]?name|given[\s_-]?name|family[\s_-]?name|sur[\s_-]?name|your[\s_-]?name|customer[\s_-]?name|recipient|deliver(?:y)?[\s_-]?to|ordered[\s_-]?by|card[\s_-]?holder|account[\s_-]?holder|beneficiary|nominee|contact[\s_-]?person|passenger[\s_-]?name|patient[\s_-]?name)\b/i;
+const FALLBACK_NAME_AUTOCOMPLETE = new Set([
+  "name", "given-name", "family-name", "additional-name",
+  "honorific-prefix", "honorific-suffix", "nickname",
+]);
+
+(async () => {
+  try {
+    nameDetectorModule = await import(chrome.runtime.getURL("name_detector.js"));
+  } catch (err) {
+    console.warn("[Content] Shared name detector unavailable; using inline rules:", err?.message);
+  }
+})();
+
+function detectNameField(descriptors) {
+  if (nameDetectorModule?.isNameField) {
+    return nameDetectorModule.isNameField(descriptors);
+  }
+  const auto = String(descriptors.autocomplete || "").toLowerCase();
+  if (auto.split(/\s+/).some((t) => FALLBACK_NAME_AUTOCOMPLETE.has(t))) return true;
+  if (String(descriptors.itemprop || "").toLowerCase() === "name") return true;
+  return FALLBACK_NAME_FIELD_RE.test(
+    [descriptors.name, descriptors.id, descriptors.placeholder,
+     descriptors.ariaLabel, descriptors.label].filter(Boolean).join(" ")
+  );
+}
+
+/**
+ * The visible label bound to a field, by `for=`, by wrapping <label>, or by
+ * aria-labelledby. Many checkout forms carry no useful name/id and identify a
+ * field only through its label.
+ *
+ * @returns {string} label text, or "" when there is none
+ */
+function labelTextFor(el) {
+  try {
+    if (el.id) {
+      const byFor = document.querySelector(`label[for="${CSS.escape(el.id)}"]`);
+      if (byFor) return (byFor.innerText || byFor.textContent || "").trim().slice(0, 80);
+    }
+    const wrapping = el.closest?.("label");
+    if (wrapping) return (wrapping.innerText || wrapping.textContent || "").trim().slice(0, 80);
+
+    const labelledBy = el.getAttribute?.("aria-labelledby");
+    if (labelledBy) {
+      const ref = document.getElementById(labelledBy);
+      if (ref) return (ref.innerText || ref.textContent || "").trim().slice(0, 80);
+    }
+  } catch {
+    // Malformed id / detached node — no label is a valid answer.
+  }
+  return "";
+}
+
 function classifyElement(el) {
   const type = (el.getAttribute("type") || "").toLowerCase();
 
@@ -81,6 +156,22 @@ function classifyElement(el) {
         reason: `file upload: ${el.getAttribute("name") || el.getAttribute("id") || "photo/doc"}`,
       };
     }
+  }
+
+  // Layer G1: fields whose value IS a person's name. Checked before the generic
+  // autocomplete sweep because the name tokens are not in
+  // SENSITIVE_AUTOCOMPLETE_TOKENS, which is why a checkout page's "Full Name"
+  // was never flagged and the name shipped to the cloud model unmasked.
+  if (detectNameField({
+    autocomplete: el.getAttribute("autocomplete"),
+    name: el.getAttribute("name"),
+    id: el.getAttribute("id"),
+    placeholder: el.getAttribute("placeholder"),
+    ariaLabel: el.getAttribute("aria-label"),
+    label: labelTextFor(el),
+    itemprop: el.getAttribute("itemprop"),
+  })) {
+    return { sensitive: true, category: "names", reason: "person name field" };
   }
 
   const autocomplete = (el.getAttribute("autocomplete") || "").toLowerCase();
@@ -590,8 +681,18 @@ function scanPageForSensitiveElements() {
  * Extracts interactive DOM element digest for the VLM agent.
  * Recursively inspects both the primary document and accessible same-origin iframes.
  */
+/**
+ * node -> index in the array returned by the last extractInteractiveElements()
+ * call. That index is the `ref` the planner addresses elements by, so page
+ * content rows can point at a real, clickable target instead of describing one.
+ *
+ * Rebuilt on every extraction because refs are renumbered each scan.
+ */
+let interactiveNodeRefs = new WeakMap();
+
 function extractInteractiveElements() {
   const elements = [];
+  interactiveNodeRefs = new WeakMap();
   const rawNodes = Array.from(document.querySelectorAll(
     "button, a, input, select, textarea, [role='button'], [role='textbox'], [role='link'], [contenteditable='true'], [onclick], [tabindex]"
   ));
@@ -662,6 +763,7 @@ function extractInteractiveElements() {
       selector = `[data-agent-id="${agentId}"]`;
     }
 
+    interactiveNodeRefs.set(node, elements.length);
     elements.push({
       tag: node.tagName.toLowerCase(),
       id: node.id || "",
@@ -686,6 +788,241 @@ function extractInteractiveElements() {
   });
 
   return elements;
+}
+
+/**
+ * True when this frame can actually carry out the action.
+ *
+ * Used only by sub-frames, to decide whether to answer a broadcast
+ * EXECUTE_ACTION at all. Scroll and finish are frame-agnostic and are left to
+ * the top frame.
+ */
+function frameCanHandleAction(action) {
+  if (!action || !action.selector) return false;
+  try {
+    return Boolean(document.querySelector(action.selector));
+  } catch {
+    return false;
+  }
+}
+
+// ── Cross-frame scanning (Layer H) ──────────────────────────────────────────
+// A cross-origin iframe — a payment widget, an embedded checkout, a KYC form —
+// cannot be read from the parent document, so `extractInteractiveElements`
+// silently skipped it and its fields were covered only by the screenshot pass.
+// The content script now runs in every frame (`all_frames` in the manifest) and
+// frames cooperate over postMessage: the parent asks each child to scan itself,
+// the child replies with boxes in ITS OWN coordinates, and the parent shifts
+// them by that iframe's rect. Nesting works because a child repeats the same
+// exchange with its own children before replying.
+//
+// Only coordinates cross the boundary — never text. A frame answers only its
+// real parent (`event.source === window.parent`), so an unrelated frame on the
+// page cannot ask where a form's sensitive fields are.
+
+const FRAME_MSG = "__PRIVYBROWSE_FRAME__";
+const FRAME_SCAN_TIMEOUT_MS = 300;
+
+/** Asks every child iframe to scan itself; returns boxes in THIS frame's coords. */
+async function collectChildFrameBoxes() {
+  const iframes = Array.from(document.querySelectorAll("iframe"));
+  if (iframes.length === 0) return { boxes: [], ocrRegions: [] };
+
+  const pending = new Map();
+  const boxes = [];
+  const ocrRegions = [];
+
+  const onReply = (event) => {
+    const data = event.data;
+    if (!data || data[FRAME_MSG] !== "SCAN_RESULT") return;
+    const entry = pending.get(data.id);
+    if (!entry || event.source !== entry.win) return;
+    pending.delete(data.id);
+    entry.resolve(data);
+  };
+  window.addEventListener("message", onReply);
+
+  try {
+    const waits = iframes.map((frame, i) => {
+      const win = frame.contentWindow;
+      if (!win) return Promise.resolve(null);
+
+      const rect = frame.getBoundingClientRect();
+      // Off-screen or collapsed frames carry nothing paintable.
+      if (rect.width < 2 || rect.height < 2) return Promise.resolve(null);
+
+      const id = `${Date.now()}-${i}-${Math.random().toString(36).slice(2, 8)}`;
+      const reply = new Promise((resolve) => {
+        pending.set(id, { win, resolve });
+        setTimeout(() => { pending.delete(id); resolve(null); }, FRAME_SCAN_TIMEOUT_MS);
+      });
+
+      try {
+        win.postMessage({ [FRAME_MSG]: "SCAN_REQUEST", id }, "*");
+      } catch {
+        pending.delete(id);
+        return Promise.resolve(null);
+      }
+      return reply.then((data) => (data ? { data, rect } : null));
+    });
+
+    for (const result of await Promise.all(waits)) {
+      if (!result) continue;
+      const { data, rect } = result;
+      for (const b of data.boxes || []) {
+        boxes.push({ ...b, x: Math.round(b.x + rect.left), y: Math.round(b.y + rect.top) });
+      }
+      for (const r of data.ocrRegions || []) {
+        ocrRegions.push({ ...r, x: Math.round(r.x + rect.left), y: Math.round(r.y + rect.top) });
+      }
+    }
+  } finally {
+    window.removeEventListener("message", onReply);
+  }
+
+  return { boxes, ocrRegions };
+}
+
+// Child side: scan on request from our own parent, and answer with geometry only.
+window.addEventListener("message", async (event) => {
+  const data = event.data;
+  if (!data || data[FRAME_MSG] !== "SCAN_REQUEST") return;
+  if (window.top === window.self) return;          // top frame has no parent to serve
+  if (event.source !== window.parent) return;      // only our real parent may ask
+
+  let boxes = [];
+  let ocrRegions = [];
+  try {
+    if (isProtectionEnabled) {
+      boxes = scanPageForSensitiveElements().map((m) => ({
+        x: m.x, y: m.y, width: m.width, height: m.height,
+        category: m.category, reason: m.reason,
+      }));
+      ocrRegions = collectOcrCandidateRegions();
+      // Recurse: this frame's own children contribute in this frame's coords.
+      const nested = await collectChildFrameBoxes();
+      boxes.push(...nested.boxes.map((b) => ({
+        x: b.x, y: b.y, width: b.width ?? b.w, height: b.height ?? b.h,
+        category: b.category, reason: b.reason,
+      })));
+      ocrRegions.push(...nested.ocrRegions);
+    }
+  } catch (err) {
+    console.warn("[Content] Frame scan failed:", err?.message);
+  }
+
+  try {
+    event.source.postMessage({ [FRAME_MSG]: "SCAN_RESULT", id: data.id, boxes, ocrRegions }, "*");
+  } catch {
+    // Parent went away mid-scan.
+  }
+});
+
+// ── Page content extraction (Layer D) ───────────────────────────────────────
+// The planner previously saw only a screenshot plus the interactive elements,
+// each truncated to 80 characters. Prices, ratings, review counts and delivery
+// promises were therefore invisible, which is why a "find me a bassy speaker"
+// run typed a query, scrolled twice and picked the first thing it could name.
+//
+// Extraction is structural rather than site-specific: result listings are
+// repeated sibling groups sharing a class signature, which holds on Flipkart,
+// Amazon, and most listing UIs without a single hard-coded selector.
+
+const PRICE_RE = /(?:₹|Rs\.?|INR|\$|€|£)\s?\d[\d,]*(?:\.\d{1,2})?/i;
+const RATING_RE = /\b([0-5](?:\.\d)?)\s*(?:out of 5|\/\s*5|★|stars?\b)/i;
+const REVIEWS_RE = /\b([\d,]+)\s*(?:ratings?|reviews?)\b/i;
+const DELIVERY_RE = /\b(free delivery|delivery by [^|\n]{3,30}|get it by [^|\n]{3,30}|arrives [^|\n]{3,30}|out of stock|currently unavailable|in stock)\b/i;
+const BADGE_RE = /\b(assured|prime|bestseller|best seller|sponsored|deal of the day|limited deal|\d+%\s*off)\b/i;
+
+const MAX_CONTENT_ROWS = 24;
+const MIN_GROUP_SIZE = 3;
+
+/**
+ * A structural signature for grouping siblings. Class lists on listing cards
+ * are stable within a page even when the class names themselves are generated.
+ */
+function structuralSignature(el) {
+  const classes = (el.className && typeof el.className === "string")
+    ? el.className.trim().split(/\s+/).slice(0, 4).sort().join(".")
+    : "";
+  return `${el.tagName}:${classes}`;
+}
+
+/** First regex capture (or whole match) found in `text`, else "". */
+function firstMatch(text, re, group = 0) {
+  const m = text.match(re);
+  return m ? String(m[group] ?? m[0]).trim() : "";
+}
+
+/**
+ * Extracts repeated result rows from the whole document.
+ *
+ * Reads outside the viewport on purpose: `extractInteractiveElements` clips to
+ * the viewport because a click needs real coordinates, but the planner should be
+ * able to decide "scroll to the cheaper one further down" rather than scrolling
+ * blindly. Only text is read here — nothing is clicked.
+ *
+ * @returns {{rows: Array<Object>, groupCount: number}}
+ */
+function extractPageContent() {
+  const anchors = Array.from(document.querySelectorAll("a[href]"));
+  const groups = new Map();
+
+  for (const a of anchors) {
+    const title = (a.innerText || a.textContent || "").trim();
+    if (title.length < 8) continue;
+
+    // The card is the nearest ancestor that adds context beyond the link text.
+    let card = a;
+    for (let i = 0; i < 4 && card.parentElement; i++) {
+      const parentText = (card.parentElement.innerText || "").trim();
+      if (parentText.length > title.length + 12) { card = card.parentElement; break; }
+      card = card.parentElement;
+    }
+
+    const sig = structuralSignature(card);
+    if (!groups.has(sig)) groups.set(sig, []);
+    groups.get(sig).push({ card, anchor: a, title });
+  }
+
+  // The largest repeated group is the results list; everything else is chrome.
+  let best = null;
+  for (const members of groups.values()) {
+    if (members.length < MIN_GROUP_SIZE) continue;
+    if (!best || members.length > best.length) best = members;
+  }
+  if (!best) return { rows: [], groupCount: groups.size };
+
+  const seen = new Set();
+  const rows = [];
+  for (const { card, anchor, title } of best) {
+    if (rows.length >= MAX_CONTENT_ROWS) break;
+    const text = (card.innerText || "").replace(/\s+/g, " ").trim();
+    if (!text || seen.has(title)) continue;
+    seen.add(title);
+
+    const row = {
+      title: title.slice(0, 120),
+      price: firstMatch(text, PRICE_RE),
+      rating: firstMatch(text, RATING_RE, 1),
+      reviews: firstMatch(text, REVIEWS_RE, 1),
+      delivery: firstMatch(text, DELIVERY_RE).slice(0, 60),
+      badge: firstMatch(text, BADGE_RE).slice(0, 40),
+    };
+
+    // Point at the clickable element when it is one the planner can address.
+    const ref = interactiveNodeRefs.get(anchor);
+    if (typeof ref === "number") row.ref = ref;
+
+    // Whether the row is on screen right now, so the planner knows if it must
+    // scroll before it can act on this one.
+    const rect = card.getBoundingClientRect();
+    row.onScreen = rect.bottom > 0 && rect.top < window.innerHeight;
+
+    rows.push(row);
+  }
+
+  return { rows, groupCount: groups.size };
 }
 
 /**
@@ -1006,13 +1343,35 @@ async function executeAgentAction(action) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === "GET_DOM_PII_BOXES") {
     if (window.top !== window.self) {
+      // Sub-frames are scanned through the parent's postMessage handshake, not
+      // directly, so their boxes arrive already offset into page coordinates.
       return false;
     }
+    (async () => {
     const tScanStart = performance.now();
     const matches = scanPageForSensitiveElements();
     const ocrRegions = collectOcrCandidateRegions();
+
+    // Cross-origin iframes scan themselves and report back in page coordinates.
+    let frameBoxes = [];
+    try {
+      const nested = await collectChildFrameBoxes();
+      frameBoxes = nested.boxes;
+      ocrRegions.push(...nested.ocrRegions);
+    } catch (err) {
+      console.warn("[Content] Child frame scan failed:", err?.message);
+    }
+
     const domScanMs = performance.now() - tScanStart;
     const interactive = extractInteractiveElements();
+    // Must run AFTER extractInteractiveElements: it consumes the ref map that
+    // call rebuilds, so page rows can name a clickable target.
+    let pageContent = { rows: [], groupCount: 0 };
+    try {
+      pageContent = extractPageContent();
+    } catch (err) {
+      console.warn("[Content] Page content extraction failed:", err?.message);
+    }
     let structuredData = null;
     try {
       structuredData = window.__PRIVIBROWSE_TELEMETRY_ADAPTER__?.getTelemetryDigest() || null;
@@ -1022,15 +1381,20 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
       ok: true,
       domScanMs,
       ocrRegions,
-      boxes: matches.map((m) => ({
-        x: m.x,
-        y: m.y,
-        width: m.width,
-        height: m.height,
-        category: m.category,
-        reason: m.reason,
-      })),
+      frameBoxCount: frameBoxes.length,
+      boxes: [
+        ...matches.map((m) => ({
+          x: m.x,
+          y: m.y,
+          width: m.width,
+          height: m.height,
+          category: m.category,
+          reason: m.reason,
+        })),
+        ...frameBoxes,
+      ],
       interactiveElements: interactive,
+      pageContent: pageContent.rows,
       structuredData,
       spaMetadata: {
         currentRoute: window.location.href,
@@ -1043,14 +1407,52 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
         devicePixelRatio: window.devicePixelRatio || 1,
       },
     });
-    return false;
+    })();
+    // Async: the child-frame handshake must complete before responding.
+    return true;
   }
 
   if (message.type === "EXECUTE_ACTION") {
+    // The script now runs in every frame, so this message reaches all of them
+    // and the FIRST responder wins. A sub-frame that cannot see the target must
+    // stay silent, or its "not found" would beat the frame that can actually
+    // perform the action. The top frame always answers, so a genuine miss is
+    // still reported rather than hanging.
+    if (window.top !== window.self && !frameCanHandleAction(message.action)) {
+      return false;
+    }
     executeAgentAction(message.action)
       .then((res) => sendResponse(res))
       .catch((err) => sendResponse({ ok: false, error: err.message }));
     return true;
+  }
+
+  if (message.type === "GET_ELEMENT_HREF") {
+    // Same rule as EXECUTE_ACTION: a frame that cannot see the link stays quiet.
+    if (window.top !== window.self && !document.querySelector(message.selector || "\0")) {
+      return false;
+    }
+    // Resolves a link's REAL address for new_tab, so the agent never navigates
+    // to a URL a model assembled from memory.
+    try {
+      const node = document.querySelector(message.selector);
+      if (!node) {
+        sendResponse({ ok: false, error: `No element matches ${message.selector}` });
+        return false;
+      }
+      // The model often targets a card wrapping the link rather than the <a>.
+      const link = node.closest("a[href]") || node.querySelector("a[href]") || node;
+      const href = link.href || link.getAttribute?.("href") || "";
+      if (!href) {
+        sendResponse({ ok: false, error: "Target element has no link to open" });
+        return false;
+      }
+      // `link.href` is already absolute; resolve the attribute form too.
+      sendResponse({ ok: true, href: new URL(href, document.baseURI).toString() });
+    } catch (err) {
+      sendResponse({ ok: false, error: err.message });
+    }
+    return false;
   }
 
   if (message.type === "HIGHLIGHT_DOM") {

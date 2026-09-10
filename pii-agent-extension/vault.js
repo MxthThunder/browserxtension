@@ -208,8 +208,21 @@ export class LocalSensitiveVault {
     this._assertUnlocked();
     const cat = category.toLowerCase();
     const k = key.toLowerCase();
-    if (this._inMemoryCache[cat] && this._inMemoryCache[cat][k]) {
-      return this._inMemoryCache[cat][k].value;
+    const bucket = this._inMemoryCache[cat];
+    if (bucket && bucket[k]) {
+      return bucket[k].value;
+    }
+    if (!bucket) return null;
+
+    // Fall back through the alias table before giving up. A token is written by
+    // the planner ({{VAULT:address.pincode}}) while the entry was named by the
+    // user ("zip"); an exact-match-only lookup turned that mismatch into a
+    // silently unresolved token that then got typed into the page literally.
+    for (const aliases of Object.values(FIELD_SEMANTIC_ALIASES)) {
+      if (!aliases.includes(k)) continue;
+      for (const alias of aliases) {
+        if (bucket[alias]) return bucket[alias].value;
+      }
     }
     return null;
   }

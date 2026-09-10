@@ -10,6 +10,26 @@
 import { getSettings } from "./storage.js";
 import { semanticRedactor } from "./semantic_redactor.js";
 
+/**
+ * Reduces a URL to what the model actually needs to recognise a tab: origin and
+ * path. Query strings and fragments are dropped wholesale rather than scanned,
+ * because that is where order ids, session tokens, emails and coordinates live
+ * and a redactor can only catch the patterns it already knows.
+ *
+ * @param {string} raw
+ * @returns {string} origin + path, or "" if unparseable
+ */
+function sanitizeUrlForModel(raw) {
+  try {
+    const u = new URL(raw);
+    if (!/^https?:$/.test(u.protocol)) return "";
+    const path = semanticRedactor.sanitizeText(u.pathname || "");
+    return `${u.origin}${path}`.slice(0, 120);
+  } catch {
+    return "";
+  }
+}
+
 export class AgentClient {
   constructor(config = {}) {
     this.serverUrl = config.serverUrl || "http://127.0.0.1:8001/api/act";
@@ -46,6 +66,8 @@ export class AgentClient {
    * @param {Object} [params.viewport] Viewport metadata {width, height, devicePixelRatio}
    * @param {string} [params.url] Active page URL
    * @param {string} [params.modelProvider] "auto" | "ollama_qwen" | "gemini" | "openai"
+   * @param {Array<Object>} [params.openTabs] Open tabs [{index, title, url, active}], sanitized here
+   * @param {Array<Object>} [params.pageContent] Result rows read from the page, sanitized here
    * @returns {Promise<{ok: boolean, action: Object, audit: Object, latencyMs: number, modelUsed: string}>}
    */
   async requestAction(params) {
@@ -94,7 +116,34 @@ export class AgentClient {
       structured_data: params.structuredData || null,
       // Final-answer pass: no further browsing, just report what was found.
       synthesize_only: Boolean(params.synthesizeOnly),
-      stop_reason: params.stopReason || null
+      stop_reason: params.stopReason || null,
+      // The plan established on step 1, replayed so the goal survives a context
+      // window that only ever shows one page at a time.
+      plan: params.plan || [],
+      plan_step: params.planStep || null,
+      // Result rows read from the page. A TEXT EGRESS CHANNEL: unlike the
+      // element digest this carries free-form page copy, so every string field
+      // goes through the redactor. ref/on_screen and the numeric fields are
+      // structural and cannot carry PII on their own.
+      page_content: (params.pageContent || []).slice(0, 24).map((r) => ({
+        ref: typeof r.ref === "number" ? r.ref : null,
+        on_screen: Boolean(r.onScreen),
+        title: semanticRedactor.sanitizeText(String(r.title || "")).slice(0, 120),
+        price: semanticRedactor.sanitizeText(String(r.price || "")).slice(0, 24),
+        rating: String(r.rating || "").slice(0, 8),
+        reviews: String(r.reviews || "").slice(0, 16),
+        delivery: semanticRedactor.sanitizeText(String(r.delivery || "")).slice(0, 60),
+        badge: semanticRedactor.sanitizeText(String(r.badge || "")).slice(0, 40),
+      })),
+      // Tab titles and URLs are a text egress channel too: a title is routinely
+      // "Order #4821 - Priya Nair" and a URL carries ids and emails in its query
+      // string. Both go through the same redactor as the task prompt.
+      open_tabs: (params.openTabs || []).map((t) => ({
+        index: t.index,
+        active: Boolean(t.active),
+        title: semanticRedactor.sanitizeText(t.title || "").slice(0, 90),
+        url: sanitizeUrlForModel(t.url || ""),
+      }))
     };
 
     const startTime = performance.now();

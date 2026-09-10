@@ -34,6 +34,7 @@ const catGovIds = document.getElementById("catGovIds");
 const catFaces = document.getElementById("catFaces");
 const catContactInfo = document.getElementById("catContactInfo");
 const catScreens = document.getElementById("catScreens");
+const catNames = document.getElementById("catNames");
 
 const txtServerUrl = document.getElementById("txtServerUrl");
 const txtHealthUrl = document.getElementById("txtHealthUrl");
@@ -191,6 +192,7 @@ async function loadAndRenderSettings() {
   catFaces.checked = cats.faces !== false;
   catContactInfo.checked = cats.contactInfo !== false;
   catScreens.checked = cats.screens !== false;
+  catNames.checked = cats.names !== false;
 
   txtServerUrl.value = settings.serverUrl || "http://127.0.0.1:8001/api/act";
   txtHealthUrl.value = settings.serverHealthUrl || "http://127.0.0.1:8001/health";
@@ -282,6 +284,7 @@ btnSave.addEventListener("click", async () => {
       faces: catFaces.checked,
       contactInfo: catContactInfo.checked,
       screens: catScreens.checked,
+      names: catNames.checked,
     },
     serverUrl: txtServerUrl.value.trim(),
     serverHealthUrl: txtHealthUrl.value.trim(),

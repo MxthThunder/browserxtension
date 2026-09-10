@@ -46,6 +46,7 @@ const CATEGORY_COLORS = {
   contactInfo: { label: "Contact & Addresses",  color: "var(--cat-4)" },
   faces:       { label: "Faces & Biometrics",   color: "var(--cat-5)" },
   passwords:   { label: "Passwords & Tokens",   color: "var(--cat-6)" },
+  names:       { label: "Person Names",         color: "var(--cat-1)" },
   other:       { label: "Other",                color: "var(--text-3)" },
 };
 

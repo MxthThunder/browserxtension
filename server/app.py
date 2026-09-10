@@ -131,6 +131,16 @@ class ActRequest(BaseModel):
     # the model should report what was found instead of planning another action.
     synthesize_only: Optional[bool] = False
     stop_reason: Optional[str] = None
+    # Open tabs, so switch_tab has something to address. Titles and URLs are
+    # sanitized on-device before they are put here -- a tab title routinely
+    # carries PII ("Order #4821 - Priya Nair").
+    open_tabs: Optional[List[Dict[str, Any]]] = []
+    # The plan established on step 1, replayed back so the goal does not decay.
+    plan: Optional[List[str]] = []
+    plan_step: Optional[int] = None
+    # Result rows read from the page (prices, ratings, delivery). Sanitized
+    # on-device before it is put here — see agent_client.js.
+    page_content: Optional[List[Dict[str, Any]]] = []
 
 
 class ActionOutput(BaseModel):
@@ -144,6 +154,11 @@ class ActionOutput(BaseModel):
     # with only a stop reason ("Reached maximum step limit"), which told the user
     # nothing about what it had actually found.
     result: Optional[Dict[str, Any]] = None
+    # Task decomposition. Emitted once on step 1 and then replayed back each turn,
+    # so a multi-step goal ("compare 3, check delivery, then recommend") survives
+    # a context window that only ever shows one page at a time.
+    plan: Optional[List[str]] = None
+    plan_step: Optional[int] = None
 
 
 class ActResponse(BaseModel):
@@ -329,7 +344,15 @@ async def is_ollama_available(ollama_host: str) -> bool:
 # the digest, history and system prompt, which had already drifted apart. They
 # now share these builders so an accuracy fix lands once instead of three times.
 
-ACTION_TYPES = ["click", "type", "scroll", "select", "submit", "wait", "finish"]
+# DOM-level actions, executed by the content script against a target element.
+DOM_ACTION_TYPES = ["click", "type", "scroll", "select", "submit", "wait"]
+
+# Browser-level actions, executed by the service worker via chrome.tabs. These
+# take a URL or a tab ref in `value` rather than a page element, and were the
+# capability gap that forced the agent to solve every task inside one viewport.
+BROWSER_ACTION_TYPES = ["navigate", "new_tab", "switch_tab", "close_tab", "go_back"]
+
+ACTION_TYPES = DOM_ACTION_TYPES + BROWSER_ACTION_TYPES + ["finish"]
 
 # Structured-output schema. Gemini enforces this server-side, so an action with
 # an invalid `type` or a missing field becomes impossible rather than something
@@ -344,10 +367,25 @@ ACTION_RESPONSE_SCHEMA = {
         },
         "value": {
             "type": "STRING",
-            "description": "Text to type, option to select, or scroll direction (down/up).",
+            "description": (
+                "Text to type, option to select, scroll direction (down/up), "
+                "a full https:// URL for navigate/new_tab, or the tab number for switch_tab."
+            ),
         },
         "explanation": {"type": "STRING"},
         "confidence": {"type": "NUMBER"},
+        "plan": {
+            "type": "ARRAY",
+            "description": (
+                "On step 1 ONLY: the 3-6 checkpoints this task needs, in order. "
+                "Omit on later steps - the established plan is replayed back to you."
+            ),
+            "items": {"type": "STRING"},
+        },
+        "plan_step": {
+            "type": "INTEGER",
+            "description": "1-based index of the plan checkpoint this action works toward.",
+        },
         "result": {
             "type": "OBJECT",
             "description": "The ANSWER to the user's request. Required on finish; omit otherwise.",
@@ -502,6 +540,152 @@ def build_history_text(history: Optional[List[Dict[str, Any]]], full_detail: boo
     return "\n\nPrevious Actions Executed in this Session:\n" + "\n".join(lines)
 
 
+def build_plan_text(plan: Optional[List[str]], plan_step: Optional[int]) -> str:
+    """
+    Replays the task plan with the current checkpoint marked.
+
+    Without this the model re-derives its intent from a single screenshot every
+    turn, which is how "compare three, then check delivery" decays into "type a
+    query, scroll twice, pick the first thing".
+    """
+    if not plan:
+        return ""
+    current = plan_step if isinstance(plan_step, int) and plan_step > 0 else 1
+    lines = []
+    for i, item in enumerate(plan[:8], start=1):
+        if i < current:
+            marker = "[done]   "
+        elif i == current:
+            marker = "[NOW]    "
+        else:
+            marker = "[pending]"
+        lines.append(f"  {marker} {i}. {str(item)[:120]}")
+    return (
+        "\n\nYour Plan For This Task (established on step 1 - keep working it, "
+        "and advance plan_step when a checkpoint is met):\n" + "\n".join(lines)
+    )
+
+
+# Words that carry no discriminating power when matching a plan checkpoint
+# against page elements.
+_CHECKPOINT_STOPWORDS = frozenset("""
+a an and are as at be by check for from in into is it its of on or that the
+their then there these this to use user users with your top best good find
+step page site results result option options
+""".split())
+
+
+def build_checkpoint_hint(
+    plan: Optional[List[str]],
+    plan_step: Optional[int],
+    digest: List[Dict[str, Any]],
+) -> str:
+    """
+    Names the element that would complete the current checkpoint, if one is on
+    the page.
+
+    Prose rules alone ("finish the checkpoint with what is on this page") were
+    not enough for the smaller models: with a pincode field sitting in the
+    element list and a plan checkpoint reading 'Check deliverability to the
+    user's pincode', they still clicked through to a product. Doing the match
+    here and pointing at a specific ref turns a hope into an instruction.
+    """
+    if not plan or not digest:
+        return ""
+
+    index = plan_step if isinstance(plan_step, int) and plan_step > 0 else 1
+    if index > len(plan):
+        return ""
+    checkpoint = str(plan[index - 1])
+
+    words = {
+        w for w in re.findall(r"[a-z]{3,}", checkpoint.lower())
+        if w not in _CHECKPOINT_STOPWORDS
+    }
+    if not words:
+        return ""
+
+    best, best_score = None, 0
+    for entry in digest:
+        haystack = " ".join(
+            str(entry.get(k, "")) for k in ("text", "placeholder", "aria_label", "name", "type")
+        ).lower()
+        if not haystack.strip():
+            continue
+        # Substring rather than token equality, so 'deliverability' matches
+        # 'Enter Delivery Pincode' via the shared 'deliver' stem.
+        score = sum(1 for w in words if w[:6] in haystack)
+        if score > best_score:
+            best, best_score = entry, score
+
+    if not best or best_score < 1:
+        return ""
+
+    label = (
+        best.get("text") or best.get("placeholder")
+        or best.get("aria_label") or best.get("name") or best.get("tag")
+    )
+    return (
+        f"\n\nCHECKPOINT MATCH: your current checkpoint is \"{checkpoint[:100]}\". "
+        f"Element ref {best.get('ref')} ({best.get('tag')} \"{str(label)[:60]}\") on THIS page "
+        f"matches it. Act on that element this turn unless it is genuinely wrong - do not "
+        f"navigate away from a checkpoint you can complete here."
+    )
+
+
+def build_page_content_text(rows: Optional[List[Dict[str, Any]]]) -> str:
+    """
+    Renders the result rows read from the page.
+
+    This is what lets the model compare rather than guess: the element digest
+    truncates every label to 90 characters and carries no price, rating or
+    delivery text at all, so "find me a bassy speaker under 3000" had nothing to
+    reason over and degenerated into scrolling.
+    """
+    if not rows:
+        return ""
+
+    lines = []
+    for row in rows[:24]:
+        parts = []
+        ref = row.get("ref")
+        parts.append(f"ref {ref}" if ref is not None else "ref -")
+        parts.append(str(row.get("title") or "")[:110])
+        for key, prefix in (("price", ""), ("rating", "rated "), ("reviews", "reviews ")):
+            val = str(row.get(key) or "").strip()
+            if val:
+                parts.append(f"{prefix}{val}")
+        for key in ("delivery", "badge"):
+            val = str(row.get(key) or "").strip()
+            if val:
+                parts.append(val)
+        if not row.get("on_screen"):
+            parts.append("(needs scrolling)")
+        lines.append("  - " + " | ".join(parts))
+
+    return (
+        "\n\nResults Visible On This Page (read these instead of guessing; "
+        "`ref` is the element to act on):\n" + "\n".join(lines)
+    )
+
+
+def build_tabs_text(open_tabs: Optional[List[Dict[str, Any]]]) -> str:
+    """Renders the open tabs so switch_tab / close_tab have addressable targets."""
+    if not open_tabs:
+        return ""
+    lines = []
+    for t in open_tabs[:12]:
+        marker = " (active)" if t.get("active") else ""
+        lines.append(
+            f"  - tab {t.get('index')}{marker}: {str(t.get('title') or '')[:70]}"
+            f"  [{str(t.get('url') or '')[:70]}]"
+        )
+    return (
+        "\n\nOpen Browser Tabs (use the tab number as `value` for switch_tab / close_tab):\n"
+        + "\n".join(lines)
+    )
+
+
 def build_telemetry_text(structured_data: Optional[Dict[str, Any]]) -> str:
     if not structured_data:
         return ""
@@ -528,10 +712,24 @@ SEARCH_HINTS = ("find", "search", "look up", "lookup", "research", "who ", "what
 TASK_GUIDANCE = {
     "shopping": (
         "TASK TYPE - SHOPPING / PRODUCT COMPARISON:\n"
-        "- If a search has already run, results are on screen: read the visible products, prices and ratings rather than searching again.\n"
-        "- Use scroll (value 'down') to reveal more results before concluding.\n"
-        "- Open a product only when you need specifications the listing does not show.\n"
-        "- Finish with the pick, its exact price and rating, and why it beats the alternatives.\n"
+        "Work the site the way a careful shopper would, in this order:\n"
+        "1. SEARCH with the specific product words, not the user's whole sentence. "
+        "'find me a good speaker, need it bassy' searches for 'bluetooth speaker', "
+        "then you narrow by bass - a literal search for 'bassy speaker' returns little.\n"
+        "2. USE THE SITE'S OWN CONTROLS. Sort and filter (price range, brand, rating, "
+        "'Extra Bass'/'Deep Bass' feature filters, Assured/Prime badges) instead of scrolling. "
+        "A filter beats ten scrolls and gives a defensible shortlist.\n"
+        "3. CHECK DELIVERABILITY when the user's location matters. If a pincode or "
+        "'Deliver to' field is present, type {{VAULT:address.pincode}} into it exactly as written - "
+        "it is a placeholder that is resolved on the user's device, so never substitute a real "
+        "number and never guess one.\n"
+        "4. COMPARE AT LEAST 3 candidates before deciding. Open a promising item with new_tab so "
+        "the results page stays intact, read its specs, then switch_tab back. Do not settle for "
+        "the first result.\n"
+        "5. WEIGH THE USER'S ACTUAL PREFERENCE. A product that explicitly advertises what they "
+        "asked for outranks one that merely has a higher rating.\n"
+        "6. FINISH with your pick, its exact price and rating, the alternatives you rejected, and "
+        "whether delivery was confirmed.\n"
     ),
     "form": (
         "TASK TYPE - FORM FILLING:\n"
@@ -648,10 +846,35 @@ def build_system_instruction(
         "Refs are renumbered every step, so only ever use refs from the CURRENT list. "
         "Identify an element by its text, placeholder, aria_label or role - most real pages set no id at all, "
         "and a missing dom_id is never a reason to avoid an element.\n",
-        "2. target_ref is required for click, type, select and submit. Leave it empty for scroll, wait and finish.\n",
+        "2. target_ref is required for click, type, select and submit. Leave it empty for scroll, "
+        "wait, finish and every browser-level action.\n",
+        "2b. BROWSER-LEVEL ACTIONS - you are not confined to the current page:\n"
+        "   navigate    -> value = full https:// URL, loads it in the CURRENT tab\n"
+        "   new_tab     -> value = full https:// URL, opens it in a NEW tab and switches to it\n"
+        "   switch_tab  -> value = tab number from 'Open Browser Tabs'\n"
+        "   close_tab   -> value = tab number, or empty for the current tab\n"
+        "   go_back     -> returns to the previous page in this tab\n"
+        "   Use new_tab to inspect a product, article or record without losing the results page "
+        "you are working from, then switch_tab back to continue. Prefer a site's own search URL "
+        "over clicking through a homepage when you already know the query.\n",
         "3. DO NOT REPEAT A FAILED OR NO-EFFECT ACTION. Every prior step is marked 'ok', 'FAILED' or 'NO EFFECT'. "
         "A step with no effect means that approach does not work on this page - choose a different element or strategy.\n",
         "4. Exactly one action per turn. Prefer the most direct route to the goal.\n",
+        "4b. PLAN: on step 1, also return `plan` - the 3-6 checkpoints this task needs, in order, "
+        "following the TASK TYPE guidance below. On every later step omit `plan` (it is replayed "
+        "back to you) and set `plan_step` to the checkpoint you are working on, advancing it as "
+        "each is met. Work the plan; do not abandon it because one page looks convenient.\n",
+        "4c. FINISH THE CURRENT CHECKPOINT WITH WHAT IS ON THIS PAGE. If an element in the list "
+        "can complete the checkpoint marked [NOW] - a pincode field for a delivery check, a filter "
+        "for a narrowing step, a sort control for a ranking step - use it THIS TURN. Navigating "
+        "elsewhere first abandons a checkpoint you were one action away from completing.\n",
+        "4d. OPEN DETAIL PAGES WITH new_tab, NOT click. Clicking a result destroys the results "
+        "page you still need; new_tab keeps it, and switch_tab brings you back. "
+        "To open a link that is ALREADY in the element list, set target_ref to that element and "
+        "leave value empty - the browser reads its real address. NEVER invent a URL path; a "
+        "plausible-looking product URL you assembled yourself is a 404 and a wasted step. "
+        "Put a URL in value only for an address you actually know, such as a site's documented "
+        "search URL.\n",
         "5. FINISH as soon as the goal is met. On finish you MUST fill `result` with the actual "
         "answer - result.summary in plain language, result.recommendation naming the single best "
         "option, and result.candidates listing what you compared. The user sees `result`, not the "
@@ -665,11 +888,13 @@ def build_system_instruction(
     parts.append("\n" + TASK_GUIDANCE[detect_task_kind(task)])
     parts.append(
         "\nOUTPUT FORMAT - reply with exactly this JSON object and nothing else:\n"
-        '{"type": "click|type|scroll|select|submit|wait|finish", '
+        '{"type": "click|type|scroll|select|submit|wait|navigate|new_tab|switch_tab|close_tab|go_back|finish", '
         '"target_ref": "ref number of one element from the list, or empty for scroll/wait/finish", '
         '"value": "text to type, option to select, or down/up for scroll", '
         '"explanation": "why this action moves the goal forward", '
         '"confidence": 0.0-1.0, '
+        '"plan": ["checkpoint 1", "checkpoint 2", ...],  // step 1 only '
+        '"plan_step": 2, '
         '"result": {"summary": "...", "recommendation": "...", "candidates": [...]}  // finish only\n'
     )
     return "".join(parts)
@@ -738,8 +963,58 @@ def resolve_action_target(raw: Dict[str, Any], elements: List[DOMElement]):
     return candidate, False
 
 
-# Actions that are meaningless without a target. scroll / wait / finish are not.
+# Actions that are meaningless without a target. scroll / wait / finish are not,
+# and neither are the browser-level actions, which address a URL or a tab.
 TARGETED_ACTIONS = {"click", "type", "select", "submit"}
+
+# Only ordinary web navigation is allowed. javascript:, data:, blob: and file:
+# are all real escalation paths -- javascript: would execute attacker-authored
+# script in the page's origin, and file: would hand the agent the local disk.
+SAFE_URL_SCHEMES = ("http://", "https://")
+
+
+def normalise_browser_value(action_type: str, value: Any) -> Tuple[Optional[str], bool, str]:
+    """
+    Validates the `value` of a browser-level action.
+
+    Returns (normalised_value, ok, reason). A rejected action is downgraded to a
+    finish by the caller rather than being passed to chrome.tabs.
+    """
+    raw = str(value or "").strip()
+
+    if action_type == "go_back":
+        return None, True, ""
+
+    if action_type in ("navigate", "new_tab"):
+        if not raw:
+            return None, False, "no URL given"
+
+        # Test for ANY scheme, not just "://". javascript:alert(1) and
+        # data:text/html,... carry no slashes, so a "://" test would call them
+        # scheme-less and helpfully prepend https:// -- turning a rejected URL
+        # into an accepted one.
+        scheme_match = re.match(r"^([a-zA-Z][a-zA-Z0-9+.\-]*):", raw)
+        if scheme_match:
+            if not raw.lower().startswith(SAFE_URL_SCHEMES):
+                return None, False, f"unsupported URL scheme '{scheme_match.group(1)}:'"
+            candidate = raw
+        else:
+            candidate = f"https://{raw}"
+
+        # A bare host must still look like one; "https://not a url" is not.
+        if not re.match(r"^https?://[^\s/]+", candidate, re.IGNORECASE):
+            return None, False, f"'{raw[:60]}' is not a usable URL"
+        return candidate, True, ""
+
+    if action_type in ("switch_tab", "close_tab"):
+        if not raw and action_type == "close_tab":
+            return None, True, ""  # close the current tab
+        digits = re.sub(r"[^0-9]", "", raw)
+        if not digits:
+            return None, False, f"'{raw[:40]}' is not a tab number"
+        return digits, True, ""
+
+    return raw or None, True, ""
 
 TEXT_INPUT_TYPES = {"", "text", "search", "email", "tel", "url", "password", "number", "contenteditable"}
 
@@ -764,6 +1039,127 @@ def pick_fallback_target(action_type: str, elements: List[DOMElement]) -> Option
         if usable(el) and (el.selector or el.id):
             return el.selector or f"#{el.id}"
     return None
+
+
+# Fields whose value is the user's personal data. The planner must never supply
+# one: it has never been told the real value, so anything it produces is a
+# guess. Asked to check delivery, gemini-3.7-flash confidently typed "560001" --
+# a real Bangalore pincode, for a user who may live nowhere near it. That is
+# both fabricated data and a wrong answer, so the value is replaced here with a
+# vault token that only the extension can resolve, on-device.
+PII_FIELD_TOKENS = (
+    (re.compile(r"pin\s?code|postal|\bzip\b", re.I), "address.pincode"),
+    (re.compile(r"\be-?mail\b", re.I), "contact.email"),
+    (re.compile(r"phone|mobile|\btel\b|contact\s?number", re.I), "contact.phone"),
+    (re.compile(r"card\s?number|credit\s?card|debit\s?card", re.I), "financial.card_number"),
+    (re.compile(r"\bcvv\b|\bcvc\b|security\s?code", re.I), "financial.card_cvv"),
+    (re.compile(r"expiry|expiration|\bexp\b", re.I), "financial.card_expiry"),
+    (re.compile(r"aadhaar|aadhar|\bpan\b|passport|\bssn\b", re.I), "gov_id.number"),
+    (re.compile(r"full\s?name|first\s?name|last\s?name|surname|your\s?name|recipient|cardholder",
+                re.I), "personal.name"),
+    (re.compile(r"street|address\s?line|\baddress\b", re.I), "address.street"),
+    (re.compile(r"\bcity\b|\btown\b", re.I), "address.city"),
+    (re.compile(r"password|passcode", re.I), "credentials.password"),
+)
+
+VAULT_TOKEN_RE = re.compile(r"^\{\{VAULT:[a-z0-9_]+\.[a-z0-9_]+\}\}$", re.I)
+
+
+def prefer_page_link(url: str, explanation: str, elements: List[DOMElement]) -> Optional[DOMElement]:
+    """
+    Finds the on-page link the model was really aiming at.
+
+    Telling the model not to invent URLs does not stop it: it keeps assembling
+    plausible product paths (".../p/itmd0cb47e9ca92e") that 404. When the URL it
+    produced clearly refers to a link that IS on the page, the link wins -- the
+    browser then supplies the true address and the guess is discarded. If the URL
+    happened to be real, this opens the same destination anyway.
+    """
+    slug_words = {
+        w for w in re.findall(r"[a-z0-9]{3,}", f"{url} {explanation}".lower())
+        if w not in _CHECKPOINT_STOPWORDS
+        and w not in ("https", "http", "www", "com", "itm", "new", "tab", "open", "inspect")
+    }
+    if not slug_words:
+        return None
+
+    best, best_score = None, 0
+    for el in elements:
+        if el.tag != "a" or not (el.selector or el.id):
+            continue
+        text = str(el.text or "").lower()
+        if not text.strip():
+            continue
+        score = sum(1 for w in re.findall(r"[a-z0-9]{3,}", text) if w in slug_words)
+        if score > best_score:
+            best, best_score = el, score
+
+    # Two shared distinctive words ("boat", "stone") is a match; one is a
+    # coincidence ("speaker" appears in every result).
+    return best if best_score >= 2 else None
+
+
+def find_element_by_selector(selector: Optional[str], elements: List[DOMElement]) -> Optional[DOMElement]:
+    if not selector:
+        return None
+    for el in elements:
+        if el.selector == selector or (el.id and f"#{el.id}" == selector):
+            return el
+    return None
+
+
+def coerce_pii_value(element: Optional[DOMElement], value: Any) -> Tuple[Any, Optional[str]]:
+    """
+    Replaces a model-supplied value with a vault token when the target field asks
+    for personal data.
+
+    Returns (value, note). `note` is non-None when a substitution happened, so the
+    caller can say so in the explanation rather than swapping it silently.
+    """
+    if element is None:
+        return value, None
+
+    text = str(value or "")
+    if VAULT_TOKEN_RE.match(text.strip()):
+        return value, None  # already a token; nothing to do
+
+    haystack = " ".join(
+        str(v or "") for v in (
+            element.name, element.id, element.placeholder,
+            element.aria_label, element.text, element.type,
+        )
+    )
+    if not haystack.strip():
+        return value, None
+
+    for pattern, token_path in PII_FIELD_TOKENS:
+        if pattern.search(haystack):
+            token = "{{VAULT:%s}}" % token_path
+            if text.strip() == "":
+                return token, f"filled {token_path} from the vault"
+            return token, (
+                f"replaced a model-supplied value with {token} - "
+                f"this field takes the user's {token_path.split('.')[-1]}, "
+                f"which is resolved on-device"
+            )
+    return value, None
+
+
+def extract_plan(raw: Dict[str, Any]) -> Optional[List[str]]:
+    """Normalises the model's plan into a list of short strings, or None."""
+    plan = raw.get("plan")
+    if not isinstance(plan, list):
+        return None
+    cleaned = [str(item).strip()[:160] for item in plan if str(item).strip()]
+    return cleaned[:8] or None
+
+
+def extract_plan_step(raw: Dict[str, Any]) -> Optional[int]:
+    try:
+        step = int(raw.get("plan_step"))
+    except (TypeError, ValueError):
+        return None
+    return step if step > 0 else None
 
 
 def build_synthesis_output(raw: Dict[str, Any], provider_label: str) -> ActionOutput:
@@ -793,9 +1189,65 @@ def build_action_output(raw: Dict[str, Any], elements: List[DOMElement], provide
     if action_type not in ACTION_TYPES:
         action_type = "finish"
 
-    selector, matched = resolve_action_target(raw, elements)
     confidence = float(raw.get("confidence") or 0.9)
     explanation = str(raw.get("explanation") or "Action planned.")
+
+    if action_type in BROWSER_ACTION_TYPES:
+        # new_tab may name a LINK ON THE PAGE instead of a URL. Asked to open a
+        # search result, the model produced
+        # ".../boat-stone-1200f.../p/itm5a840c5f0a374" -- correct in shape,
+        # entirely invented, and a guaranteed 404. When it names a ref instead,
+        # the browser reads the element's real href and no URL is guessed.
+        if action_type == "new_tab" and (raw.get("target_ref") or raw.get("target_id")):
+            link_selector, link_matched = resolve_action_target(raw, elements)
+            if link_matched and link_selector:
+                return ActionOutput(
+                    type="new_tab",
+                    selector=link_selector,
+                    value=None,  # extension resolves the href on-device
+                    explanation=f"[{provider_label}] {explanation}",
+                    confidence=confidence,
+                    plan=extract_plan(raw),
+                    plan_step=extract_plan_step(raw),
+                )
+
+        # A URL it wrote itself, when the link is right there in the list.
+        if action_type == "new_tab" and raw.get("value"):
+            link_el = prefer_page_link(str(raw.get("value")), explanation, elements)
+            if link_el is not None:
+                return ActionOutput(
+                    type="new_tab",
+                    selector=link_el.selector or f"#{link_el.id}",
+                    value=None,
+                    explanation=(
+                        f"[{provider_label}] [opening the matching link on the page "
+                        f"instead of a reconstructed URL] {explanation}"
+                    ),
+                    confidence=confidence,
+                    plan=extract_plan(raw),
+                    plan_step=extract_plan_step(raw),
+                )
+
+        # Otherwise it is a URL, and must be an ordinary web one.
+        value, ok, reason = normalise_browser_value(action_type, raw.get("value"))
+        if not ok:
+            return ActionOutput(
+                type="finish",
+                explanation=f"[{provider_label}] [rejected {action_type}: {reason}] {explanation}",
+                confidence=0.2,
+                result={"summary": f"Could not {action_type.replace('_', ' ')}: {reason}"},
+            )
+        return ActionOutput(
+            type=action_type,
+            selector=None,
+            value=value,
+            explanation=f"[{provider_label}] {explanation}",
+            confidence=confidence,
+            plan=extract_plan(raw),
+            plan_step=extract_plan_step(raw),
+        )
+
+    selector, matched = resolve_action_target(raw, elements)
 
     if selector is None and action_type in TARGETED_ACTIONS:
         # The model named no target at all for an action that cannot work
@@ -817,6 +1269,15 @@ def build_action_output(raw: Dict[str, Any], elements: List[DOMElement], provide
         confidence = min(confidence, 0.35)
         explanation = f"[unverified target '{selector}'] {explanation}"
 
+    value = raw.get("value")
+    if action_type in ("type", "select"):
+        # Enforced, not requested: the prompt already tells the model to use a
+        # vault placeholder for personal data, and it still invents plausible
+        # values. Personal data reaches the page from the vault or not at all.
+        value, note = coerce_pii_value(find_element_by_selector(selector, elements), value)
+        if note:
+            explanation = f"[{note}] {explanation}"
+
     result = raw.get("result")
     if action_type == "finish" and not isinstance(result, dict):
         # Guarantee the caller always has something to show, even from a model
@@ -826,10 +1287,12 @@ def build_action_output(raw: Dict[str, Any], elements: List[DOMElement], provide
     return ActionOutput(
         type=action_type,
         selector=selector,
-        value=raw.get("value"),
+        value=value,
         explanation=f"[{provider_label}] {explanation}",
         confidence=confidence,
         result=result if isinstance(result, dict) else None,
+        plan=extract_plan(raw),
+        plan_step=extract_plan_step(raw),
     )
 
 
@@ -843,6 +1306,10 @@ async def try_ollama_qwen(
     structured_data: Optional[Dict[str, Any]] = None,
     synthesize_only: bool = False,
     stop_reason: Optional[str] = None,
+    open_tabs: Optional[List[Dict[str, Any]]] = None,
+    plan: Optional[List[str]] = None,
+    plan_step: Optional[int] = None,
+    page_content: Optional[List[Dict[str, Any]]] = None,
     attempts: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[ActionOutput]:
     """
@@ -875,11 +1342,15 @@ async def try_ollama_qwen(
     history_text = build_history_text(history, full_detail=synthesize_only)
 
     telemetry_text = build_telemetry_text(structured_data)
+    tabs_text = build_tabs_text(open_tabs)
+    plan_text = build_plan_text(plan, plan_step)
+    content_text = build_page_content_text(page_content)
+    checkpoint_hint = build_checkpoint_hint(plan, plan_step, elements_digest)
 
     system_prompt = build_system_instruction(task, step, max_steps, bool(structured_data),
                                             synthesize_only=synthesize_only, stop_reason=stop_reason)
 
-    user_prompt = f"User Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
+    user_prompt = f"User Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"
 
     payload = {
         "model": model,
@@ -933,6 +1404,10 @@ async def try_gemini(
     structured_data: Optional[Dict[str, Any]] = None,
     synthesize_only: bool = False,
     stop_reason: Optional[str] = None,
+    open_tabs: Optional[List[Dict[str, Any]]] = None,
+    plan: Optional[List[str]] = None,
+    plan_step: Optional[int] = None,
+    page_content: Optional[List[Dict[str, Any]]] = None,
     attempts: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[ActionOutput]:
     """
@@ -949,12 +1424,16 @@ async def try_gemini(
     history_text = build_history_text(history, full_detail=synthesize_only)
 
     telemetry_text = build_telemetry_text(structured_data)
+    tabs_text = build_tabs_text(open_tabs)
+    plan_text = build_plan_text(plan, plan_step)
+    content_text = build_page_content_text(page_content)
+    checkpoint_hint = build_checkpoint_hint(plan, plan_step, elements_digest)
 
     system_instruction = build_system_instruction(task, step, max_steps, bool(structured_data),
                                             synthesize_only=synthesize_only, stop_reason=stop_reason)
 
     parts: List[Dict[str, Any]] = [
-        {"text": f"{system_instruction}\n\nUser Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"}
+        {"text": f"{system_instruction}\n\nUser Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"}
     ]
 
     if image_base64 and len(image_base64) > 100:
@@ -1056,6 +1535,10 @@ async def try_openai(
     structured_data: Optional[Dict[str, Any]] = None,
     synthesize_only: bool = False,
     stop_reason: Optional[str] = None,
+    open_tabs: Optional[List[Dict[str, Any]]] = None,
+    plan: Optional[List[str]] = None,
+    plan_step: Optional[int] = None,
+    page_content: Optional[List[Dict[str, Any]]] = None,
     attempts: Optional[List[Dict[str, Any]]] = None,
 ) -> Optional[ActionOutput]:
     """
@@ -1073,15 +1556,19 @@ async def try_openai(
     history_text = build_history_text(history, full_detail=synthesize_only)
 
     telemetry_text = build_telemetry_text(structured_data)
+    tabs_text = build_tabs_text(open_tabs)
+    plan_text = build_plan_text(plan, plan_step)
+    content_text = build_page_content_text(page_content)
+    checkpoint_hint = build_checkpoint_hint(plan, plan_step, elements_digest)
 
     system_prompt = build_system_instruction(task, step, max_steps, bool(structured_data),
                                             synthesize_only=synthesize_only, stop_reason=stop_reason)
 
-    user_content: Any = f"User Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"
+    user_content: Any = f"User Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"
     if image_base64 and len(image_base64) > 100:
         clean_b64 = image_base64 if image_base64.startswith("data:") else f"data:image/jpeg;base64,{image_base64}"
         user_content = [
-            {"type": "text", "text": f"User Instruction: {task}{history_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}"},
+            {"type": "text", "text": f"User Instruction: {task}{plan_text}{content_text}{history_text}{tabs_text}{telemetry_text}\n\nInteractive Page Elements:\n{json.dumps(elements_digest, indent=2)}{checkpoint_hint}"},
             {"type": "image_url", "image_url": {"url": clean_b64, "detail": "low"}}
         ]
 
@@ -1454,6 +1941,10 @@ async def act_endpoint(payload: ActRequest):
             structured_data=payload.structured_data,
             synthesize_only=bool(payload.synthesize_only),
             stop_reason=payload.stop_reason,
+            open_tabs=payload.open_tabs,
+            plan=payload.plan,
+            plan_step=payload.plan_step,
+            page_content=payload.page_content,
             attempts=attempts,
         )
         if action:
@@ -1472,6 +1963,10 @@ async def act_endpoint(payload: ActRequest):
             structured_data=payload.structured_data,
             synthesize_only=bool(payload.synthesize_only),
             stop_reason=payload.stop_reason,
+            open_tabs=payload.open_tabs,
+            plan=payload.plan,
+            plan_step=payload.plan_step,
+            page_content=payload.page_content,
             attempts=attempts,
         )
         if action:
@@ -1490,6 +1985,10 @@ async def act_endpoint(payload: ActRequest):
             structured_data=payload.structured_data,
             synthesize_only=bool(payload.synthesize_only),
             stop_reason=payload.stop_reason,
+            open_tabs=payload.open_tabs,
+            plan=payload.plan,
+            plan_step=payload.plan_step,
+            page_content=payload.page_content,
             attempts=attempts,
         )
         if action:

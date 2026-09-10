@@ -14,11 +14,16 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), ".."
 from app import (  # noqa: E402
     ACTION_RESPONSE_SCHEMA,
     ACTION_TYPES,
+    BROWSER_ACTION_TYPES,
     DOMElement,
     build_action_output,
+    build_checkpoint_hint,
     build_elements_digest,
     build_history_text,
+    build_page_content_text,
+    build_plan_text,
     build_system_instruction,
+    build_tabs_text,
     detect_task_kind,
     resolve_action_target,
 )
@@ -169,6 +174,188 @@ check("invalid action type falls back to finish", weird.type == "finish")
 
 missing = build_action_output({}, elements, "Qwen")
 check("empty response does not crash", missing.type == "finish")
+
+print("\nbrowser-level actions")
+nav = build_action_output({"type": "navigate", "value": "https://www.flipkart.com/search?q=speaker",
+                           "explanation": "go to results", "confidence": 0.9}, elements, "Gemini")
+check("navigate keeps its type", nav.type == "navigate")
+check("navigate carries the URL", nav.value == "https://www.flipkart.com/search?q=speaker")
+check("navigate takes no DOM selector", nav.selector is None)
+check("navigate is not flagged as a bad target", "unverified target" not in nav.explanation)
+
+bare = build_action_output({"type": "new_tab", "value": "flipkart.com/x", "explanation": "open",
+                            "confidence": 0.9}, elements, "Gemini")
+check("scheme-less host is upgraded to https", bare.value == "https://flipkart.com/x")
+
+# Security boundary: only ordinary web navigation may reach chrome.tabs.
+for scheme in ("javascript:alert(1)", "data:text/html,<script>x</script>",
+               "file:///C:/Users/fredd/.ssh/id_rsa", "chrome://settings"):
+    blocked = build_action_output({"type": "navigate", "value": scheme, "explanation": "go",
+                                   "confidence": 0.9}, elements, "Gemini")
+    check(f"refuses {scheme.split(':')[0]}: URLs",
+          blocked.type == "finish" and "rejected navigate" in blocked.explanation)
+
+nourl = build_action_output({"type": "navigate", "explanation": "go", "confidence": 0.9}, elements, "Gemini")
+check("navigate with no URL is refused", nourl.type == "finish" and "no URL given" in nourl.explanation)
+
+tab = build_action_output({"type": "switch_tab", "value": "tab 3", "explanation": "back to results",
+                           "confidence": 0.9}, elements, "Gemini")
+check("switch_tab extracts the tab number", tab.value == "3")
+
+badtab = build_action_output({"type": "switch_tab", "value": "the results one", "explanation": "x",
+                              "confidence": 0.9}, elements, "Gemini")
+check("non-numeric tab ref is refused", badtab.type == "finish" and "not a tab number" in badtab.explanation)
+
+back = build_action_output({"type": "go_back", "explanation": "return", "confidence": 0.9}, elements, "Gemini")
+check("go_back needs no value", back.type == "go_back" and back.value is None)
+
+# A new_tab naming a page link must NOT carry a model-authored URL: the browser
+# reads the element's real href instead. Asked to open a search result,
+# gemini-3.5-flash-lite produced a correctly-shaped but wholly invented
+# ".../p/itm5a840c5f0a374" path.
+results = [
+    el(id="", tag="a", text="boAt Stone 1200F", selector='[data-agent-id="1"]'),
+    el(id="", tag="a", text="Sony SRS-XB100", selector='[data-agent-id="2"]'),
+]
+byref = build_action_output({"type": "new_tab", "target_ref": "1", "explanation": "inspect specs",
+                             "confidence": 0.9}, results, "Gemini")
+check("new_tab by ref keeps the element selector", byref.selector == '[data-agent-id="2"]')
+check("new_tab by ref carries no guessed URL", byref.value is None)
+check("new_tab by ref stays a new_tab", byref.type == "new_tab")
+
+# A ref the model invented must not silently become a link-open.
+badref = build_action_output({"type": "new_tab", "target_ref": "99", "value": "https://example.com/x",
+                              "explanation": "open", "confidence": 0.9}, results, "Gemini")
+check("unresolvable ref falls back to the URL path", badref.value == "https://example.com/x")
+
+# The observed behaviour: it ignores target_ref and writes a URL anyway. When
+# that URL clearly refers to a link on the page, the real link must win.
+invented = build_action_output(
+    {"type": "new_tab",
+     "value": "https://www.flipkart.com/boat-stone-1200f-14w-bluetooth-speaker/p/itmd0cb47e9ca92e",
+     "explanation": "Opening the first candidate (boAt Stone 1200F) to inspect details",
+     "confidence": 0.9},
+    results, "Gemini")
+check("invented product URL is replaced by the page link",
+      invented.selector == '[data-agent-id="1"]' and invented.value is None)
+check("the substitution is disclosed", "instead of a reconstructed URL" in invented.explanation)
+
+# A genuinely unrelated destination must still be allowed through as a URL.
+offsite = build_action_output(
+    {"type": "new_tab", "value": "https://www.rtings.com/speaker/reviews/best/bass",
+     "explanation": "Check independent bass measurements", "confidence": 0.9},
+    results, "Gemini")
+check("an unrelated URL is left alone", offsite.value == "https://www.rtings.com/speaker/reviews/best/bass")
+
+# One shared generic word is a coincidence, not a match.
+weak = build_action_output(
+    {"type": "new_tab", "value": "https://example.com/speaker-guide",
+     "explanation": "read a speaker guide", "confidence": 0.9},
+    results, "Gemini")
+check("a single generic word does not trigger substitution",
+      weak.value == "https://example.com/speaker-guide")
+
+print("\nPII field enforcement  (the model must never supply personal data)")
+pii_page = [
+    el(id="", tag="input", name="pincode", placeholder="Enter Delivery Pincode",
+       selector='input[name="pincode"]'),
+    el(id="", tag="input", name="email", placeholder="Email Address", selector='input[name="email"]'),
+    el(id="", tag="input", name="cardnum", placeholder="Card Number", selector='input[name="cardnum"]'),
+    el(id="", tag="input", name="fullname", placeholder="Full Name", selector='input[name="fullname"]'),
+    el(id="", tag="input", name="q", placeholder="Search products", selector='input[name="q"]'),
+]
+
+# The real observed failure: asked to check delivery, the model typed a real
+# Bangalore pincode it had invented.
+pin = build_action_output({"type": "type", "target_ref": "0", "value": "560001",
+                           "explanation": "check delivery", "confidence": 0.9}, pii_page, "Gemini")
+check("invented pincode is replaced by a vault token", pin.value == "{{VAULT:address.pincode}}")
+check("substitution is disclosed, not silent", "replaced a model-supplied value" in pin.explanation)
+
+for ref, guess, token in (
+    ("1", "someone@example.com", "{{VAULT:contact.email}}"),
+    ("2", "4111111111111111", "{{VAULT:financial.card_number}}"),
+    ("3", "Priya Nair", "{{VAULT:personal.name}}"),
+):
+    out = build_action_output({"type": "type", "target_ref": ref, "value": guess,
+                               "explanation": "fill", "confidence": 0.9}, pii_page, "Gemini")
+    check(f"invented value for {token} is replaced", out.value == token)
+
+# A non-PII field must be left completely alone.
+search = build_action_output({"type": "type", "target_ref": "4", "value": "extra bass speaker",
+                              "explanation": "search", "confidence": 0.9}, pii_page, "Gemini")
+check("ordinary search text is untouched", search.value == "extra bass speaker")
+check("ordinary field gets no substitution note", "replaced a model-supplied" not in search.explanation)
+
+# An already-correct token passes through unchanged and unremarked.
+good = build_action_output({"type": "type", "target_ref": "0", "value": "{{VAULT:address.pincode}}",
+                            "explanation": "check delivery", "confidence": 0.9}, pii_page, "Gemini")
+check("an existing vault token is left as-is", good.value == "{{VAULT:address.pincode}}")
+check("no note when nothing was substituted", "replaced a model-supplied" not in good.explanation)
+
+# An empty PII field still gets the token rather than being left blank.
+blank = build_action_output({"type": "type", "target_ref": "1", "explanation": "fill",
+                             "confidence": 0.9}, pii_page, "Gemini")
+check("empty PII field is filled from the vault", blank.value == "{{VAULT:contact.email}}")
+
+# Clicks carry no value, so nothing should be coerced onto them.
+clicked = build_action_output({"type": "click", "target_ref": "0", "explanation": "focus",
+                               "confidence": 0.9}, pii_page, "Gemini")
+check("click is not given a vault value", clicked.value is None)
+
+print("\nbuild_checkpoint_hint")
+digest_now = build_elements_digest(pii_page)
+hint = build_checkpoint_hint(
+    ["Search for speakers", "Check deliverability to the user's pincode", "Compare"], 2, digest_now)
+check("names the element that completes the checkpoint", "ref 0" in hint)
+check("quotes the checkpoint it matched", "deliverability" in hint)
+check("no plan means no hint", build_checkpoint_hint(None, 1, digest_now) == "")
+check("out-of-range plan_step is safe", build_checkpoint_hint(["a"], 9, digest_now) == "")
+check("an unmatched checkpoint produces no hint",
+      build_checkpoint_hint(["Reticulate the splines"], 1, digest_now) == "")
+
+print("\nbuild_plan_text")
+ptext = build_plan_text(["search", "filter", "compare", "recommend"], 3)
+check("completed checkpoints are marked done", ptext.count("[done]") == 2)
+check("current checkpoint is marked NOW", "[NOW]" in ptext)
+check("later checkpoints are pending", "[pending]" in ptext)
+check("no plan renders nothing", build_plan_text(None, 1) == "" and build_plan_text([], 1) == "")
+
+print("\nbuild_page_content_text")
+content = build_page_content_text([
+    {"ref": 3, "on_screen": True, "title": "boAt Stone 1200F 14W", "price": "Rs 2,499",
+     "rating": "4.3", "reviews": "12,455", "delivery": "Free Delivery", "badge": "Assured"},
+    {"ref": 4, "on_screen": False, "title": "Sony SRS-XB100 Extra Bass", "price": "Rs 3,490",
+     "rating": "4.4", "reviews": "5,003", "delivery": "", "badge": ""},
+])
+check("rows are addressable by ref", "ref 3" in content and "ref 4" in content)
+check("prices reach the model", "2,499" in content and "3,490" in content)
+check("ratings reach the model", "rated 4.3" in content)
+check("review counts reach the model", "12,455" in content)
+check("delivery text reaches the model", "Free Delivery" in content)
+check("off-screen rows are flagged for scrolling", "(needs scrolling)" in content)
+check("on-screen rows are not flagged", content.count("(needs scrolling)") == 1)
+check("a row without a ref still renders", "ref -" in build_page_content_text([{"title": "x"}]))
+check("empty content renders nothing",
+      build_page_content_text([]) == "" and build_page_content_text(None) == "")
+check("row count is capped",
+      build_page_content_text([{"ref": i, "title": f"t{i}"} for i in range(100)]).count("\n  - ") == 24)
+
+print("\nbuild_tabs_text")
+tabs_text = build_tabs_text([
+    {"index": 1, "title": "Flipkart speakers", "url": "https://www.flipkart.com/search", "active": True},
+    {"index": 2, "title": "boAt Stone 1200F", "url": "https://www.flipkart.com/boat", "active": False},
+])
+check("tabs are numbered", "tab 1" in tabs_text and "tab 2" in tabs_text)
+check("active tab is marked", "(active)" in tabs_text)
+check("empty tab list renders nothing", build_tabs_text([]) == "" and build_tabs_text(None) == "")
+
+print("\nbuild_system_instruction  (browser actions)")
+shopping_now = build_system_instruction("best bassy speaker", 1, 25)
+check("prompt documents new_tab", "new_tab" in shopping_now)
+check("prompt documents switch_tab", "switch_tab" in shopping_now)
+check("action vocabulary includes browser actions",
+      set(BROWSER_ACTION_TYPES).issubset(set(ACTION_TYPES)))
 
 print("\nbuild_history_text  (outcome feedback)")
 text = build_history_text([

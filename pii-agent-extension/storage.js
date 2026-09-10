@@ -21,6 +21,7 @@ export const DEFAULT_SETTINGS = {
     contactInfo: true,
     faces: true,
     screens: true,
+    names: true,   // Layer G: person names in form fields and OCR'd text
   },
 
   // Server & VLM Backend
@@ -50,6 +51,12 @@ export const DEFAULT_SETTINGS = {
   // Perception toggles
   ocrEnabled: true,       // L2C: Tesseract OCR pass over candidate visual regions
   secondPassGuard: true,  // L2D: post-blackout residual verification
+  // OCR coverage. `ocrLanguages` is a "+"-joined Tesseract language list; only
+  // "eng" ships with the extension, so non-Latin scripts are a known blind spot
+  // until the matching .traineddata.gz files are added to lib/tesseract/.
+  ocrLanguages: "eng",
+  ocrMaxRegions: 8,       // was a hard-coded 2, which left most cards unscanned
+  ocrBudgetMs: 2500,      // time budget; skipped regions are logged, never silent
 
   // Developer Observability
   devMode: false,        // Dashboard: reveal model/layer attribution panels

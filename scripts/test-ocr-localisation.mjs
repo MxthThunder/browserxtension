@@ -5,6 +5,7 @@
  * Run: node scripts/test-ocr-localisation.mjs
  */
 import fs from 'node:fs';
+import { findNames } from '../pii-agent-extension/name_detector.js';
 
 const SRC = 'C:/BrowserExt/browserxtension-2-working/pii-agent-extension/offscreen.js';
 const src = fs.readFileSync(SRC, 'utf8');
@@ -14,18 +15,26 @@ const patterns = src.slice(src.indexOf('const OCR_PII_PATTERNS = ['),
                            src.indexOf('];', src.indexOf('const OCR_PII_PATTERNS = [')) + 2);
 const extract = src.slice(src.indexOf('function extractOcrWords'),
                           src.indexOf('\n}\n', src.indexOf('function extractOcrWords')) + 3);
+const nameFn = src.slice(src.indexOf('function matchOcrNames'),
+                         src.indexOf('\n}\n', src.indexOf('function matchOcrNames')) + 3);
+const fullMatchFn = src.slice(src.indexOf('function fullMatch'),
+                              src.indexOf('\n}\n', src.indexOf('function fullMatch')) + 3);
 const ocrFn = src.slice(src.indexOf('async function ocrRegion'),
                         src.indexOf('\n}\n', src.indexOf('async function ocrRegion')) + 3);
 
+// findNames is passed in rather than re-declared, so the harness exercises the
+// real shared detector instead of a copy that could drift from it.
 const harness = `
 let tessWorker = null, tessReady = true;
 const logEvent = () => {};
 ${patterns}
 ${extract}
+${nameFn}
+${fullMatchFn}
 ${ocrFn}
 return { setWorker: (w) => { tessWorker = w; }, ocrRegion };
 `;
-const { setWorker, ocrRegion } = new Function(harness)();
+const { setWorker, ocrRegion } = new Function('findNames', harness)(findNames);
 
 // A figure 900x600 in page coords, with an email and phone rendered inside it.
 const word = (text, x0, y0, x1, y1) => ({ text, bbox: { x0, y0, x1, y1 } });
@@ -79,6 +88,157 @@ check('every box sits inside the region',
   hits.every((h) => h.x >= REGION.x && h.y >= REGION.y
     && h.x + h.w <= REGION.x + REGION.w + 6
     && h.y + h.h <= REGION.y + REGION.h + 6));
+
+// International phone formats: the old 3-3-4-only pattern missed the Indian
+// mobile format (5+5, e.g. "98765 43210") and Korean-style numbers
+// (3-4-4, e.g. "010-1000-0001") — both verified misses on a live test, the
+// Indian one especially significant since it is this product's primary market.
+console.log('\nOCR international phone formats');
+async function phoneBoxFor(numberText, otherWords = []) {
+  const parts = numberText.split(' ');
+  const words = [];
+  let x = 200;
+  for (const part of parts) {
+    words.push(word(part, x, 300, x + part.length * 9, 320));
+    x += part.length * 9 + 6;
+  }
+  setWorker({
+    recognize: async () => ({
+      data: {
+        text: [...otherWords.map((w) => w.text), ...words.map((w) => w.text)].join(' '),
+        blocks: [{ paragraphs: [{ lines: [{ words: [...otherWords, ...words] }] }] }],
+      },
+    }),
+  });
+  const hits = await ocrRegion({ toDataURL: () => 'data:,' }, REGION, {});
+  return hits.find((h) => h.label.includes('Phone'));
+}
+
+const korean = await phoneBoxFor('010-1000-0001');
+check('Korean-style 3-4-4 grouping is detected', Boolean(korean));
+
+const indian = await phoneBoxFor('98765 43210');
+check('Indian mobile 5+5 grouping is detected', Boolean(indian));
+check('the Indian number is boxed as ONE unit, not split across two words',
+  !!indian && indian.w > 60);
+
+const indianWithCC = await phoneBoxFor('+91 98765 43210');
+check('Indian mobile with +91 country code is detected', Boolean(indianWithCC));
+
+// The extension-widening fix, specifically: an area code split into its own
+// OCR word must not be left unboxed just because the rest of the number
+// happens to independently satisfy the (now more permissive) phone pattern.
+const areaCode = word('(415)', 200, 300, 250, 320);
+const localNum = word('555-0123', 256, 300, 340, 320);
+setWorker({
+  recognize: async () => ({
+    data: {
+      text: '(415) 555-0123',
+      blocks: [{ paragraphs: [{ lines: [{ words: [areaCode, localNum] }] }] }],
+    },
+  }),
+});
+const split = (await ocrRegion({ toDataURL: () => 'data:,' }, REGION, {}))
+  .find((h) => h.label.includes('Phone'));
+check('a phone number split across two OCR words is boxed as one unit',
+  !!split && split.x <= REGION.x + areaCode.bbox.x0 && split.x + split.w >= REGION.x + localNum.bbox.x1);
+
+// Growing must not over-extend into an unrelated neighbouring word.
+const orderLabel = word('Order#1234', 100, 300, 190, 320);
+const realNumber = word('555-0123', 256, 300, 340, 320);
+setWorker({
+  recognize: async () => ({
+    data: {
+      text: 'Order#1234 555-0123',
+      blocks: [{ paragraphs: [{ lines: [{ words: [orderLabel, realNumber] }] }] }],
+    },
+  }),
+});
+const guarded = (await ocrRegion({ toDataURL: () => 'data:,' }, REGION, {}))
+  .find((h) => h.label.includes('Phone'));
+check('extension does not swallow an unrelated neighbouring word',
+  !!guarded && guarded.x >= REGION.x + realNumber.bbox.x0 - 5);
+
+// The same number quoted twice on one screen (asked, then echoed back in a
+// confirmation) is a real, verified miss: the pattern loop used to stop at
+// the FIRST occurrence per category per region and never look for a second.
+const askedNumber = word('98765-43210', 200, 60, 300, 80);
+const confirmLabel = word('Confirmed:', 200, 400, 280, 420);
+const echoedNumber = word('98765-43210', 285, 400, 385, 420);
+setWorker({
+  recognize: async () => ({
+    data: {
+      text: 'My number is 98765-43210 ... Confirmed: 98765-43210',
+      blocks: [{ paragraphs: [{ lines: [{
+        words: [askedNumber, confirmLabel, echoedNumber],
+      }] }] }],
+    },
+  }),
+});
+const repeated = (await ocrRegion({ toDataURL: () => 'data:,' }, REGION, {}))
+  .filter((h) => h.label.includes('Phone'));
+check('a phone number repeated twice in one region is boxed both times', repeated.length === 2);
+check('both boxes sit at their own occurrence, not both on the first', (() => {
+  if (repeated.length !== 2) return false;
+  const xs = repeated.map((h) => h.x).sort((a, b) => a - b);
+  return xs[0] < REGION.x + askedNumber.bbox.x0 + 10 && xs[1] > REGION.x + confirmLabel.bbox.x1;
+})());
+
+// Layer G2: the name in this fixture is the case the user reported — "there are
+// some names in the screen, but the capture didnt capture it at all".
+console.log('\nOCR person names');
+const nameHits = hits.filter((h) => h.category === 'names');
+check('the name is detected at all', nameHits.length >= 1);
+
+const person = nameHits[0];
+check('the name box covers the name, not the whole region',
+  !!person && person.w * person.h < regionArea * 0.2);
+check('the name box starts at the name, not its "Person" label',
+  !!person && person.x >= REGION.x + 190);
+check('the name box spans both given and family name',
+  !!person && person.w >= 170 && person.w < 230);
+check('the name is labelled with how it was found',
+  !!person && /OCR: Person Name \((cue|gazetteer)\)/.test(person.label));
+check('name boxes do not overlap the email box', (() => {
+  const e = hits.find((h) => h.label.includes('Email'));
+  if (!e || !person) return false;
+  return person.x + person.w <= e.x || e.x + e.w <= person.x
+      || person.y + person.h <= e.y || e.y + e.h <= person.y;
+})());
+check('the filename in the fixture is not mistaken for a name',
+  !nameHits.some((h) => h.x < REGION.x + 100 && h.y < REGION.y + 60));
+
+// A page with no names must not manufacture one.
+setWorker({
+  recognize: async () => ({
+    data: {
+      text: 'Add to Cart Free Delivery Best Sellers',
+      blocks: [{ paragraphs: [{ lines: [{ words: [
+        word('Add', 10, 10, 40, 25), word('to', 45, 10, 60, 25), word('Cart', 65, 10, 100, 25),
+        word('Free', 10, 40, 45, 55), word('Delivery', 50, 40, 120, 55),
+        word('Best', 10, 70, 45, 85), word('Sellers', 50, 70, 110, 85),
+      ] }] }] }],
+    },
+  }),
+});
+const chrome = await ocrRegion({ toDataURL: () => 'data:,' }, REGION, {});
+check('UI chrome produces no name detections',
+  chrome.filter((h) => h.category === 'names').length === 0);
+
+// The category toggle must actually gate the layer.
+setWorker({
+  recognize: async () => ({
+    data: {
+      text: WORDS.map((w) => w.text).join(' '),
+      blocks: [{ paragraphs: [{ lines: [{ words: WORDS }] }] }],
+    },
+  }),
+});
+const namesOff = await ocrRegion({ toDataURL: () => 'data:,' }, REGION, { names: false });
+check('names:false disables the layer',
+  namesOff.filter((h) => h.category === 'names').length === 0);
+check('names:false leaves the other patterns working',
+  namesOff.some((h) => h.label.includes('Email')));
 
 // Unlocalisable case must still fail closed.
 setWorker({

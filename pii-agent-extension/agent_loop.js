@@ -22,6 +22,14 @@ import { defaultPrivacyReasoner } from "./local_reasoner.js";
 import { logEvent } from "./telemetry.js";
 
 /**
+ * Actions the service worker executes through chrome.tabs rather than the
+ * content script. Kept in sync with BROWSER_ACTION_TYPES in server/app.py.
+ */
+export const BROWSER_ACTION_TYPES = new Set([
+  "navigate", "new_tab", "switch_tab", "close_tab", "go_back",
+]);
+
+/**
  * Cheap stable fingerprint of the interactive page state (FNV-1a).
  * Used only to tell "the page changed" from "nothing happened".
  */
@@ -130,6 +138,8 @@ export class AutonomousAgentLoop {
     this.stepHistory = [];
     this._lastDomDigest = null;
     this._unproductiveRun = 0;
+    this._plan = null;
+    this._planStep = null;
     this._abortController = new AbortController();
 
     // Reset session-scoped placeholder mappings for a clean task run
@@ -160,6 +170,7 @@ export class AutonomousAgentLoop {
         // ── Phase 2: Fetch & Sanitize DOM Interactive Elements & Telemetry ──
         let domElements = [];
         let structuredData = null;
+        let pageContent = [];
         try {
           const tab = await this._getActiveTab();
           if (tab && tab.id) {
@@ -167,6 +178,7 @@ export class AutonomousAgentLoop {
             if (domResp) {
               if (domResp.interactiveElements) domElements = domResp.interactiveElements;
               if (domResp.structuredData) structuredData = domResp.structuredData;
+              if (domResp.pageContent) pageContent = domResp.pageContent;
             }
           }
         } catch {
@@ -310,6 +322,14 @@ export class AutonomousAgentLoop {
           explanation: s.action?.explanation || ""
         }));
 
+        // Open tabs, so switch_tab has addressable targets. Titles and URLs are
+        // sanitized in agent_client alongside the task — a tab title regularly
+        // carries PII ("Order #4821 - Priya Nair").
+        let openTabs = [];
+        try {
+          openTabs = await this._listAgentTabs();
+        } catch {}
+
         // ── Phase 3: Query Main Agent LLM / VLM (Sanitized Context Only) ───────
         const actionResult = await agentClient.requestAction({
           task: userTask,
@@ -322,7 +342,11 @@ export class AutonomousAgentLoop {
           modelProvider: options.modelProvider || "auto",
           step: this.currentStep,
           maxSteps: maxSteps,
-          history: historyDigest
+          history: historyDigest,
+          openTabs,
+          pageContent,
+          plan: this._plan,
+          planStep: this._planStep
         });
 
         if (!actionResult.ok || !actionResult.action) {
@@ -331,8 +355,46 @@ export class AutonomousAgentLoop {
 
         const action = actionResult.action;
 
+        // Latch the plan the first time the model produces one. Accepting a new
+        // plan every turn would defeat the point — the goal has to outlive the
+        // page currently on screen.
+        if (!this._plan?.length && Array.isArray(action.plan) && action.plan.length) {
+          this._plan = action.plan;
+          this._planStep = 1;
+          logEvent("agent", `Plan: ${this._plan.map((p, i) => `${i + 1}. ${p}`).join("  ")}`);
+        }
+        if (Number.isInteger(action.plan_step) && action.plan_step > 0) {
+          const capped = Math.min(action.plan_step, this._plan?.length || action.plan_step);
+          if (capped !== this._planStep) {
+            logEvent("agent", `Plan checkpoint ${capped}/${this._plan?.length || "?"}: ${this._plan?.[capped - 1] || ""}`);
+          }
+          this._planStep = capped;
+        }
+
         // ── Phase 4: Permission & Human-in-the-Loop Safety Check ──────────────
-        const permission = permissionEngine.evaluate(action);
+        // A new_tab may name a link on the page rather than a URL. Resolve its
+        // real address BEFORE the permission check, so the user is asked about
+        // where the agent is actually going — not about an empty value.
+        const linkResolution = await this._resolveActionLink(action);
+        if (!linkResolution.ok) {
+          const failedStep = {
+            step: this.currentStep, action,
+            modelUsed: actionResult.modelUsed,
+            latencyMs: Math.round(performance.now() - stepStartTime),
+            executionReport: { ok: false, error: linkResolution.error },
+            redactionCount: (captureResult.redactionList || []).length,
+            redactionList: captureResult.redactionList || [],
+          };
+          this.stepHistory.push(failedStep);
+          if (onStepCallback) onStepCallback(failedStep);
+          continue;
+        }
+
+        // currentUrl lets the engine tell same-site navigation (ordinary) from
+        // the agent opening a different site (needs the user's consent).
+        const permission = permissionEngine.evaluate(action, null, null, {
+          currentUrl: captureResult.tabUrl || "",
+        });
 
         if (permission.outcome === PERMISSION_OUTCOMES.BLOCK) {
           throw new Error(`Security Policy Violation: ${permission.reason}`);
@@ -389,14 +451,44 @@ export class AutonomousAgentLoop {
           execAction.selector = resolveLocalActionValue(execAction.selector);
         }
 
+        // An unresolved vault token must never be typed. Without this guard a
+        // locked vault or a missing entry gets "{{VAULT:address.pincode}}"
+        // literally entered into the page — a visible failure that also wastes
+        // a step and teaches the model nothing about why.
+        if (typeof execAction.value === "string" && /\{\{VAULT:/i.test(execAction.value)) {
+          const missing = execAction.value.match(/\{\{VAULT:[a-z0-9_.]+\}\}/i)?.[0] || "a vault value";
+          const why = vault.isUnlocked()
+            ? `${missing} is not stored in the vault`
+            : `the vault is locked, so ${missing} cannot be resolved`;
+          logEvent("agent", `Refusing to type an unresolved vault token: ${why}`, null, "warn");
+          executionReport = { ok: false, error: `Cannot fill this field: ${why}. Ask the user to add it in Settings.` };
+          this.stepHistory.push({
+            step: this.currentStep, action, permission,
+            modelUsed: actionResult.modelUsed,
+            latencyMs: Math.round(performance.now() - stepStartTime),
+            executionReport,
+            redactionCount: (captureResult.redactionList || []).length,
+            redactionList: captureResult.redactionList || [],
+          });
+          if (onStepCallback) onStepCallback(this.stepHistory[this.stepHistory.length - 1]);
+          continue;
+        }
+
         let executionReport = null;
         try {
-          const tab = await this._getActiveTab();
-          if (tab && tab.id) {
-            executionReport = await this._sendTabMessage(tab.id, {
-              type: "EXECUTE_ACTION",
-              action: execAction
-            });
+          if (BROWSER_ACTION_TYPES.has(execAction.type)) {
+            // Browser-level: chrome.tabs, not the content script. Routed here
+            // rather than through EXECUTE_ACTION because the content script has
+            // no way to change tab or load a URL.
+            executionReport = await this._executeBrowserAction(execAction);
+          } else {
+            const tab = await this._getActiveTab();
+            if (tab && tab.id) {
+              executionReport = await this._sendTabMessage(tab.id, {
+                type: "EXECUTE_ACTION",
+                action: execAction
+              });
+            }
           }
         } catch (execErr) {
           executionReport = { ok: false, error: execErr.message };
@@ -513,7 +605,9 @@ export class AutonomousAgentLoop {
       stepsExecuted: this.currentStep,
       history: this.stepHistory,
       summary: loopSummary,
-      result
+      result,
+      plan: this._plan || null,
+      planStep: this._planStep || null
     };
   }
 
@@ -559,11 +653,159 @@ export class AutonomousAgentLoop {
       step: this.currentStep,
       maxSteps: this.currentStep,
       history: observed,
+      plan: this._plan,
+      planStep: this._planStep,
       synthesizeOnly: true,
       stopReason,
     });
 
     return res?.ok ? (res.action?.result || null) : null;
+  }
+
+  /**
+   * Executes a browser-level action via chrome.tabs.
+   *
+   * Retargets the loop at whatever tab is now in focus, so the next step's
+   * capture, redaction and DOM scan all follow the agent instead of staying
+   * pinned to the tab the run started on. Waits for the new page to finish
+   * loading before returning: capturing mid-navigation yields a blank or stale
+   * frame, which the model would read as a no-op.
+   */
+  async _executeBrowserAction(action) {
+    if (typeof chrome === "undefined" || !chrome.tabs) {
+      return { ok: false, error: "chrome.tabs unavailable in this context" };
+    }
+
+    const current = await this._getActiveTab();
+    const type = action.type;
+
+    try {
+      let tab = null;
+
+      if (type === "navigate") {
+        if (!current?.id) return { ok: false, error: "no active tab to navigate" };
+        tab = await chrome.tabs.update(current.id, { url: action.value });
+      } else if (type === "new_tab") {
+        // value is guaranteed by _resolveActionLink, which runs before the
+        // permission check so the user is asked about the real destination.
+        if (!action.value) return { ok: false, error: "new_tab needs a URL or a link to open" };
+        tab = await chrome.tabs.create({ url: action.value, active: true });
+      } else if (type === "go_back") {
+        if (!current?.id) return { ok: false, error: "no active tab" };
+        await chrome.tabs.goBack(current.id);
+        tab = current;
+      } else if (type === "switch_tab" || type === "close_tab") {
+        const tabs = await this._listAgentTabs();
+        const index = parseInt(action.value, 10);
+        const target = tabs.find((t) => t.index === index);
+
+        if (type === "close_tab") {
+          const victim = target?.id || current?.id;
+          if (!victim) return { ok: false, error: "no tab to close" };
+          if (tabs.length <= 1) {
+            return { ok: false, error: "refusing to close the last remaining tab" };
+          }
+          await chrome.tabs.remove(victim);
+          const [remaining] = await chrome.tabs.query({ active: true, currentWindow: true });
+          tab = remaining || null;
+        } else {
+          if (!target) {
+            return { ok: false, error: `no open tab numbered ${action.value}` };
+          }
+          tab = await chrome.tabs.update(target.id, { active: true });
+        }
+      }
+
+      if (!tab?.id) return { ok: false, error: `${type} produced no usable tab` };
+
+      // Retarget the loop. Without this the next capture would still screenshot
+      // the original tab while the model reasoned about the new one.
+      this.options.tabId = tab.id;
+      if (tab.windowId) this.options.windowId = tab.windowId;
+
+      const settled = await this._waitForTabLoad(tab.id);
+      return {
+        ok: true,
+        executed: type,
+        tabId: tab.id,
+        url: settled?.url || tab.url || "",
+        settled: Boolean(settled),
+      };
+    } catch (err) {
+      return { ok: false, error: `${type} failed: ${err.message}` };
+    }
+  }
+
+  /**
+   * Fills in `action.value` for a new_tab that names a page link by ref.
+   *
+   * The address comes from the live DOM, never from the model: asked to open a
+   * search result, it produced a correctly-shaped but entirely invented product
+   * URL. Mutates `action` in place so the permission check downstream sees the
+   * real destination.
+   *
+   * @returns {Promise<{ok: boolean, error?: string}>}
+   */
+  async _resolveActionLink(action) {
+    if (action.type !== "new_tab" || action.value || !action.selector) {
+      return { ok: true };
+    }
+
+    const tab = await this._getActiveTab();
+    if (!tab?.id) return { ok: false, error: "no active tab to read the link from" };
+
+    let link;
+    try {
+      link = await this._sendTabMessage(tab.id, {
+        type: "GET_ELEMENT_HREF",
+        selector: action.selector,
+      });
+    } catch (err) {
+      return { ok: false, error: `could not read the link: ${err.message}` };
+    }
+
+    if (!link?.ok || !link.href) {
+      return { ok: false, error: link?.error || "target element has no link to open" };
+    }
+    if (!/^https?:\/\//i.test(link.href)) {
+      return { ok: false, error: `refusing to open non-web link ${link.href.slice(0, 60)}` };
+    }
+
+    action.value = link.href;
+    return { ok: true };
+  }
+
+  /**
+   * Tabs the agent may address, numbered as shown to the model.
+   * Restricted to http(s) — chrome:// and extension pages are neither useful to
+   * the agent nor safe to hand it.
+   */
+  async _listAgentTabs() {
+    const tabs = await chrome.tabs.query({ currentWindow: true });
+    return tabs
+      .filter((t) => /^https?:/i.test(t.url || ""))
+      .map((t, i) => ({
+        index: i + 1,
+        id: t.id,
+        title: t.title || "",
+        url: t.url || "",
+        active: Boolean(t.active),
+      }));
+  }
+
+  /** Resolves once the tab reports `complete`, or after `timeoutMs`. */
+  async _waitForTabLoad(tabId, timeoutMs = 12000) {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        const tab = await chrome.tabs.get(tabId);
+        if (tab.status === "complete") return tab;
+      } catch {
+        return null; // tab closed underneath us
+      }
+      await new Promise((r) => setTimeout(r, 200));
+    }
+    return null;
   }
 
   async _getActiveTab() {
