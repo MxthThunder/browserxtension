@@ -103,13 +103,48 @@ export class LocalSensitiveVault {
     this._cryptoKey = null;
     this._inMemoryCache = null;
     this._salt = null;
+    this._initPromise = null;
   }
 
   /**
    * Initializes the vault with a user passphrase or local device-derived key.
+   *
+   * Concurrent callers share a single derivation. PBKDF2 runs at 100k
+   * iterations and every context (popup, dashboard, options, service worker)
+   * calls this on load, so without the shared promise a cold start could run
+   * the key derivation several times over.
+   *
    * @param {string} [passphrase] Optional user-provided master password
    */
   async init(passphrase = "default_local_device_key_seed_pii_2026") {
+    if (this._initPromise) return this._initPromise;
+    this._initPromise = this._deriveAndLoad(passphrase).catch((err) => {
+      // A failed init must not poison every later attempt — clear the cached
+      // promise so the next caller retries instead of inheriting the failure.
+      this._initPromise = null;
+      throw err;
+    });
+    return this._initPromise;
+  }
+
+  /**
+   * Resolves once the vault is actually usable.
+   *
+   * The reason this exists: background.js kicks off init() without awaiting
+   * it, and an MV3 service worker is torn down after ~30s idle — so it is
+   * restarted constantly, and clicking the extension is itself what wakes it.
+   * That left a window on every cold start where isUnlocked() was still false
+   * while PBKDF2 was deriving, and any vault read landing in that window saw
+   * an empty vault. The agent read it as "no personal details on file" and
+   * told the user it could not fill a form whose answers were sitting right
+   * there. Callers that need the vault must await this, not poll isUnlocked().
+   */
+  ready() {
+    if (this.isUnlocked()) return Promise.resolve(true);
+    return this.init();
+  }
+
+  async _deriveAndLoad(passphrase) {
     const c = getCrypto();
 
     // Retrieve or generate salt
@@ -168,6 +203,9 @@ export class LocalSensitiveVault {
     this._isUnlocked = false;
     this._cryptoKey = null;
     this._inMemoryCache = null;
+    // Drop the shared init promise too, or ready() would resolve immediately
+    // against a derivation whose key has just been thrown away.
+    this._initPromise = null;
   }
 
   /**

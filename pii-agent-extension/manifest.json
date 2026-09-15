@@ -102,6 +102,7 @@
         "dashboard.js",
         "dashboard.css",
         "mission_console.html",
+        "demo.html",
         "openmct_telemetry_plugin.js"
       ],
       "matches": ["<all_urls>"]

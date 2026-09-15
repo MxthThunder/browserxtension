@@ -384,6 +384,17 @@ export class AutonomousAgentLoop {
         // Without this the model cannot tell "the user has an email on file" from
         // "there is no email", so it either guesses a token that resolves to
         // nothing or gives up on a form it could actually have completed.
+        // Wait for the vault before reading it. background.js starts init()
+        // without awaiting, and the service worker this runs in is restarted
+        // constantly — so on a cold start this read used to land mid-PBKDF2,
+        // see a locked vault, and report "no personal details on file" for a
+        // vault that was fully populated. Cheap after the first step: ready()
+        // returns immediately once unlocked, and shares the one derivation.
+        try {
+          await vault.ready();
+        } catch (err) {
+          logEvent("agent", `Vault unavailable this step: ${err?.message || err}`, null, "warn");
+        }
         const vaultKeys = listVaultTokenPaths();
 
         // ── Phase 3: Query Main Agent LLM / VLM (Sanitized Context Only) ───────
