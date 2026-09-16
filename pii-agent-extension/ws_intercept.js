@@ -158,6 +158,7 @@
       "lonDisplay",   // orbit HUD: LON
       "vCoord",       // telemetry matrix: CLASSIFIED_COORD
       "vOpr",         // telemetry matrix: OPERATOR_BADGE
+      "vGip",         // telemetry matrix: GROUND_STATION_IP
     ];
     for (const id of ALWAYS_SENSITIVE_IDS) {
       const el = document.getElementById(id);

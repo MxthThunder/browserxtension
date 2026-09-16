@@ -505,11 +505,12 @@
 
   <!-- Nav: takes remaining space, clips excess tabs -->
   <nav class="hdr-nav">
-    <button class="nav-tab active">Telemetry Overview</button>
-    <button class="nav-tab">Trajectory &amp; Orbit 3D</button>
-    <button class="nav-tab">Subsystem Health</button>
-    <button class="nav-tab">Command &amp; Uplink Log</button>
-    <button class="nav-tab">Alarms &amp; Events</button>
+    <button class="nav-tab active" id="tabOverview">Telemetry Overview</button>
+    <button class="nav-tab" id="tabTrajectory">Trajectory &amp; Orbit 3D</button>
+    <button class="nav-tab" id="tabSubsystem">Subsystem Health</button>
+    <button class="nav-tab" id="tabPropulsion" style="color:var(--amber);border-bottom:2px solid var(--amber);">Propulsion ⚠</button>
+    <button class="nav-tab" id="tabCommand">Command &amp; Uplink Log</button>
+    <button class="nav-tab" id="tabAlarms">Alarms &amp; Events</button>
   </nav>
 
   <!-- Controls: fixed-width, text only -->
@@ -1080,6 +1081,7 @@ const CH_DEFS = [
   {id:'CH-511', name:'PYRO_BUS_A_ARM',      valId:'v511',  unit:'',     status:'OK'},
   {id:'CH-COORD', name:'CLASSIFI…',         valId:'vCoord',unit:'',     status:'MSOD', sensitive:true},
   {id:'CH-OPR',   name:'OPE…',             valId:'vOpr',  unit:'',     status:'MSOD', sensitive:true},
+  {id:'CH-GIP',   name:'GROUND_IP',         valId:'vGip',  unit:'',     status:'MSOD', sensitive:true},
 ];
 
 (function buildTable() {
@@ -1200,7 +1202,7 @@ function updateUI(f) {
   }
 
   // Channel table
-  const ID_MAP = { 'CH-COORD': 'vCoord', 'CH-OPR': 'vOpr' };
+  const ID_MAP = { 'CH-COORD': 'vCoord', 'CH-OPR': 'vOpr', 'CH-GIP': 'vGip' };
   if (Array.isArray(f.channels)) {
     f.channels.forEach(ch => {
       const elId = ID_MAP[ch.id] || ('v' + ch.id.replace('CH-', ''));
@@ -1278,8 +1280,94 @@ document.querySelectorAll('.nav-tab').forEach(btn => {
   btn.addEventListener('click', () => {
     document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
     btn.classList.add('active');
+    // Propulsion tab opens the warning panel directly
+    if (btn.id === 'tabPropulsion') openPropulsionWarning();
   });
 });
+</script>
+
+<!-- ── Propulsion Warning Modal ─────────────────────────────────────────── -->
+<div id="propWarnOverlay" style="
+  display:none;position:fixed;inset:0;background:rgba(0,0,0,0.75);z-index:9999;
+  align-items:center;justify-content:center;font-family:'JetBrains Mono',monospace;
+">
+  <div style="
+    background:#0a1628;border:1px solid rgba(245,158,11,0.6);border-radius:8px;
+    padding:28px 32px;max-width:520px;width:90%;box-shadow:0 0 40px rgba(245,158,11,0.2);
+  ">
+    <div style="display:flex;align-items:center;gap:10px;margin-bottom:20px;">
+      <span style="color:var(--amber);font-size:18px;">⚠</span>
+      <span style="color:var(--amber);font-weight:700;font-size:13px;letter-spacing:1px;">PROPULSION SUBSYSTEM WARNING</span>
+      <span style="margin-left:auto;font-size:9px;color:var(--t3);" id="propWarnTs"></span>
+    </div>
+
+    <table style="width:100%;border-collapse:collapse;font-size:11px;margin-bottom:20px;">
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.08);">
+        <td style="color:var(--t3);padding:6px 0;">Channel</td>
+        <td style="color:var(--t2);padding:6px 0;font-weight:700;">RCS_POD_L_TEMP</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.08);">
+        <td style="color:var(--t3);padding:6px 0;">Current Value</td>
+        <td style="color:var(--amber);padding:6px 0;font-weight:700;" id="propWarnVal">48.3 °C</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.08);">
+        <td style="color:var(--t3);padding:6px 0;">WARN Threshold</td>
+        <td style="color:var(--t2);padding:6px 0;">46.0 °C</td>
+      </tr>
+      <tr style="border-bottom:1px solid rgba(255,255,255,0.08);">
+        <td style="color:var(--t3);padding:6px 0;">Status</td>
+        <td style="color:var(--amber);padding:6px 0;font-weight:700;">MONITORING — NOT CRITICAL</td>
+      </tr>
+      <tr>
+        <td style="color:var(--t3);padding:6px 0;">Recommended Action</td>
+        <td style="color:var(--t2);padding:6px 0;">Reduce RCS firing duty cycle by 15%</td>
+      </tr>
+    </table>
+
+    <div style="display:flex;gap:10px;justify-content:flex-end;">
+      <button id="btnAckWarn" style="
+        padding:7px 18px;border-radius:4px;background:rgba(245,158,11,0.15);
+        border:1px solid rgba(245,158,11,0.5);color:var(--amber);
+        font-family:inherit;font-size:11px;font-weight:700;cursor:pointer;
+        letter-spacing:0.5px;
+      ">ACKNOWLEDGE WARNING</button>
+      <button id="btnCloseWarn" style="
+        padding:7px 18px;border-radius:4px;background:var(--card2);
+        border:1px solid var(--border2);color:var(--t3);
+        font-family:inherit;font-size:11px;cursor:pointer;
+      ">Close</button>
+    </div>
+  </div>
+</div>
+
+<script>
+function openPropulsionWarning() {
+  const ov = document.getElementById('propWarnOverlay');
+  if (!ov) return;
+  ov.style.display = 'flex';
+  const ts = document.getElementById('propWarnTs');
+  if (ts) ts.textContent = new Date().toLocaleTimeString();
+  // Sync live value if available
+  const live = document.getElementById('v204');
+  const valEl = document.getElementById('propWarnVal');
+  if (live && valEl && live.textContent && live.textContent !== '—') {
+    valEl.textContent = live.textContent + ' °C';
+  }
+}
+function closePropulsionWarning() {
+  const ov = document.getElementById('propWarnOverlay');
+  if (ov) ov.style.display = 'none';
+}
+
+document.getElementById('btnCloseWarn')?.addEventListener('click', closePropulsionWarning);
+document.getElementById('btnAckWarn')?.addEventListener('click', () => {
+  const btn = document.getElementById('btnAckWarn');
+  if (btn) { btn.textContent = 'ACKNOWLEDGED ✓'; btn.style.color = 'var(--cyan)'; }
+  setTimeout(closePropulsionWarning, 800);
+});
+
+// Also open modal when clicking "Open Latest Warning" in the command log area
+document.getElementById('warnFilterBtn')?.addEventListener('click', openPropulsionWarning);
 </script>
 </body>
 </html>

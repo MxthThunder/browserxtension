@@ -324,6 +324,8 @@ def generate_gaganyaan_frame() -> Dict[str, Any]:
          "unit": "", "status": "OK", "subsystem": "PAYLOAD", "sensitive": True},
         {"id": "CH-OPR",   "name": "OPERATOR_BADGE",    "value": operator_id,
          "unit": "", "status": "OK", "subsystem": "OPS",     "sensitive": True},
+        {"id": "CH-GIP",   "name": "GROUND_STATION_IP", "value": "10.142.88.14",
+         "unit": "", "status": "OK", "subsystem": "COMMS",   "sensitive": True},
     ]
 
     # ── Simulated PII injection for PrivyBrowse-X demonstration ──────────────

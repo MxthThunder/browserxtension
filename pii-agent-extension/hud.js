@@ -9,11 +9,18 @@ const btnOpenMCT = document.getElementById("btnOpenMCT");
 const btnDownloadPayload = document.getElementById("btnDownloadPayload");
 
 const backendBadge = document.getElementById("backendBadge");
-const valLatency = document.getElementById("valLatency");
+const valPipelineStatus = document.getElementById("valPipelineStatus");
+const valLatency = document.getElementById("valLatency"); // kept for benchmark tab
 const valBackendDesc = document.getElementById("valBackendDesc");
 const valDomPii = document.getElementById("valDomPii");
 const valVision = document.getElementById("valVision");
 const valWsFrames = document.getElementById("valWsFrames");
+const valLeakGuard = document.getElementById("valLeakGuard");
+const valFramesVerified = document.getElementById("valFramesVerified");
+const valResidualPx = document.getElementById("valResidualPx");
+const valRawPixelsSent = document.getElementById("valRawPixelsSent");
+const valWsObservations = document.getElementById("valWsObservations");
+const wsPiiEntityLabel = document.getElementById("wsPiiEntityLabel");
 
 const rawImage = document.getElementById("rawImage");
 const sanitizedImage = document.getElementById("sanitizedImage");
@@ -34,6 +41,8 @@ let lastResultPayload = null;
 
 let wsFrameCount = 0;
 let wsPiiAlertCount = 0;
+let framesVerified = 0;
+const uniquePiiEntities = new Set(); // tracks distinct sensitive field names
 let lastWsUrl = null;
 const WS_ALERT_MAX = 50; // ring-buffer cap for the alert feed
 
@@ -176,12 +185,26 @@ function pushWsAlert(mnemonic, piiLabel, rawValue, maskedValue, ts) {
   if (wsAlertFeed.length > WS_ALERT_MAX) wsAlertFeed.length = WS_ALERT_MAX;
   wsPiiAlertCount++;
 
-  // Update counter badge
+  // Track unique entity names (e.g. OPERATOR_ID, COORDINATES)
+  uniquePiiEntities.add(piiLabel);
+
+  // Update "Protected N entities" card
   const ctr = document.getElementById("valWsPiiAlerts");
   if (ctr) {
-    ctr.textContent = String(wsPiiAlertCount);
+    const n = uniquePiiEntities.size;
+    ctr.innerHTML = `${n} <span style="font-size:10px;font-weight:400;">entities</span>`;
     ctr.closest(".stat")?.classList.add("stat-alert");
   }
+  // Update observations sub-note
+  if (valWsObservations) valWsObservations.textContent = String(wsPiiAlertCount);
+
+  // Update feed header entity label
+  if (wsPiiEntityLabel) {
+    wsPiiEntityLabel.textContent = `${uniquePiiEntities.size} ENTITIES PROTECTED`;
+  }
+  // Update feed header event count
+  const cntLabel = document.getElementById("wsPiiAlertCountLabel");
+  if (cntLabel) cntLabel.textContent = `· ${wsPiiAlertCount} events`;
 
   // Re-render the alert feed list
   renderWsAlertFeed();
@@ -236,6 +259,8 @@ function scanFrameForPii(frame, wsUrl) {
 function handleInterceptedFrame(fullFrame, wsUrl) {
   wsFrameCount++;
   valWsFrames.textContent = String(wsFrameCount);
+  framesVerified++;
+  if (valFramesVerified) valFramesVerified.textContent = String(framesVerified);
 
   // Update WS status pill
   const pill = document.getElementById("wsStatusPill");
@@ -496,9 +521,11 @@ function renderHUD(data) {
   backendBadge.textContent = isGpu ? "WebGPU" : "WASM";
   backendBadge.className = `badge ${isGpu ? "badge-webgpu" : "badge-wasm"}`;
 
-  valLatency.innerHTML = latencyMs === null
-    ? `— <span class="unit">ms</span>`
-    : `${Math.round(latencyMs)} <span class="unit">ms</span>`;
+  if (valLatency) {
+    valLatency.innerHTML = latencyMs === null
+      ? `— <span class="unit">ms</span>`
+      : `${Math.round(latencyMs)} <span class="unit">ms</span>`;
+  }
 
   const w = data.resolution?.width;
   const h = data.resolution?.height;

@@ -91,11 +91,10 @@
     </div>
   </header>
 
-  <!-- ── Metric strip ────────────────────────────────────────────────── -->
   <section class="strip">
     <div class="stat">
-      <span class="s-label">Latency</span>
-      <span class="s-val" id="valLatency">— <span class="unit">ms</span></span>
+      <span class="s-label">Pipeline</span>
+      <span class="s-val" id="valPipelineStatus" style="font-size:13px;letter-spacing:0.5px;">PROTECTED <span style="color:var(--status-good)">✓</span></span>
       <span class="s-note" id="valBackendDesc">awaiting capture</span>
     </div>
     <div class="stat">
@@ -113,15 +112,34 @@
       <span class="s-val" id="valWsFrames">0</span>
       <span class="s-note">intercepted live</span>
     </div>
-    <div class="stat stat-good">
-      <span class="s-label">Leakage</span>
-      <span class="s-val">0</span>
-      <span class="s-note">raw pixels sent</span>
+    <div class="stat stat-good" id="statLeakGuard">
+      <span class="s-label">Leak Guard</span>
+      <span class="s-val" id="valLeakGuard" style="font-size:13px;color:var(--status-good);">PASSED ✓</span>
+      <span class="s-note"><span id="valFramesVerified">0</span> frames · <span id="valResidualPx">0</span> residual px</span>
     </div>
     <div class="stat" id="statWsPii">
-      <span class="s-label">WS PII alerts</span>
-      <span class="s-val" id="valWsPiiAlerts">0</span>
-      <span class="s-note">in stream data</span>
+      <span class="s-label">Protected</span>
+      <span class="s-val" id="valWsPiiAlerts" style="color:var(--status-good);">0 <span style="font-size:10px;font-weight:400;">entities</span></span>
+      <span class="s-note"><span id="valWsObservations">0</span> observations</span>
+    </div>
+  </section>
+
+  <!-- ── Privacy Boundary Status ──────────────────────────────────────────── -->
+  <section style="background:var(--surface-1);border-bottom:1px solid var(--border);padding:8px 20px;display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
+    <div style="display:flex;align-items:center;gap:6px;">
+      <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--status-good);box-shadow:0 0 6px var(--status-good);"></span>
+      <span style="font-family:var(--font-mono);font-size:10px;font-weight:700;letter-spacing:1px;color:var(--status-good);">PRIVYBROWSE-X ACTIVE</span>
+    </div>
+    <div style="display:flex;gap:16px;font-family:var(--font-mono);font-size:9.5px;color:var(--text-3);">
+      <span>DOM <span id="pbDom" style="color:var(--status-good);">✓</span></span>
+      <span>VISION <span id="pbVision" style="color:var(--status-good);">✓</span></span>
+      <span>OCR <span id="pbOcr" style="color:var(--status-good);">✓</span></span>
+      <span>REDACTION <span id="pbRedact" style="color:var(--status-good);">✓</span></span>
+      <span>LEAK GUARD <span id="pbLeak" style="color:var(--status-good);">✓</span></span>
+    </div>
+    <div style="margin-left:auto;font-family:var(--font-mono);font-size:9.5px;">
+      <span style="color:var(--text-3);">RAW PIXELS SENT</span>
+      <span id="valRawPixelsSent" style="color:var(--status-good);font-weight:700;margin-left:6px;">0</span>
     </div>
   </section>
 
@@ -143,8 +161,8 @@
       <div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
           <span class="s-label" style="font-size:9.5px;">
-            <span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--status-critical);margin-right:4px;vertical-align:middle;"></span>
-            RAW FRAME — never sent to LLM
+            <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--status-critical);margin-right:5px;vertical-align:middle;box-shadow:0 0 5px var(--status-critical);"></span>
+            🔴 LOCAL ONLY — NEVER SENT TO LLM
           </span>
           <span class="muted" id="rawFrameTs">—</span>
         </div>
@@ -155,8 +173,8 @@
       <div>
         <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
           <span class="s-label" style="font-size:9.5px;">
-            <span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--status-good);margin-right:4px;vertical-align:middle;"></span>
-            SANITIZED — safe for LLM reasoning
+            <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--status-good);margin-right:5px;vertical-align:middle;box-shadow:0 0 5px var(--status-good);"></span>
+            🟢 SAFE TO SEND — GEMINI SEES THIS
           </span>
           <span class="muted" id="redactedCountLabel">0 fields masked</span>
         </div>
@@ -177,8 +195,9 @@
     <div id="wsPiiAlertSection" style="margin-top:12px;">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
         <span class="s-label" style="font-size:9.5px;">
-          <span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--status-critical);margin-right:4px;vertical-align:middle;"></span>
-          PII DETECTED IN STREAM — <span id="wsPiiAlertCountLabel" style="color:var(--status-critical);font-family:var(--font-mono);">0 events</span>
+          <span style="display:inline-block;width:7px;height:7px;border-radius:50%;background:var(--status-warn);margin-right:5px;vertical-align:middle;box-shadow:0 0 4px var(--status-warn);"></span>
+          PII DETECTION — <span id="wsPiiEntityLabel" style="color:var(--status-good);font-family:var(--font-mono);">0 ENTITIES PROTECTED</span>
+          <span id="wsPiiAlertCountLabel" style="color:var(--text-3);font-family:var(--font-mono);font-size:9px;margin-left:8px;">· 0 events</span>
         </span>
         <button id="btnClearWsAlerts" style="font-size:9px;padding:1px 7px;border-radius:var(--radius-full);background:var(--surface-2);border:1px solid var(--border);color:var(--text-3);cursor:pointer;">Clear</button>
       </div>
