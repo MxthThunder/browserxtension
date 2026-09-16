@@ -622,6 +622,19 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (!message || !message.type) return false;
   if (message.type === "TELEMETRY_LOG") return false;
 
+  // ── WebSocket frame intercepted by content.js monkey-patch ────────────────
+  // Forward to the HUD (and any other extension pages) as a broadcast so the
+  // Telemetry Intercept Panel can render raw vs. sanitized comparison.
+  if (message.type === "PRIVIBROWSE_WS_FRAME_INTERCEPTED") {
+    chrome.runtime.sendMessage({
+      type: "PRIVIBROWSE_WS_FRAME_CAPTURED",
+      fullFrame: message.fullFrame,
+      wsUrl: message.wsUrl,
+      ts: message.ts,
+    }).catch(() => {}); // HUD may not be open — that's fine
+    return false;
+  }
+
   logEvent("background", `Received runtime message: ${message.type}`);
 
   if (message.type === "CAPTURE_AND_REDACT") {

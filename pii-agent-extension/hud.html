@@ -9,6 +9,45 @@
   <link href="https://fonts.googleapis.com/css2?family=Geist:wght@300;400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="theme.css" />
   <link rel="stylesheet" href="hud.css" />
+  <style>
+    /* Telemetry panel — inherits all hud.css tokens, only layout overrides */
+    .strip { grid-template-columns: repeat(5, 1fr); }
+    .telem-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+    .telem-raw  { background: var(--surface-2); border-radius: var(--radius); padding: 10px 12px;
+                  font-family: var(--font-mono); font-size: 10px; line-height: 1.55; color: var(--text-2);
+                  max-height: 160px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+    .telem-raw .k  { color: var(--text-3); }
+    .telem-raw .v  { color: var(--text); }
+    .telem-raw .redacted { color: var(--status-warn); font-weight: 600; }
+    .telem-raw .sensitive { color: var(--status-critical); }
+    .telem-channels { margin-top: 10px; }
+    .telem-row { display: flex; align-items: center; gap: 8px;
+                 padding: 4px 8px; border-radius: var(--radius); font-size: 10.5px; }
+    .telem-row:hover { background: var(--surface-2); }
+    .telem-row .ch-id  { font-family: var(--font-mono); color: var(--text-3); width: 52px; flex: none; font-size: 9.5px; }
+    .telem-row .ch-name { color: var(--text-2); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .telem-row .ch-val  { font-family: var(--font-mono); font-weight: 500; color: var(--text); flex: none; }
+    .telem-row .ch-unit { color: var(--text-3); font-size: 9.5px; flex: none; }
+    .telem-row.warn .ch-val { color: var(--status-warn); }
+    .telem-row.alarm .ch-val { color: var(--status-critical); }
+    .telem-row.sensitive-row .ch-val { color: var(--status-critical); }
+    .telem-row .ch-badge { font-family: var(--font-mono); font-size: 8.5px; padding: 1px 5px;
+                           border-radius: var(--radius-full); flex: none; }
+    .ch-badge.ok    { background: color-mix(in srgb, var(--status-good) 15%, transparent);  color: var(--status-good); }
+    .ch-badge.warn  { background: color-mix(in srgb, var(--status-warn) 15%, transparent);  color: var(--status-warn); }
+    .ch-badge.alarm { background: color-mix(in srgb, var(--status-critical) 15%, transparent); color: var(--status-critical); }
+    .ch-badge.msod  { background: color-mix(in srgb, var(--status-critical) 15%, transparent); color: var(--status-critical); }
+    .ch-badge.redacted-badge { background: color-mix(in srgb, var(--status-warn) 15%, transparent); color: var(--status-warn); }
+    .ws-pill { display: inline-flex; align-items: center; gap: 5px; font-size: 10px;
+               font-family: var(--font-mono); padding: 2px 8px; border-radius: var(--radius-full);
+               border: 1px solid var(--border); color: var(--text-3); }
+    .ws-pill.connected { color: var(--status-good); border-color: var(--status-good); }
+    .ws-pill.connecting { color: var(--status-warn); border-color: var(--status-warn); }
+    .ws-pill .ws-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
+    .ws-pill.connected .ws-dot { animation: wsPulse 1.4s ease-in-out infinite; }
+    @keyframes wsPulse { 0%,100%{opacity:1} 50%{opacity:.3} }
+    @media (max-width: 1000px) { .strip { grid-template-columns: repeat(3, 1fr); } .telem-split { grid-template-columns: 1fr; } }
+  </style>
 </head>
 <body>
 <div class="hud">
@@ -32,6 +71,7 @@
       <button id="btnCapture" class="btn btn-primary">Capture &amp; redact</button>
       <button id="btnAutoSync" class="btn">Live</button>
       <button id="btnOpenDemo" class="btn">Demo page</button>
+      <button id="btnOpenMCT" class="btn">OpenMCT Demo</button>
       <button id="btnViewMetrics" class="btn">Benchmarks</button>
     </div>
   </header>
@@ -53,10 +93,64 @@
       <span class="s-val" id="valVision">—</span>
       <span class="s-note">found in pixels</span>
     </div>
+    <div class="stat">
+      <span class="s-label">WS frames</span>
+      <span class="s-val" id="valWsFrames">0</span>
+      <span class="s-note">intercepted live</span>
+    </div>
     <div class="stat stat-good">
       <span class="s-label">Leakage</span>
       <span class="s-val">0</span>
       <span class="s-note">raw pixels sent</span>
+    </div>
+  </section>
+
+  <!-- ── Telemetry Intercept Panel ───────────────────────────────────── -->
+  <section class="panel" id="telemPanel">
+    <div class="panel-head">
+      <h2>Telemetry Intercept <span class="muted">— WebSocket MSOD Filter</span></h2>
+      <div style="display:flex;align-items:center;gap:8px;">
+        <span id="wsStatusPill" class="ws-pill connecting">
+          <span class="ws-dot"></span>
+          <span id="wsStatusText">No active page WS</span>
+        </span>
+        <span class="muted" id="wsUrlLabel" style="max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;"></span>
+      </div>
+    </div>
+
+    <div class="telem-split">
+      <!-- Raw frame (what the page WebSocket sends) -->
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span class="s-label" style="font-size:9.5px;">
+            <span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--status-critical);margin-right:4px;vertical-align:middle;"></span>
+            RAW FRAME — never sent to LLM
+          </span>
+          <span class="muted" id="rawFrameTs">—</span>
+        </div>
+        <pre id="rawFramePreview" class="telem-raw">Waiting for WebSocket traffic on this page…</pre>
+      </div>
+
+      <!-- Sanitized frame (after MSOD filter) -->
+      <div>
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+          <span class="s-label" style="font-size:9.5px;">
+            <span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--status-good);margin-right:4px;vertical-align:middle;"></span>
+            SANITIZED — safe for LLM reasoning
+          </span>
+          <span class="muted" id="redactedCountLabel">0 fields masked</span>
+        </div>
+        <pre id="sanitizedFramePreview" class="telem-raw">MSOD-filtered output appears here…</pre>
+      </div>
+    </div>
+
+    <!-- Live channel rows -->
+    <div class="telem-channels">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;margin-top:8px;">
+        <span class="s-label" style="font-size:9.5px;">LIVE CHANNEL TABLE — <span id="channelCount" style="color:var(--text-2)">0</span> parameters</span>
+        <span class="muted" id="warnCount" style="color:var(--status-warn);font-family:var(--font-mono);font-size:9.5px;"></span>
+      </div>
+      <div id="telemChannelRows"></div>
     </div>
   </section>
 
@@ -103,6 +197,9 @@
       <button class="chip" data-task="Click Confirm &amp; Authenticate Identity">Confirm identity</button>
       <button class="chip" data-task="Scroll down">Scroll down</button>
       <button class="chip" data-task="Fill full_name with Alice Johnson">Fill name</button>
+      <button class="chip" data-task="Is battery depth of discharge approaching the hard limit?">Query BAT1_DOD</button>
+      <button class="chip" data-task="Report on the RCS pod anomaly and suggest corrective action">RCS anomaly report</button>
+      <button class="chip" data-task="What is the current spacecraft position?">Query position</button>
     </div>
     <div id="agentStatusLog" class="log">
       <div class="log-line">Ready — the tab is sanitized locally before anything is sent.</div>

@@ -1,0 +1,74 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>User Profile — Account Settings</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f7fafc;padding:40px 20px}
+.container{max-width:600px;margin:0 auto}
+h1{font-size:22px;font-weight:700;color:#1a202c;margin-bottom:24px}
+.profile-row{display:flex;align-items:center;margin-bottom:20px;padding:16px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;position:relative}
+.field-name{font-size:13px;color:#718096;width:160px;flex:none}
+.field-value{font-size:14px;color:#2d3748;font-weight:500;flex:1}
+/* Tooltip: visible PII shown in CSS tooltip on hover — triggered by JS for test */
+.info-btn{
+  width:20px;height:20px;border-radius:50%;background:#bee3f8;border:none;
+  font-size:11px;color:#2b6cb0;cursor:pointer;flex:none;position:relative;
+}
+.tooltip{
+  display:none;position:absolute;right:40px;top:50%;transform:translateY(-50%);
+  background:#1a202c;color:#fff;font-size:12px;padding:8px 12px;border-radius:6px;
+  white-space:nowrap;z-index:10;font-family:'Courier New',monospace;
+}
+.tooltip::after{content:'';position:absolute;left:100%;top:50%;transform:translateY(-50%);
+  border:6px solid transparent;border-left-color:#1a202c}
+.tooltip.visible{display:block}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Account Settings</h1>
+
+  <div class="profile-row">
+    <span class="field-name">Full Name</span>
+    <span class="field-value">Arjun Rajendran</span>
+  </div>
+  <div class="profile-row">
+    <span class="field-name">Email Address</span>
+    <span class="field-value">arjun.r@example.com</span>
+    <button class="info-btn" id="email-btn" title="Show linked phone">?</button>
+    <!-- Tooltip contains phone number — PII only visible on hover/trigger -->
+    <div class="tooltip" id="email-tooltip">+91 98450 76543</div>
+  </div>
+  <div class="profile-row">
+    <span class="field-name">Aadhaar Linked</span>
+    <span class="field-value">XXXX–XXXX–1098 (masked)</span>
+    <button class="info-btn" id="aadh-btn" title="Show full number">?</button>
+    <!-- Full unmasked Aadhaar in tooltip -->
+    <div class="tooltip" id="aadh-tooltip">9876 5432 1098</div>
+  </div>
+  <div class="profile-row">
+    <span class="field-name">Bank Account</span>
+    <span class="field-value">****–****–4712 (masked)</span>
+    <button class="info-btn" id="bank-btn" title="Show full account">?</button>
+    <div class="tooltip" id="bank-tooltip">39284712005600</div>
+  </div>
+</div>
+<script>
+window.__BM_PAGE_LOAD_T0 = Date.now();
+// For benchmark: automatically trigger all tooltips after a short delay
+// so the PII is visible in the DOM when the extension scans.
+setTimeout(() => {
+  ['email-tooltip','aadh-tooltip','bank-tooltip'].forEach(id => {
+    document.getElementById(id).classList.add('visible');
+  });
+}, 600);
+// Normal hover behaviour for non-benchmark use
+document.querySelectorAll('.info-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const tid = btn.id.replace('-btn','-tooltip');
+    document.getElementById(tid).classList.toggle('visible');
+  });
+});
+</script>
+</body>
+</html>

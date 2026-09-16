@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>Transaction History — Statement View</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f7fafc;padding:40px 20px}
+.container{max-width:680px;margin:0 auto}
+h1{font-size:22px;font-weight:700;color:#1a202c;margin-bottom:6px}
+.sub{font-size:13px;color:#718096;margin-bottom:28px}
+.card{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:24px;margin-bottom:16px}
+.card-title{font-size:13px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:.05em;margin-bottom:16px}
+.info-row{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #f0f4f8;font-size:14px}
+.info-row:last-child{border-bottom:none}
+.info-label{color:#718096}
+.info-val{font-family:'Courier New',monospace;font-weight:600;color:#2d3748}
+.masked{color:#a0aec0;font-style:italic}
+.partial-pill{background:#fef3c7;color:#92400e;font-size:11px;font-weight:700;padding:2px 8px;border-radius:99px;margin-left:8px}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>My Account Overview</h1>
+  <p class="sub">Showing partially masked sensitive data — industry-standard PCI-DSS display format.</p>
+
+  <div class="card">
+    <div class="card-title">Primary Payment Method</div>
+    <!--
+      ADVERSARIAL: Partially masked card — "4532-****-****-1123"
+      The regex `\b(?:\d[ -]?){13,16}\b` won't fully match stars.
+      Tests whether the system still flags partially-obfuscated card numbers.
+    -->
+    <div class="info-row">
+      <span class="info-label">Credit Card</span>
+      <span class="info-val">4532–****–****–1123 <span class="partial-pill">PARTIAL</span></span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Card Holder</span>
+      <span class="info-val">RAVI K. SHARMA</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Expiry</span>
+      <span class="info-val">**/** <span class="masked">(masked)</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Bank Account Details</div>
+    <div class="info-row">
+      <span class="info-label">Account Number</span>
+      <!-- Partial account — only first and last 4 visible -->
+      <span class="info-val">3928–****–****–0056</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">IFSC Code</span>
+      <!-- IFSC is NOT masked — full value visible, regex should catch it -->
+      <span class="info-val">SBIN0001234</span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">PAN</span>
+      <!-- PAN partially masked: first 5 chars hidden -->
+      <span class="info-val">*****4756K <span class="masked">(partially hidden)</span></span>
+    </div>
+  </div>
+
+  <div class="card">
+    <div class="card-title">Contact Details</div>
+    <div class="info-row">
+      <span class="info-label">Email</span>
+      <span class="info-val">r***@gmail.com <span class="masked">(masked)</span></span>
+    </div>
+    <div class="info-row">
+      <span class="info-label">Mobile</span>
+      <!-- Only last 4 digits visible -->
+      <span class="info-val">+91 *****–3210</span>
+    </div>
+  </div>
+</div>
+<script>window.__BM_PAGE_LOAD_T0 = Date.now();</script>
+</body>
+</html>

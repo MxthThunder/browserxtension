@@ -1,0 +1,65 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>NetBanking — Embedded Payment Widget</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f7fafc;padding:40px 20px}
+.container{max-width:640px;margin:0 auto}
+h1{font-size:20px;font-weight:700;color:#1a202c;margin-bottom:8px}
+.sub{font-size:13px;color:#718096;margin-bottom:24px}
+.main-form{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:24px;margin-bottom:20px}
+label{display:block;font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
+input{width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px;font-size:14px;color:#2d3748;outline:none;margin-bottom:18px}
+.iframe-label{font-size:12px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px}
+.iframe-wrap{border:2px solid #bee3f8;border-radius:8px;overflow:hidden;background:#ebf8ff}
+.iframe-badge{background:#bee3f8;padding:6px 12px;font-size:11px;color:#2b6cb0;font-weight:600}
+iframe{width:100%;display:block;border:none}
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>Fund Transfer — NEFT/IMPS</h1>
+  <p class="sub">Enter your details above and complete the secure payment widget below.</p>
+
+  <!-- Fields in primary document -->
+  <div class="main-form">
+    <label>Your Name</label>
+    <input type="text" autocomplete="name" value="Anjali Menon"/>
+    <label>Transfer Amount (INR)</label>
+    <input type="number" value="50000"/>
+  </div>
+
+  <!-- Same-origin iframe containing a login form with PII -->
+  <div class="iframe-label">Secure Payment Authentication (embedded widget)</div>
+  <div class="iframe-wrap">
+    <div class="iframe-badge">🔒 Embedded Secure Frame — Same Origin</div>
+    <iframe id="payment-frame" height="260"
+      srcdoc="
+        <!DOCTYPE html>
+        <html><head>
+        <style>
+          *{box-sizing:border-box;margin:0;padding:0}
+          body{font-family:Segoe UI,sans-serif;padding:20px;background:#fff}
+          label{display:block;font-size:11px;font-weight:600;color:#4a5568;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}
+          input{width:100%;border:1px solid #e2e8f0;border-radius:5px;padding:9px 12px;font-size:13px;color:#2d3748;outline:none;margin-bottom:14px}
+          .row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+          .btn{width:100%;padding:11px;background:#276749;color:#fff;border:none;border-radius:5px;font-size:13px;font-weight:600;cursor:pointer}
+        </style>
+        </head><body>
+        <label>Debit Card Number</label>
+        <input type='text' autocomplete='cc-number' placeholder='4532 7512 8934 1123'/>
+        <div class='row'>
+          <div><label>Expiry</label><input type='text' autocomplete='cc-exp' placeholder='MM/YY'/></div>
+          <div><label>CVV</label><input type='text' name='cvv' placeholder='123' maxlength='4'/></div>
+        </div>
+        <label>NetBanking PIN</label>
+        <input type='password' autocomplete='current-password' placeholder='Enter your 6-digit PIN'/>
+        <button class='btn'>Authorise Payment</button>
+        </body></html>
+      ">
+    </iframe>
+  </div>
+</div>
+<script>window.__BM_PAGE_LOAD_T0 = Date.now();</script>
+</body>
+</html>

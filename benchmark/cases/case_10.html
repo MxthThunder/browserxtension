@@ -1,0 +1,68 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>Loan Application — Step 2 of 3</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f7fafc;padding:40px 20px}
+.container{max-width:540px;margin:0 auto}
+.progress{display:flex;gap:0;margin-bottom:32px}
+.step{flex:1;height:4px;background:#e2e8f0;border-radius:2px}
+.step.done{background:#48bb78}.step.active{background:#4299e1}
+h1{font-size:20px;font-weight:700;color:#1a202c;margin-bottom:6px}
+.sub{font-size:13px;color:#718096;margin-bottom:28px}
+#static-section{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:24px;margin-bottom:20px}
+#static-section p{font-size:14px;color:#4a5568;margin-bottom:8px}
+#dynamic-section{min-height:200px;background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:24px}
+.loading{display:flex;align-items:center;gap:10px;color:#a0aec0;font-size:14px}
+.spinner{width:20px;height:20px;border:2px solid #e2e8f0;border-top-color:#4299e1;border-radius:50%;animation:spin .8s linear infinite}
+@keyframes spin{to{transform:rotate(360deg)}}
+label{display:block;font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
+input{width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px;font-size:14px;color:#2d3748;outline:none;margin-bottom:18px}
+input:focus{border-color:#4299e1}
+.hidden{display:none}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="progress"><div class="step done"></div><div class="step active"></div><div class="step"></div></div>
+  <h1>Financial Details</h1>
+  <p class="sub">Please provide your income and bank information. Fields are loaded after identity verification.</p>
+
+  <div id="static-section">
+    <p>✅ Identity verified — Arjun Rajendran (DOB: 14/07/1992)</p>
+    <p>Loading financial form fields…</p>
+  </div>
+
+  <div id="dynamic-section">
+    <div class="loading" id="loading-indicator">
+      <div class="spinner"></div>
+      <span>Fetching pre-filled data from credit bureau…</span>
+    </div>
+
+    <!-- These PII fields are dynamically injected AFTER a 3-second delay -->
+    <div id="injected-fields" class="hidden">
+      <label>Annual Income (INR)</label>
+      <input type="text" name="salary" autocomplete="off" value="12,00,000"/>
+      <label>Primary Bank Account Number</label>
+      <input type="text" name="account_number" autocomplete="off" value="3928 4712 0056"/>
+      <label>IFSC Code</label>
+      <input type="text" name="ifsc" autocomplete="off" value="SBIN0001234"/>
+      <label>Linked Mobile for OTP</label>
+      <input type="tel" autocomplete="tel" value="+91 98450 76543"/>
+      <label>PAN Card Number</label>
+      <input type="text" name="pan" autocomplete="off" value="BNZPM4756K"/>
+    </div>
+  </div>
+</div>
+
+<script>
+window.__BM_PAGE_LOAD_T0 = Date.now();
+// Simulate backend fetching pre-filled data: inject PII after 3 seconds
+setTimeout(() => {
+  document.getElementById('loading-indicator').style.display = 'none';
+  document.getElementById('injected-fields').classList.remove('hidden');
+  // Signal that MutationObserver should pick this up
+}, 3000);
+</script>
+</body>
+</html>

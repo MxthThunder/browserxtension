@@ -2,150 +2,193 @@
   {
     "id": "case_01",
     "category": "form_pii",
-    "name": "Standard Login Screen",
-    "description": "Username and password inputs on enterprise portal",
+    "name": "Standard Corporate Login",
+    "description": "Username + password fields. Easy baseline — well-labeled DOM inputs.",
+    "expected_min_detections": 1,
     "ground_truth_pii": [
-      { "type": "password", "label": "type=password", "box": [120, 220, 320, 36] }
+      { "type": "password", "label": "type=password autocomplete=current-password", "box": [0, 0, 0, 0], "note": "box measured at runtime" }
     ]
   },
   {
     "id": "case_02",
     "category": "financial",
-    "name": "E-Commerce Checkout Flow",
-    "description": "Credit card number, exp date, CVV security code, and billing email",
+    "name": "E-Commerce Checkout — Multi-field PII",
+    "description": "Name, email, cc-number, cc-exp, CVV, address, postal-code, phone.",
+    "expected_min_detections": 5,
     "ground_truth_pii": [
-      { "type": "card_number", "label": "autocomplete=cc-number", "box": [80, 150, 340, 36] },
-      { "type": "card_exp", "label": "autocomplete=cc-exp", "box": [80, 200, 160, 36] },
-      { "type": "cvv", "label": "name=cvv", "box": [260, 200, 160, 36] },
-      { "type": "email", "label": "autocomplete=email", "box": [80, 100, 340, 36] }
+      { "type": "name",        "label": "autocomplete=name" },
+      { "type": "email",       "label": "autocomplete=email" },
+      { "type": "card_number", "label": "autocomplete=cc-number" },
+      { "type": "card_exp",    "label": "autocomplete=cc-exp" },
+      { "type": "cvv",         "label": "name=cvv" },
+      { "type": "cc_name",     "label": "autocomplete=cc-name" },
+      { "type": "address",     "label": "autocomplete=street-address" },
+      { "type": "postal_code", "label": "autocomplete=postal-code" },
+      { "type": "phone",       "label": "autocomplete=tel" }
     ]
   },
   {
     "id": "case_03",
-    "category": "mixed_kyc",
-    "name": "Banking KYC Portal with Webcam Video",
-    "description": "Full legal name, SSN/Aadhaar, password, credit card, and live webcam video feed",
+    "category": "visual_canvas",
+    "name": "PII Drawn on Canvas — DOM Blind",
+    "description": "Account number, IFSC, PAN, phone drawn as pixels on <canvas>. DOM scanner is blind. OCR path only.",
+    "expected_min_detections": 0,
     "ground_truth_pii": [
-      { "type": "name", "label": "autocomplete=name", "box": [40, 120, 320, 36] },
-      { "type": "national_id", "label": "regex: ssn/aadhaar", "box": [40, 180, 150, 36] },
-      { "type": "dob", "label": "autocomplete=bday", "box": [210, 180, 150, 36] },
-      { "type": "password", "label": "type=password", "box": [40, 240, 320, 36] },
-      { "type": "card_number", "label": "autocomplete=cc-number", "box": [40, 300, 320, 36] },
-      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [480, 140, 260, 90] }
+      { "type": "canvas_account", "label": "canvas pixel text — non-DOM", "note": "Detected only by OCR/Vision layer, not DOM scan" }
     ]
   },
   {
     "id": "case_04",
-    "category": "visual_face",
-    "name": "Single Person Video Call Feed",
-    "description": "Full-screen webcam video feed of remote operator",
+    "category": "visual_image",
+    "name": "Aadhaar Card in Base64 Image",
+    "description": "Aadhaar card rendered as programmatic canvas-to-img base64 PNG. PII is pixel data.",
+    "expected_min_detections": 0,
     "ground_truth_pii": [
-      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [240, 150, 480, 140] }
+      { "type": "face_proxy",   "label": "img alt=aadhaar identity card", "note": "SENSITIVE_IMG_PATTERN should catch alt text" },
+      { "type": "national_id",  "label": "base64 image pixel text — Aadhaar 9876 5432 1098" }
     ]
   },
   {
     "id": "case_05",
-    "category": "form_pii",
-    "name": "Medical Patient Intake",
-    "description": "Date of birth, social security number, insurance policy ID, emergency phone",
+    "category": "shadow_dom",
+    "name": "Shadow DOM Password Fields",
+    "description": "Two password inputs inside an open Shadow DOM. Standard querySelectorAll is blind — collectShadowInputs required.",
+    "expected_min_detections": 2,
     "ground_truth_pii": [
-      { "type": "national_id", "label": "regex: ssn", "box": [100, 160, 280, 34] },
-      { "type": "dob", "label": "autocomplete=bday", "box": [100, 210, 280, 34] },
-      { "type": "phone", "label": "autocomplete=tel", "box": [100, 260, 280, 34] }
+      { "type": "password", "label": "shadow-dom type=password autocomplete=current-password" },
+      { "type": "pin",      "label": "shadow-dom type=password name=pin" }
     ]
   },
   {
     "id": "case_06",
-    "category": "financial",
-    "name": "Tax / Income Filing Statement",
-    "description": "Annual gross salary, bank account number, IFSC / routing code, PAN card",
+    "category": "form_pii",
+    "name": "ContentEditable Aadhaar & Phone",
+    "description": "PII in contenteditable divs with aria-label and data-label, no type= or autocomplete=.",
+    "expected_min_detections": 1,
     "ground_truth_pii": [
-      { "type": "salary", "label": "regex: salary", "box": [140, 130, 240, 32] },
-      { "type": "account_number", "label": "regex: account.number", "box": [140, 180, 240, 32] },
-      { "type": "ifsc", "label": "regex: ifsc", "box": [140, 230, 240, 32] },
-      { "type": "pan", "label": "regex: pan", "box": [140, 280, 240, 32] }
+      { "type": "national_id", "label": "contenteditable aria-label=Aadhaar number" },
+      { "type": "phone",       "label": "contenteditable data-label=Mobile Number" }
     ]
   },
   {
     "id": "case_07",
-    "category": "visual_face",
-    "name": "Dual Interview Video Conference",
-    "description": "Two video tiles with interviewer and candidate faces visible",
+    "category": "form_pii",
+    "name": "Disguised Fields — type=text with sensitive autocomplete/name",
+    "description": "OTP field with autocomplete=one-time-code but type=text. Backup field with name=pwd but type=text.",
+    "expected_min_detections": 1,
     "ground_truth_pii": [
-      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [120, 160, 220, 75] },
-      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [420, 160, 220, 75] }
+      { "type": "otp",      "label": "type=text autocomplete=one-time-code" },
+      { "type": "password", "label": "type=text name=pwd" }
     ]
   },
   {
     "id": "case_08",
-    "category": "form_pii",
-    "name": "Two-Factor Auth OTP Screen",
-    "description": "6-digit one-time passcode and recovery phone number",
+    "category": "dynamic_visibility",
+    "name": "PII in JS-Triggered Tooltips",
+    "description": "Phone, Aadhaar, bank account revealed in tooltips triggered by JS after 600ms. Tests post-load DOM mutation scanning.",
+    "expected_min_detections": 0,
     "ground_truth_pii": [
-      { "type": "otp", "label": "autocomplete=one-time-code", "box": [180, 210, 200, 42] }
+      { "type": "phone",      "label": "tooltip visible text +91 98450 76543" },
+      { "type": "national_id","label": "tooltip visible text 9876 5432 1098" },
+      { "type": "account",    "label": "tooltip visible text 39284712005600" }
     ]
   },
   {
     "id": "case_09",
-    "category": "mixed_kyc",
-    "name": "Government Passport Renewal Form",
-    "description": "Passport number, full legal name, expiration date, holder portrait photo",
+    "category": "partial_masking",
+    "name": "Partially Masked Financial Data",
+    "description": "4532-****-****-1123, SBIN0001234 (IFSC, unmasked), *****4756K (PAN). Tests regex on obfuscated strings.",
+    "expected_min_detections": 1,
     "ground_truth_pii": [
-      { "type": "passport", "label": "regex: passport", "box": [90, 140, 260, 34] },
-      { "type": "name", "label": "autocomplete=name", "box": [90, 190, 260, 34] },
-      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [450, 120, 180, 65] }
+      { "type": "card_partial",  "label": "inline text 4532-****-****-1123" },
+      { "type": "ifsc",          "label": "inline text SBIN0001234 — fully visible" },
+      { "type": "account_partial","label": "inline text 3928-****-****-0056" }
     ]
   },
   {
     "id": "case_10",
-    "category": "financial",
-    "name": "Crypto Wallet Key Recovery",
-    "description": "Secret recovery passphrase / private key textarea and wallet pin",
+    "category": "dynamic_injection",
+    "name": "Dynamically Injected PII Fields (3s delay)",
+    "description": "Salary, account number, IFSC, phone, PAN injected via JS after 3 seconds. Tests MutationObserver re-scan.",
+    "expected_min_detections": 3,
     "ground_truth_pii": [
-      { "type": "password", "label": "type=password", "box": [110, 170, 320, 38] },
-      { "type": "pin", "label": "regex: pin", "box": [110, 230, 140, 36] }
+      { "type": "salary",         "label": "name=salary dynamically injected" },
+      { "type": "account_number", "label": "name=account_number dynamically injected" },
+      { "type": "ifsc",           "label": "name=ifsc dynamically injected" },
+      { "type": "phone",          "label": "autocomplete=tel dynamically injected" },
+      { "type": "pan",            "label": "name=pan dynamically injected" }
     ]
   },
   {
     "id": "case_11",
-    "category": "form_pii",
-    "name": "Shipping & Delivery Address",
-    "description": "Recipient full name, street address, postal code, mobile number",
-    "ground_truth_pii": [
-      { "type": "name", "label": "autocomplete=name", "box": [70, 110, 310, 34] },
-      { "type": "address", "label": "autocomplete=street-address", "box": [70, 160, 310, 34] },
-      { "type": "postal", "label": "autocomplete=postal-code", "box": [70, 210, 140, 34] },
-      { "type": "phone", "label": "autocomplete=tel", "box": [240, 210, 140, 34] }
-    ]
+    "category": "negative_control",
+    "name": "Product Catalog — Zero PII (False Positive Test)",
+    "description": "Public product catalog with 12-digit SKU codes that look like Aadhaar. Extension must produce 0 detections.",
+    "expected_min_detections": 0,
+    "ground_truth_pii": []
   },
   {
     "id": "case_12",
-    "category": "visual_face",
-    "name": "Desk Workspace with Person and Cell Phone",
-    "description": "Subject sitting at desk with smartphone and laptop displays",
+    "category": "iframe_pii",
+    "name": "Same-Origin Iframe Payment Widget",
+    "description": "cc-number, cc-exp, CVV, password inside a srcdoc iframe. Tests cross-frame DOM scanning.",
+    "expected_min_detections": 2,
     "ground_truth_pii": [
-      { "type": "face_proxy", "label": "VISION_FACE_PROXY", "box": [236, 148, 485, 206] }
+      { "type": "card_number", "label": "iframe: autocomplete=cc-number" },
+      { "type": "card_exp",    "label": "iframe: autocomplete=cc-exp" },
+      { "type": "cvv",         "label": "iframe: name=cvv" },
+      { "type": "password",    "label": "iframe: type=password autocomplete=current-password" }
     ]
   },
   {
     "id": "case_13",
-    "category": "negative_control",
-    "name": "Public News Article (Zero PII Baseline)",
-    "description": "Headlines, article body text, and search bar (No PII)",
-    "ground_truth_pii": []
+    "category": "visual_svg",
+    "name": "PII in SVG Text Elements",
+    "description": "Aadhaar, PAN, account number, IFSC, phone in SVG <text> nodes. Not standard HTML. Tests text-node + OCR extraction.",
+    "expected_min_detections": 0,
+    "ground_truth_pii": [
+      { "type": "national_id",   "label": "svg:text 9876 5432 1098" },
+      { "type": "pan",           "label": "svg:text BNZPM4756K" },
+      { "type": "account_number","label": "svg:text 3928 4712 0056" },
+      { "type": "ifsc",          "label": "svg:text SBIN0001234" },
+      { "type": "phone",         "label": "svg:text +91 98760 43210" }
+    ]
   },
   {
     "id": "case_14",
-    "category": "negative_control",
-    "name": "E-Commerce Public Product Catalog",
-    "description": "Product grid, filters, ratings, and add-to-cart buttons (No PII)",
-    "ground_truth_pii": []
+    "category": "mixed_kyc",
+    "name": "Full KYC Portal — All PII Types",
+    "description": "Maximum-density test: name, DOB, email, two phones, Aadhaar, PAN, passport, account, IFSC, salary, cc-number, cc-exp, cvv, pin, address, postal, webcam video, new password.",
+    "expected_min_detections": 8,
+    "ground_truth_pii": [
+      { "type": "name",           "label": "autocomplete=given-name" },
+      { "type": "name",           "label": "autocomplete=family-name" },
+      { "type": "dob",            "label": "autocomplete=bday" },
+      { "type": "email",          "label": "autocomplete=email" },
+      { "type": "phone",          "label": "autocomplete=tel (primary)" },
+      { "type": "phone",          "label": "autocomplete=tel (alternate)" },
+      { "type": "national_id",    "label": "name=aadhaar" },
+      { "type": "pan",            "label": "name=pan" },
+      { "type": "passport",       "label": "name=passport" },
+      { "type": "account_number", "label": "name=account_number" },
+      { "type": "ifsc",           "label": "name=ifsc" },
+      { "type": "salary",         "label": "name=salary" },
+      { "type": "card_number",    "label": "autocomplete=cc-number" },
+      { "type": "card_exp",       "label": "autocomplete=cc-exp" },
+      { "type": "cvv",            "label": "name=cvv" },
+      { "type": "pin",            "label": "type=password name=pin" },
+      { "type": "address",        "label": "autocomplete=street-address" },
+      { "type": "postal_code",    "label": "autocomplete=postal-code" },
+      { "type": "face_proxy",     "label": "video.kyc-camera data-purpose=biometric" },
+      { "type": "password",       "label": "autocomplete=new-password" }
+    ]
   },
   {
     "id": "case_15",
     "category": "negative_control",
-    "name": "Public Documentation / Code Viewer",
-    "description": "API documentation and code snippets with public links (No PII)",
+    "name": "Public News Article — Zero PII Baseline",
+    "description": "Full newspaper-style news article with no form fields or sensitive numbers. Expects 0 detections.",
+    "expected_min_detections": 0,
     "ground_truth_pii": []
   }
 ]

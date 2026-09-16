@@ -1,10 +1,11 @@
 /**
- * Live Side-by-Side Telemetry HUD Controller (Day 3)
+ * Live Side-by-Side Telemetry HUD Controller
  */
 
 const btnCapture = document.getElementById("btnCapture");
 const btnAutoSync = document.getElementById("btnAutoSync");
 const btnOpenDemo = document.getElementById("btnOpenDemo");
+const btnOpenMCT = document.getElementById("btnOpenMCT");
 const btnDownloadPayload = document.getElementById("btnDownloadPayload");
 
 const backendBadge = document.getElementById("backendBadge");
@@ -12,6 +13,7 @@ const valLatency = document.getElementById("valLatency");
 const valBackendDesc = document.getElementById("valBackendDesc");
 const valDomPii = document.getElementById("valDomPii");
 const valVision = document.getElementById("valVision");
+const valWsFrames = document.getElementById("valWsFrames");
 
 const rawImage = document.getElementById("rawImage");
 const sanitizedImage = document.getElementById("sanitizedImage");
@@ -24,6 +26,169 @@ const jsonPreview = document.getElementById("jsonPreview");
 let isAutoSyncRunning = false;
 let autoSyncInterval = null;
 let lastResultPayload = null;
+
+// ── Telemetry Intercept Panel Logic ─────────────────────────────────────────
+// Receives WS frames forwarded by content.js's monkey-patch via chrome.runtime
+// messaging, applies the same MSOD rules as data_adapter.js, and renders the
+// raw vs. sanitized split view plus the live channel table.
+
+let wsFrameCount = 0;
+let lastWsUrl = null;
+
+// MSOD redaction patterns (mirrors data_adapter.js _maskSensitiveString)
+const MSOD_RULES = [
+  { re: /\b\d{1,2}(?:\.\d+)?°?\s*[NS][,\s]+\d{1,3}(?:\.\d+)?°?\s*[EW]\b/gi,
+    replacement: "[RESTRICTED_COORDINATES]" },
+  { re: /\b(?:OP-[A-Z0-9]{4,10}|USRC\/[A-Z0-9\/-]+)\b/gi,
+    replacement: "[OPERATOR_ID]" },
+  { re: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g,
+    replacement: "[INTERNAL_IP]" },
+];
+
+function applyMsod(str) {
+  if (typeof str !== "string") return { out: str, masked: false };
+  let out = str;
+  let masked = false;
+  for (const { re, replacement } of MSOD_RULES) {
+    const replaced = out.replace(re, replacement);
+    if (replaced !== out) masked = true;
+    out = replaced;
+  }
+  return { out, masked };
+}
+
+function sanitizeFrameForLLM(frame) {
+  // Deep-clone and apply MSOD to all string leaf values
+  const mask = (obj) => {
+    if (typeof obj === "string") return applyMsod(obj).out;
+    if (Array.isArray(obj)) return obj.map(mask);
+    if (obj && typeof obj === "object") {
+      const out = {};
+      for (const [k, v] of Object.entries(obj)) out[k] = mask(v);
+      return out;
+    }
+    return obj;
+  };
+  return mask(frame);
+}
+
+function countMaskedFields(raw, sanitized) {
+  let count = 0;
+  const walk = (a, b) => {
+    if (typeof a === "string" && a !== b) { count++; return; }
+    if (Array.isArray(a)) { a.forEach((v, i) => walk(v, b?.[i])); return; }
+    if (a && typeof a === "object") {
+      for (const k of Object.keys(a)) walk(a[k], b?.[k]);
+    }
+  };
+  walk(raw, sanitized);
+  return count;
+}
+
+function renderTelemPreview(el, frame, isSanitized) {
+  // Compact JSON: show only the most relevant fields to keep the box readable
+  const compact = {};
+  if (frame.spacecraft) compact.spacecraft = frame.spacecraft;
+  if (frame.met_seconds !== undefined) compact.met_seconds = frame.met_seconds;
+  if (frame.orbit) compact.orbit = {
+    lat: frame.orbit.lat_deg, lon: frame.orbit.lon_deg,
+    alt_km: frame.orbit.alt_km, rev: frame.orbit.rev,
+  };
+  if (frame.eclss) compact.eclss = frame.eclss;
+  if (frame.eps) compact.eps = { solar_kw: frame.eps.solar_power_kw, soc: frame.eps.soc_pct, eclipse: frame.eps.eclipse };
+  if (frame.operator_id !== undefined) compact.operator_id = frame.operator_id;
+  const json = JSON.stringify(compact, null, 2);
+
+  // Highlight redacted tokens in orange
+  const escaped = json.replace(/[<>&]/g, c => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;" }[c]));
+  const highlighted = escaped
+    .replace(/("\[RESTRICTED_COORDINATES\]"|"\[OPERATOR_ID\]"|"\[INTERNAL_IP\]")/g,
+             '<span class="redacted">$1</span>')
+    .replace(/"(USRC\/[^"]+|\d+\.\d+[NS]\s+\d+\.\d+[EW])"/g,
+             isSanitized ? '$&' : '<span class="sensitive">"$1"</span>');
+  el.innerHTML = highlighted;
+}
+
+function renderChannelRows(channels) {
+  const container = document.getElementById("telemChannelRows");
+  if (!container || !Array.isArray(channels)) return;
+  document.getElementById("channelCount").textContent = channels.length;
+
+  const warns = channels.filter(c => c.status === "WARN" || c.status === "ALARM").length;
+  const sensitiveCount = channels.filter(c => c.sensitive).length;
+  let warnStr = warns > 0 ? `${warns} WARN/ALARM` : "";
+  if (sensitiveCount > 0) warnStr += (warnStr ? " · " : "") + `${sensitiveCount} MSOD-sensitive`;
+  document.getElementById("warnCount").textContent = warnStr;
+
+  container.innerHTML = channels.map(ch => {
+    const isSensitive = ch.sensitive;
+    const { out: safeVal, masked } = applyMsod(String(ch.value ?? ""));
+    const statusClass = ch.status === "WARN" ? "warn" : ch.status === "ALARM" ? "alarm" : "";
+    const rowClass = isSensitive ? "telem-row sensitive-row" : `telem-row ${statusClass}`;
+    const badgeClass = masked ? "ch-badge redacted-badge" : isSensitive ? "ch-badge msod" : `ch-badge ${(ch.status||"ok").toLowerCase()}`;
+    const badgeText = masked ? "REDACTED" : isSensitive ? "MSOD" : ch.status || "OK";
+    const displayVal = isSensitive ? safeVal : ch.value ?? "";
+
+    return `<div class="${rowClass}">
+      <span class="ch-id">${ch.id || ""}</span>
+      <span class="ch-name" title="${ch.name || ""}">${ch.name || ""}</span>
+      <span class="ch-val">${displayVal}</span>
+      <span class="ch-unit">${ch.unit || ""}</span>
+      <span class="${badgeClass}">${badgeText}</span>
+    </div>`;
+  }).join("");
+}
+
+function handleInterceptedFrame(fullFrame, wsUrl) {
+  wsFrameCount++;
+  valWsFrames.textContent = String(wsFrameCount);
+
+  // Update WS status pill
+  const pill = document.getElementById("wsStatusPill");
+  const statusText = document.getElementById("wsStatusText");
+  const urlLabel = document.getElementById("wsUrlLabel");
+  pill.className = "ws-pill connected";
+  statusText.textContent = "WS INTERCEPTED";
+  if (wsUrl && wsUrl !== lastWsUrl) {
+    lastWsUrl = wsUrl;
+    urlLabel.textContent = wsUrl.replace("ws://", "").replace("wss://", "");
+  }
+
+  // Timestamp
+  document.getElementById("rawFrameTs").textContent = new Date().toLocaleTimeString();
+
+  // Sanitize
+  const sanitized = sanitizeFrameForLLM(fullFrame);
+  const maskedCount = countMaskedFields(fullFrame, sanitized);
+  document.getElementById("redactedCountLabel").textContent =
+    maskedCount > 0 ? `${maskedCount} field${maskedCount > 1 ? "s" : ""} masked` : "0 fields masked";
+
+  // Render both previews
+  renderTelemPreview(document.getElementById("rawFramePreview"), fullFrame, false);
+  renderTelemPreview(document.getElementById("sanitizedFramePreview"), sanitized, true);
+
+  // Channel rows (from channels array if present)
+  if (Array.isArray(fullFrame.channels)) {
+    renderChannelRows(fullFrame.channels);
+  } else if (Array.isArray(fullFrame)) {
+    // Legacy flat-array format from /ws/telemetry
+    renderChannelRows(fullFrame.map(m => ({
+      id: m.mnemonic, name: m.mnemonic, value: m.value,
+      unit: m.unit || "", status: m.status || "OK",
+      sensitive: m.mnemonic === "CLASSIFIED_COORD" || m.mnemonic === "OPERATOR_BADGE",
+    })));
+  }
+}
+
+// Listen for WS frame notifications forwarded by the background script
+// (content.js → background.js → HUD via chrome.runtime)
+if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
+  chrome.runtime.onMessage.addListener((msg) => {
+    if (msg.type === "PRIVIBROWSE_WS_FRAME_CAPTURED" && msg.fullFrame) {
+      handleInterceptedFrame(msg.fullFrame, msg.wsUrl);
+    }
+  });
+}
 
 async function runCapture() {
   btnCapture.disabled = true;
@@ -281,6 +446,17 @@ btnOpenDemo.addEventListener("click", () => {
     window.open(demoUrl, "_blank");
   }
 });
+
+if (btnOpenMCT) {
+  btnOpenMCT.addEventListener("click", () => {
+    const mctUrl = "http://127.0.0.1:8001/openmct";
+    if (typeof chrome !== "undefined" && chrome.tabs?.create) {
+      chrome.tabs.create({ url: mctUrl });
+    } else {
+      window.open(mctUrl, "_blank");
+    }
+  });
+}
 
 btnDownloadPayload.addEventListener("click", () => {
   if (!lastResultPayload) {

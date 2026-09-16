@@ -1,0 +1,91 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>ISRO Store — Product Catalog</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f0f4f8;padding:32px 20px}
+.container{max-width:900px;margin:0 auto}
+h1{font-size:24px;font-weight:700;color:#1a202c;margin-bottom:6px}
+.sub{font-size:13px;color:#718096;margin-bottom:28px}
+.grid{display:grid;grid-template-columns:repeat(3,1fr);gap:20px}
+.product{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:20px}
+.product-img{height:100px;background:#edf2f7;border-radius:6px;margin-bottom:14px;display:flex;align-items:center;justify-content:center;font-size:36px}
+.product-name{font-size:14px;font-weight:600;color:#2d3748;margin-bottom:6px}
+.product-id{font-size:11px;color:#a0aec0;font-family:'Courier New',monospace;margin-bottom:8px}
+.product-price{font-size:16px;font-weight:700;color:#2d3748}
+.rating{font-size:12px;color:#f6ad55;margin-top:4px}
+.search-bar{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:12px 16px;margin-bottom:24px;display:flex;gap:12px}
+.search-bar input{flex:1;border:none;font-size:14px;color:#2d3748;outline:none}
+.category-tags{display:flex;gap:8px;margin-bottom:24px;flex-wrap:wrap}
+.tag{padding:4px 12px;border-radius:99px;background:#edf2f7;font-size:12px;color:#4a5568;cursor:pointer}
+.tag.active{background:#4299e1;color:#fff}
+/* NOTE: SKU/order codes are 12-digit numbers that LOOK like Aadhaar but are NOT PII */
+</style>
+</head>
+<body>
+<div class="container">
+  <h1>ISRO Model Shop</h1>
+  <p class="sub">Official merchandise — spacecraft scale models, mission posters, and educational kits.</p>
+
+  <!-- Non-PII search field -->
+  <div class="search-bar">
+    <input type="text" placeholder="Search products, SKUs, or mission names…"/>
+    <button>Search</button>
+  </div>
+
+  <div class="category-tags">
+    <span class="tag active">All Products</span>
+    <span class="tag">Scale Models</span>
+    <span class="tag">Mission Posters</span>
+    <span class="tag">Educational Kits</span>
+  </div>
+
+  <div class="grid">
+    <div class="product">
+      <div class="product-img">🚀</div>
+      <div class="product-name">PSLV-C56 Scale Model (1:100)</div>
+      <!-- 12-digit SKU — looks like Aadhaar but is NOT PII. Tests false positive. -->
+      <div class="product-id">SKU: 748392018456</div>
+      <div class="product-price">₹1,299</div>
+      <div class="rating">★★★★☆ (142 reviews)</div>
+    </div>
+    <div class="product">
+      <div class="product-img">🌙</div>
+      <div class="product-name">Chandrayaan-3 Mission Poster (A2)</div>
+      <div class="product-id">SKU: 293847561023</div>
+      <div class="product-price">₹349</div>
+      <div class="rating">★★★★★ (89 reviews)</div>
+    </div>
+    <div class="product">
+      <div class="product-img">🛰️</div>
+      <div class="product-name">ISRO Satellite Bus Kit — Educational</div>
+      <div class="product-id">SKU: 918273645091</div>
+      <div class="product-price">₹2,899</div>
+      <div class="rating">★★★★☆ (56 reviews)</div>
+    </div>
+    <div class="product">
+      <div class="product-img">🔭</div>
+      <div class="product-name">Gaganyaan Mission Commemorative Badge</div>
+      <div class="product-id">SKU: 563728190445</div>
+      <div class="product-price">₹199</div>
+      <div class="rating">★★★★★ (201 reviews)</div>
+    </div>
+    <div class="product">
+      <div class="product-img">📡</div>
+      <div class="product-name">ASTROSAT Observatory Model</div>
+      <div class="product-id">SKU: 381920475638</div>
+      <div class="product-price">₹3,499</div>
+      <div class="rating">★★★★☆ (34 reviews)</div>
+    </div>
+    <div class="product">
+      <div class="product-img">🪐</div>
+      <div class="product-name">Mars Orbiter Mission Patch (Embroidered)</div>
+      <div class="product-id">SKU: 729384756102</div>
+      <div class="product-price">₹449</div>
+      <div class="rating">★★★★★ (178 reviews)</div>
+    </div>
+  </div>
+</div>
+<script>window.__BM_PAGE_LOAD_T0 = Date.now();</script>
+</body>
+</html>

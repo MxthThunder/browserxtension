@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>SecureVault — PIN Entry</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#0f172a;display:flex;align-items:center;justify-content:center;height:100vh;color:#e2e8f0}
+.vault{background:#1e293b;border:1px solid #334155;border-radius:12px;padding:48px 40px;width:420px;text-align:center}
+h1{font-size:20px;font-weight:700;margin-bottom:8px;color:#f1f5f9}
+.desc{font-size:13px;color:#94a3b8;margin-bottom:32px}
+.note{font-size:11px;color:#475569;margin-top:20px;font-style:italic}
+/* The shadow host is invisible — PII lives inside the shadow DOM */
+#shadow-host{width:100%}
+</style>
+</head>
+<body>
+<div class="vault">
+  <h1>SecureVault Access</h1>
+  <p class="desc">Enter your vault master password to unlock encrypted credentials.</p>
+  <!-- Shadow DOM host: the input field lives entirely inside an encapsulated shadow root -->
+  <div id="shadow-host"></div>
+  <p class="note">Form element rendered inside Shadow DOM — standard DOM queries cannot access it</p>
+</div>
+<script>
+window.__BM_PAGE_LOAD_T0 = Date.now();
+const host = document.getElementById('shadow-host');
+const shadow = host.attachShadow({ mode: 'open' });
+
+// Inject styled password input into the shadow root
+shadow.innerHTML = `
+  <style>
+    label { display:block; font-size:12px; font-weight:600; color:#94a3b8; text-align:left; margin-bottom:6px; text-transform:uppercase; letter-spacing:.05em; }
+    input { width:100%; border:1px solid #334155; border-radius:6px; padding:12px 14px; font-size:15px;
+            background:#0f172a; color:#f1f5f9; outline:none; margin-bottom:12px; }
+    input:focus { border-color:#6366f1; box-shadow:0 0 0 3px rgba(99,102,241,.2); }
+    button { width:100%; padding:12px; background:#6366f1; color:#fff; border:none; border-radius:6px;
+             font-size:14px; font-weight:600; cursor:pointer; }
+  </style>
+  <label for="vault-pw">Master Password</label>
+  <input id="vault-pw" type="password" autocomplete="current-password" placeholder="Enter master password"/>
+  <label for="vault-pin">Recovery PIN</label>
+  <input id="vault-pin" type="password" name="pin" placeholder="6-digit recovery PIN" maxlength="6"/>
+  <button>Unlock Vault</button>
+`;
+</script>
+</body>
+</html>

@@ -1,0 +1,56 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>Data Export — SVG Report Viewer</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f7fafc;padding:40px 20px;display:flex;flex-direction:column;align-items:center}
+h1{font-size:20px;font-weight:700;color:#1a202c;margin-bottom:8px}
+.sub{font-size:13px;color:#718096;margin-bottom:28px;text-align:center}
+.svg-frame{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:24px;box-shadow:0 2px 12px rgba(0,0,0,.06)}
+.note{font-size:11px;color:#a0aec0;margin-top:12px;text-align:center}
+</style>
+</head>
+<body>
+<h1>Employee PII Report — SVG Export</h1>
+<p class="sub">Payroll data exported as scalable vector graphics. Text is rendered as SVG &lt;text&gt; elements, not HTML DOM nodes.</p>
+
+<div class="svg-frame">
+  <!-- PII lives inside SVG <text> tags — NOT standard HTML input/span elements -->
+  <svg width="520" height="300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="Employee PII report">
+    <!-- Header -->
+    <rect width="520" height="44" fill="#0a3d91" rx="4"/>
+    <text x="16" y="28" fill="white" font-family="Arial" font-size="14" font-weight="bold">ISRO Payroll Division — Confidential Employee Record</text>
+
+    <!-- Table rows with PII text nodes -->
+    <rect y="44" width="520" height="1" fill="#e2e8f0"/>
+
+    <text x="16" y="76" font-family="Courier New" font-size="12" fill="#4a5568">Employee Name  :</text>
+    <text x="200" y="76" font-family="Courier New" font-size="12" fill="#1a202c" font-weight="bold">PRIYA NAIR</text>
+
+    <text x="16" y="102" font-family="Courier New" font-size="12" fill="#4a5568">Aadhaar Number :</text>
+    <text x="200" y="102" font-family="Courier New" font-size="12" fill="#c53030">9876 5432 1098</text>
+
+    <text x="16" y="128" font-family="Courier New" font-size="12" fill="#4a5568">PAN Card       :</text>
+    <text x="200" y="128" font-family="Courier New" font-size="12" fill="#c53030">BNZPM4756K</text>
+
+    <text x="16" y="154" font-family="Courier New" font-size="12" fill="#4a5568">Bank Account   :</text>
+    <text x="200" y="154" font-family="Courier New" font-size="12" fill="#c53030">3928 4712 0056</text>
+
+    <text x="16" y="180" font-family="Courier New" font-size="12" fill="#4a5568">IFSC Code      :</text>
+    <text x="200" y="180" font-family="Courier New" font-size="12" fill="#c53030">SBIN0001234</text>
+
+    <text x="16" y="206" font-family="Courier New" font-size="12" fill="#4a5568">Mobile         :</text>
+    <text x="200" y="206" font-family="Courier New" font-size="12" fill="#c53030">+91 98760 43210</text>
+
+    <text x="16" y="232" font-family="Courier New" font-size="12" fill="#4a5568">Gross Salary   :</text>
+    <text x="200" y="232" font-family="Courier New" font-size="12" fill="#276749">₹1,20,000 / month</text>
+
+    <!-- Footer rule -->
+    <rect y="255" width="520" height="1" fill="#e2e8f0"/>
+    <text x="16" y="275" font-family="Arial" font-size="10" fill="#a0aec0">CONFIDENTIAL — For authorised ISRO HR personnel only. Unauthorised disclosure prohibited.</text>
+  </svg>
+</div>
+<p class="note">All data rendered as SVG &lt;text&gt; nodes — tests OCR / text-node extraction outside standard HTML</p>
+<script>window.__BM_PAGE_LOAD_T0 = Date.now();</script>
+</body>
+</html>

@@ -1,0 +1,49 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>eKYC Verification — Aadhaar Entry</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f7fafc;display:flex;align-items:center;justify-content:center;min-height:100vh}
+.card{background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.1);padding:48px 40px;width:480px}
+h1{font-size:20px;font-weight:700;color:#1a202c;margin-bottom:6px}
+.sub{font-size:13px;color:#718096;margin-bottom:28px}
+.field-label{font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
+/* The PII field uses contenteditable, NOT <input> — no type= or autocomplete= attribute */
+.editable-field{
+  width:100%; min-height:44px; border:1px solid #e2e8f0; border-radius:6px;
+  padding:10px 14px; font-size:15px; color:#2d3748; outline:none;
+  font-family:'Courier New',monospace; letter-spacing:.08em; margin-bottom:20px;
+}
+.editable-field:focus{border-color:#e53e3e; box-shadow:0 0 0 3px rgba(229,62,62,.1)}
+.editable-field[placeholder]:empty::before{content:attr(placeholder);color:#a0aec0;font-family:'Segoe UI',sans-serif;letter-spacing:normal}
+.hint{font-size:11px;color:#a0aec0;margin-top:-16px;margin-bottom:20px}
+input[type="date"]{width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px;font-size:14px;outline:none;margin-bottom:20px}
+.btn{width:100%;padding:12px;background:#e53e3e;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>eKYC Identity Verification</h1>
+  <p class="sub">Enter your Aadhaar number as shown on your card. This field is editable plain text — not a standard form input.</p>
+
+  <div class="field-label">Aadhaar Number (12 digits)</div>
+  <!-- contenteditable div — no type=, no autocomplete=, tests name/pattern heuristics -->
+  <div class="editable-field" contenteditable="true" id="aadhaar-field"
+       placeholder="XXXX  XXXX  XXXX"
+       data-label="Aadhaar Number"
+       aria-label="Aadhaar number input"></div>
+  <p class="hint">Format: 9876 5432 1098</p>
+
+  <div class="field-label">Date of Birth</div>
+  <input type="date" autocomplete="bday" value="1992-07-14"/>
+
+  <div class="field-label">Registered Mobile</div>
+  <!-- Another contenteditable with phone data -->
+  <div class="editable-field" contenteditable="true"
+       data-label="Mobile Number linked to Aadhaar"
+       aria-label="Mobile number">+91 98760 43210</div>
+
+  <button class="btn">Verify Identity</button>
+</div>
+</body>
+</html>

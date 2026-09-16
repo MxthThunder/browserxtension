@@ -1,0 +1,105 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>Kotak Bank — Full KYC Onboarding</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f7fafc;padding:32px 16px}
+.container{max-width:680px;margin:0 auto}
+.bank-header{display:flex;align-items:center;gap:12px;margin-bottom:24px;padding-bottom:16px;border-bottom:2px solid #e2e8f0}
+.bank-logo{width:40px;height:40px;background:#c0392b;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:16px}
+h1{font-size:20px;font-weight:700;color:#1a202c}
+.section{background:#fff;border:1px solid #e2e8f0;border-radius:8px;padding:24px;margin-bottom:16px}
+.section-title{font-size:12px;font-weight:700;color:#4a5568;text-transform:uppercase;letter-spacing:.08em;margin-bottom:16px;padding-bottom:8px;border-bottom:1px solid #f0f4f8}
+.row{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.row3{display:grid;grid-template-columns:1fr 1fr 1fr;gap:10px}
+label{display:block;font-size:11px;font-weight:600;color:#718096;margin-bottom:5px;text-transform:uppercase;letter-spacing:.04em}
+input,select{width:100%;border:1px solid #e2e8f0;border-radius:5px;padding:9px 12px;font-size:13px;color:#2d3748;outline:none;margin-bottom:14px}
+input:focus,select:focus{border-color:#c0392b;box-shadow:0 0 0 2px rgba(192,57,43,.1)}
+video{width:100%;height:160px;background:#1a202c;border-radius:6px;display:block;object-fit:cover}
+.video-label{font-size:11px;color:#a0aec0;margin-top:6px;text-align:center;margin-bottom:14px}
+.btn{width:100%;padding:13px;background:#c0392b;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:700;cursor:pointer;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="bank-header">
+    <div class="bank-logo">K</div>
+    <div><h1>Complete KYC Verification</h1><p style="font-size:12px;color:#718096">All fields are mandatory for account opening</p></div>
+  </div>
+
+  <!-- SECTION 1: Personal -->
+  <div class="section">
+    <div class="section-title">Personal Information</div>
+    <div class="row">
+      <div><label>First Name</label><input type="text" autocomplete="given-name" value="Priya"/></div>
+      <div><label>Last Name</label><input type="text" autocomplete="family-name" value="Nair"/></div>
+    </div>
+    <div class="row">
+      <div><label>Date of Birth</label><input type="date" autocomplete="bday" value="1992-07-14"/></div>
+      <div><label>Gender</label><select><option>Female</option><option>Male</option><option>Other</option></select></div>
+    </div>
+    <label>Email Address</label>
+    <input type="email" autocomplete="email" value="priya.nair@gmail.com"/>
+    <div class="row">
+      <div><label>Mobile Number</label><input type="tel" autocomplete="tel" value="+91 98760 43210"/></div>
+      <div><label>Alternate Phone</label><input type="tel" autocomplete="tel" value="+91 44 2345 6789"/></div>
+    </div>
+  </div>
+
+  <!-- SECTION 2: Identity Documents -->
+  <div class="section">
+    <div class="section-title">Identity Documents</div>
+    <div class="row">
+      <div><label>Aadhaar Number</label><input type="text" name="aadhaar" value="9876 5432 1098"/></div>
+      <div><label>PAN Card</label><input type="text" name="pan" value="BNZPM4756K"/></div>
+    </div>
+    <label>Passport Number (if available)</label>
+    <input type="text" name="passport" value="A1234567"/>
+  </div>
+
+  <!-- SECTION 3: Financial -->
+  <div class="section">
+    <div class="section-title">Financial Details</div>
+    <label>Primary Bank Account Number</label>
+    <input type="text" name="account_number" value="3928 4712 0056"/>
+    <div class="row">
+      <div><label>IFSC Code</label><input type="text" name="ifsc" value="SBIN0001234"/></div>
+      <div><label>Annual Income (INR)</label><input type="text" name="salary" value="12,00,000"/></div>
+    </div>
+    <label>Credit Card Number (for pre-approved offer)</label>
+    <input type="text" autocomplete="cc-number" value="4532 7512 8934 1123"/>
+    <div class="row3">
+      <div><label>Expiry</label><input type="text" autocomplete="cc-exp" value="09/28"/></div>
+      <div><label>CVV</label><input type="text" name="cvv" value="847"/></div>
+      <div><label>Card PIN</label><input type="password" name="pin" placeholder="4-digit PIN"/></div>
+    </div>
+  </div>
+
+  <!-- SECTION 4: Address -->
+  <div class="section">
+    <div class="section-title">Residential Address</div>
+    <label>Street Address</label>
+    <input type="text" autocomplete="street-address" value="42, 3rd Cross, Indiranagar"/>
+    <div class="row">
+      <div><label>City</label><input type="text" autocomplete="address-level2" value="Bengaluru"/></div>
+      <div><label>PIN Code</label><input type="text" autocomplete="postal-code" value="560038"/></div>
+    </div>
+  </div>
+
+  <!-- SECTION 5: Biometric / Live video -->
+  <div class="section">
+    <div class="section-title">Live Photo Verification</div>
+    <!-- Simulated webcam video element (no actual stream in benchmark) -->
+    <video id="kyc-video" autoplay muted class="kyc-camera" data-purpose="biometric kyc selfie capture" aria-label="Live KYC webcam feed">
+      <source src="" type="video/mp4"/>
+    </video>
+    <p class="video-label">Live selfie capture — camera must be enabled for KYC completion</p>
+    <label>Net Banking Password (set new)</label>
+    <input type="password" autocomplete="new-password" placeholder="Minimum 8 characters, 1 uppercase, 1 symbol"/>
+  </div>
+
+  <button class="btn">Submit KYC Application</button>
+</div>
+<script>window.__BM_PAGE_LOAD_T0 = Date.now();</script>
+</body>
+</html>

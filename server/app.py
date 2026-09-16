@@ -204,6 +204,45 @@ FIELD_SYNONYMS = {
 }
 
 
+# ── Benchmark endpoints (Puppeteer E2E harness) ──────────────────────────────
+# Stores detection results per case_id so the Puppeteer runner can poll them.
+_benchmark_store: Dict[str, Any] = {}
+_benchmark_timings: Dict[str, float] = {}
+
+class BenchmarkReportItem(BaseModel):
+    case_id: str
+    boxes: List[Dict[str, Any]] = []
+    layer_counts: Dict[str, int] = {}
+    latency_ms: int = 0
+
+@app.post("/api/benchmark/report")
+async def benchmark_report(item: BenchmarkReportItem):
+    """Called by content.js when it finishes a scan on a benchmark page."""
+    _benchmark_store[item.case_id] = {
+        "ready": True,
+        "detected_boxes": item.boxes,
+        "layer_counts": item.layer_counts,
+        "latency_ms": item.latency_ms,
+        "recorded_at": time.time(),
+    }
+    return {"ok": True}
+
+@app.get("/api/benchmark/poll/{case_id}")
+async def benchmark_poll(case_id: str):
+    """Puppeteer polls this until ready=True."""
+    result = _benchmark_store.get(case_id)
+    if result and result.get("ready"):
+        return result
+    return {"ready": False}
+
+@app.post("/api/benchmark/clear/{case_id}")
+async def benchmark_clear(case_id: str):
+    """Puppeteer calls this before each test case to reset state."""
+    _benchmark_store.pop(case_id, None)
+    return {"ok": True}
+# ─────────────────────────────────────────────────────────────────────────────
+
+
 @app.get("/health")
 def health_check():
     ollama_host = os.getenv("OLLAMA_HOST", "http://127.0.0.1:11434")
@@ -235,6 +274,111 @@ def generate_simulated_telemetry_frame() -> List[Dict[str, Any]]:
     ]
 
 
+# ── Gaganyaan-H1 / Chandrayaan-4 Rich Telemetry Simulator ─────────────────────
+import math as _math
+_GAGANYAAN_START_TIME = time.time() - (14 * 3600 + 32 * 60 + 8)  # MET T+14:32:08 at server start
+_ORBIT_PERIOD_S = 5560          # ~92.7 min LEO at 400 km
+_INCLINATION_DEG = 51.64
+_CLASSIFIED_LAT = 13.03
+_CLASSIFIED_LON = 77.51
+
+def generate_gaganyaan_frame() -> Dict[str, Any]:
+    """
+    Generates a rich 1 Hz Gaganyaan-H1 / Chandrayaan-4 telemetry frame.
+    Orbital position computed from real MET using parametric LEO mechanics.
+    CLASSIFIED_COORD carries a sensitive lat/lon that the privacy agent must redact.
+    """
+    met = time.time() - _GAGANYAAN_START_TIME
+    phase = (met % _ORBIT_PERIOD_S) / _ORBIT_PERIOD_S * 2 * _math.pi
+
+    # True orbital lat/lon (sinusoidal approximation for a prograde LEO)
+    lat = round(_INCLINATION_DEG * _math.sin(phase), 4)
+    lon_offset = (met / _ORBIT_PERIOD_S) * 360 * 0.0694  # Earth rotation drift ~25°/orbit
+    lon = round(((_CLASSIFIED_LON + lon_offset + (met / 30)) % 360) - 180, 4)
+    alt = round(398.42 + 3.7 * _math.sin(phase * 2) + random.gauss(0, 0.05), 2)
+
+    # Eclipse cycle: spacecraft is in eclipse ~35% of each orbit
+    in_eclipse = _math.sin(phase + 0.8) < -0.4
+    solar_power = round((0 if in_eclipse else 4.82) + random.gauss(0, 0.04), 2)
+
+    # RCS pod 4 thermal anomaly (WARN state – demonstrable alarm)
+    rcs_pod4_temp = round(48.2 + random.gauss(0, 0.3), 1)
+
+    # Operator badge number — MSOD-sensitive, must be masked
+    operator_id = "USRC/SCI-SE/20911"
+
+    channels = [
+        {"id": "CH-101", "name": "CM_INTERNAL_TEMP",    "value": round(21.4 + random.gauss(0, 0.05), 1), "unit": "°C",   "status": "OK"},
+        {"id": "CH-102", "name": "CM_CABIN_PRES",        "value": round(101.3 + random.gauss(0, 0.03), 1), "unit": "kPa",  "status": "OK"},
+        {"id": "CH-108", "name": "SM_SOLAR_VOLT_A",      "value": round(124.6 + random.gauss(0, 0.2), 1),  "unit": "V",    "status": "OK"},
+        {"id": "CH-109", "name": "SM_SOLAR_VOLT_B",      "value": round(123.8 + random.gauss(0, 0.2), 1),  "unit": "V",    "status": "OK"},
+        {"id": "CH-204", "name": "RCS_POD_1_TEMP",       "value": rcs_pod4_temp,                            "unit": "°C",   "status": "WARN",  "limit": "Soft: 45°C, Hard: 55°C"},
+        {"id": "CH-212", "name": "NAVIC_CARRIER_LOCK",   "value": "TRUE",                                   "unit": "",     "status": "OK"},
+        {"id": "CH-301", "name": "UPLINK_BITRATE",       "value": 2.048,                                    "unit": "Mbps", "status": "OK"},
+        {"id": "CH-302", "name": "DOWNLINK_SNR",         "value": round(18.4 + random.gauss(0, 0.2), 1),   "unit": "dB",   "status": "OK"},
+        {"id": "CH-405", "name": "CRYO_LH2_STORAGE_P",  "value": round(3.41 + random.gauss(0, 0.01), 2),  "unit": "bar",  "status": "OK"},
+        {"id": "CH-511", "name": "PYRO_BUS_A_ARM",       "value": "SAFE",                                   "unit": "",     "status": "NOMINAL"},
+        # Sensitive fields — the privacy agent must redact these before the LLM sees them
+        {"id": "CH-COORD", "name": "CLASSIFIED_COORD",
+         "value": f"{abs(lat):.2f}{'N' if lat >= 0 else 'S'} {abs(lon):.2f}{'E' if lon >= 0 else 'W'}",
+         "unit": "", "status": "OK", "subsystem": "PAYLOAD", "sensitive": True},
+        {"id": "CH-OPR",   "name": "OPERATOR_BADGE",    "value": operator_id,
+         "unit": "", "status": "OK", "subsystem": "OPS",     "sensitive": True},
+    ]
+
+    return {
+        "spacecraft": "GAGANYAAN-H1",
+        "met_seconds": round(met, 2),
+        "timestamp": __import__("datetime").datetime.utcnow().isoformat() + "Z",
+        "orbit": {
+            "apogee_km":      round(400.2 + random.gauss(0, 0.04), 1),
+            "perigee_km":     round(392.8 + random.gauss(0, 0.04), 1),
+            "inclination_deg": _INCLINATION_DEG,
+            "velocity_kms":   round(7.682 + random.gauss(0, 0.001), 3),
+            "lat_deg":        lat,
+            "lon_deg":        lon,
+            "alt_km":         alt,
+            "rev":            224 + int(met / _ORBIT_PERIOD_S),
+        },
+        "eclss": {
+            "cabin_pressure_kpa": round(101.3 + random.gauss(0, 0.03), 1),
+            "po2_kpa":            round(21.2  + random.gauss(0, 0.02), 1),
+            "cabin_temp_c":       round(21.4  + random.gauss(0, 0.05), 1),
+        },
+        "eps": {
+            "solar_power_kw":  solar_power,
+            "soc_pct":         round(94.6 + random.gauss(0, 0.05), 1),
+            "solar_volt_a":    round(124.6 + random.gauss(0, 0.2), 1),
+            "solar_volt_b":    round(123.8 + random.gauss(0, 0.2), 1),
+            "eclipse":         in_eclipse,
+        },
+        "propulsion": {
+            "chamber_pressure_mpa": round(2.41 + _math.sin(met / 30) * 0.02 + random.gauss(0, 0.008), 3),
+            "oxidizer_bar":         round(18.2  + random.gauss(0, 0.04), 1),
+            "oxidizer_kg":          round(842.0 - met * 0.0008, 1),
+            "fuel_bar":             round(17.9  + random.gauss(0, 0.04), 1),
+            "fuel_kg":              round(512.4 - met * 0.0005, 1),
+            "he_bar":               round(220.4 + random.gauss(0, 0.15), 1),
+            "delta_v_residual_ms":  round(342.6 - met * 0.00002, 1),
+        },
+        "thermal": {
+            "cm_inner_c":  round(21.4  + random.gauss(0, 0.05), 1),
+            "cm_outer_c":  round(-14.8 + _math.sin(phase) * 28 + random.gauss(0, 0.4), 1),
+        },
+        "comm": {
+            "uplink_mbps":  2.048,
+            "snr_db":       round(18.4 + random.gauss(0, 0.2), 1),
+            "navic_sv":     8,
+            "navic_dop":    round(1.1 + random.gauss(0, 0.02), 2),
+            "dsn_dbm":      round(-98.4 + random.gauss(0, 0.3), 1),
+            "ground_station": "BLR-DSN32",
+        },
+        # Sensitive: operator badge (MSOD-sensitive, must be masked to [OPERATOR_ID])
+        "operator_id": operator_id,
+        "channels": channels,
+    }
+
+
 @app.get("/console", response_class=HTMLResponse)
 def get_mission_console():
     """Serves the interactive Mission Operations Simulation Console SPA."""
@@ -245,13 +389,50 @@ def get_mission_console():
     raise HTTPException(status_code=404, detail="Mission console HTML not found")
 
 
+@app.get("/openmct", response_class=HTMLResponse)
+def get_openmct_dashboard():
+    """Serves the live OpenMCT-style Gaganyaan/Chandrayaan mission dashboard."""
+    path = os.path.join(os.path.dirname(__file__), "..", "pii-agent-extension", "openmct_dashboard.html")
+    if os.path.isfile(path):
+        with open(path, "r", encoding="utf-8") as f:
+            return HTMLResponse(content=f.read())
+    raise HTTPException(status_code=404, detail="OpenMCT dashboard HTML not found")
+
+
 @app.websocket("/ws/telemetry")
 async def websocket_telemetry_endpoint(websocket: WebSocket):
-    """Streams 1 Hz simulated telemetry delta frames to the mission console."""
+    """Streams 1 Hz simulated telemetry delta frames to the legacy mission console."""
     await websocket.accept()
     try:
         while True:
             frame = generate_simulated_telemetry_frame()
+            await websocket.send_json(frame)
+            await asyncio.sleep(1.0)
+    except WebSocketDisconnect:
+        pass
+    except Exception:
+        pass
+
+
+@app.websocket("/ws/gaganyaan")
+async def websocket_gaganyaan_endpoint(websocket: WebSocket):
+    """
+    Streams rich 1 Hz Gaganyaan-H1 telemetry frames to the OpenMCT dashboard.
+
+    Each frame contains:
+    - Real orbital mechanics (lat/lon computed from MET)
+    - ECLSS, EPS, propulsion, thermal, comm parameters
+    - 12 telemetry channels including CLASSIFIED_COORD and OPERATOR_BADGE (MSOD-sensitive)
+
+    The PrivyBrowse-X extension intercepts these frames via WebSocket monkey-patch,
+    routes them through data_adapter.js (which applies MSOD filtering), and includes
+    the sanitized digest in the /api/act payload so the LLM reasons with exact numbers
+    but never sees the raw classified coordinates or operator identity.
+    """
+    await websocket.accept()
+    try:
+        while True:
+            frame = generate_gaganyaan_frame()
             await websocket.send_json(frame)
             await asyncio.sleep(1.0)
     except WebSocketDisconnect:

@@ -1,0 +1,1285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+<title>ISRO ISTRAC | GAGANYAAN-H1 &amp; CHANDRAYAAN-4 | Mission Control</title>
+<meta name="description" content="Live mission telemetry dashboard — GAGANYAAN-H1 orbital module. Real-time WebSocket telemetry. PrivyBrowse-X privacy demo."/>
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet"/>
+<style>
+  :root {
+    /* ── Core palette ─────────────── */
+    --bg:        #070d1a;
+    --bg2:       #0d1627;
+    --card:      #111827;
+    --card2:     #1a2235;
+    --card3:     #1e2a3c;
+    --border:    #1f2d45;
+    --border2:   #26384f;
+
+    /* ── Accent ───────────────────── */
+    --cyan:      #00e3fd;
+    --cyan-dim:  rgba(0,227,253,0.08);
+    --orange:    #ff6600;
+    --orange2:   #ff7722;
+    --orange-dim:rgba(255,102,0,0.12);
+    --green:     #00e475;
+    --green-dim: rgba(0,228,117,0.10);
+    --amber:     #f59e0b;
+    --amber-dim: rgba(245,158,11,0.12);
+    --red:       #ef4444;
+    --red-dim:   rgba(239,68,68,0.12);
+
+    /* ── Text ─────────────────────── */
+    --t1: #e2eaf7;
+    --t2: #8fa8c8;
+    --t3: #4a6080;
+
+    /* ── Misc ─────────────────────── */
+    --font-ui:   'Inter', system-ui, sans-serif;
+    --font-mono: 'JetBrains Mono', monospace;
+    --r:         4px;
+    --r2:        6px;
+    --dur:       140ms;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; overflow: hidden; background: var(--bg); color: var(--t1); font-family: var(--font-ui); font-size: 12px; }
+  ::-webkit-scrollbar { width: 4px; height: 4px; }
+  ::-webkit-scrollbar-track { background: var(--bg2); }
+  ::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 2px; }
+  button { cursor: pointer; font: inherit; border: none; background: none; color: inherit; }
+  input { font: inherit; }
+  canvas { display: block; }
+
+  /* ── Layout shell ─────────────────────────────────────────────────────── */
+  #shell {
+    display: grid;
+    grid-template-rows: 44px 1fr 36px;
+    grid-template-columns: 210px 1fr;
+    grid-template-areas:
+      "hdr  hdr"
+      "side main"
+      "foot foot";
+    height: 100vh;
+  }
+
+  /* ── HEADER ───────────────────────────────────────────────────────────── */
+  /*
+   * The header is divided into four non-growing sections with a fixed order:
+   * [brand] | [clocks] | [nav — takes remaining space, clips overflow] | [controls]
+   * Each section is flex:none except nav which is flex:1 min-width:0.
+   * This guarantees zero overlap at any viewport width.
+   */
+  #hdr {
+    grid-area: hdr;
+    background: var(--bg2);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;          /* nothing can spill outside the 44px row */
+  }
+
+  /* Brand — fixed width, never shrinks */
+  .hdr-brand {
+    flex: none;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    padding: 0 14px;
+    border-right: 1px solid var(--border);
+    gap: 2px;
+    min-width: 0;
+  }
+  .hdr-brand-top {
+    font-size: 8.5px;
+    font-weight: 700;
+    color: var(--orange);
+    letter-spacing: 0.12em;
+    text-transform: uppercase;
+    white-space: nowrap;
+  }
+  .hdr-brand-sub {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--t1);
+    letter-spacing: 0.02em;
+    white-space: nowrap;
+  }
+
+  /* Clocks — fixed, never shrinks */
+  .hdr-clocks {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 0;
+    border-right: 1px solid var(--border);
+  }
+  .hdr-clock {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 1px;
+    padding: 0 12px;
+    border-right: 1px solid var(--border);
+    height: 100%;
+  }
+  .hdr-clock:last-child { border-right: none; }
+  .hdr-clock-label {
+    font-size: 7.5px;
+    font-weight: 700;
+    color: var(--t3);
+    text-transform: uppercase;
+    letter-spacing: 0.1em;
+  }
+  .hdr-clock-val {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--t1);
+    letter-spacing: 0.04em;
+    white-space: nowrap;
+  }
+  .hdr-clock-val.met { color: var(--cyan); }
+  .hdr-clock-val.ist { color: var(--green); }
+
+  /* Nav — takes all leftover space, clips overflow cleanly */
+  .hdr-nav {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    align-items: stretch;
+    overflow: hidden;          /* tabs that don't fit are simply not visible */
+    border-right: 1px solid var(--border);
+  }
+  .nav-tab {
+    flex: none;
+    display: flex;
+    align-items: center;
+    padding: 0 12px;
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--t2);
+    white-space: nowrap;
+    border-bottom: 2px solid transparent;
+    border-right: 1px solid var(--border);
+    transition: color var(--dur), border-color var(--dur), background var(--dur);
+    cursor: pointer;
+  }
+  .nav-tab:last-child { border-right: none; }
+  .nav-tab:hover { color: var(--t1); background: var(--card); }
+  .nav-tab.active { color: var(--orange); border-bottom-color: var(--orange); font-weight: 600; }
+
+  /* Right controls — fixed, never shrinks */
+  .hdr-right {
+    flex: none;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 12px;
+  }
+  .btn-mode {
+    padding: 4px 10px;
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.06em;
+    text-transform: uppercase;
+    border-radius: var(--r);
+    border: 1px solid;
+    white-space: nowrap;
+    transition: all var(--dur);
+    cursor: pointer;
+  }
+  .btn-mode.active  { background: var(--orange); border-color: var(--orange); color: #fff; }
+  .btn-mode.inactive { border-color: var(--border2); color: var(--t2); background: none; }
+
+  /* Operator — text only, no avatar icon */
+  .hdr-operator {
+    display: flex;
+    flex-direction: column;
+    align-items: flex-end;
+    gap: 1px;
+    padding-left: 10px;
+    border-left: 1px solid var(--border);
+  }
+  .hdr-operator-name { font-size: 9px; font-weight: 700; color: var(--orange); letter-spacing: 0.06em; white-space: nowrap; }
+  .hdr-operator-role { font-size: 8px; color: var(--t3); white-space: nowrap; }
+
+  /* ── WS STATUS pill ─────────────────────────────────────────────────────── */
+  .ws-status {
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 8px;
+    border-radius: 3px;
+    border: 1px solid var(--border2);
+    font-family: var(--font-mono);
+    font-size: 9px;
+    color: var(--t3);
+    white-space: nowrap;
+  }
+  .ws-dot { width: 5px; height: 5px; border-radius: 50%; background: var(--t3); flex: none; }
+  .ws-status.live { border-color: var(--green); color: var(--green); }
+  .ws-status.live .ws-dot { background: var(--green); animation: blink 1.4s ease-in-out infinite; }
+  @keyframes blink { 0%,100%{opacity:1} 50%{opacity:.25} }
+
+  /* ── SIDEBAR ──────────────────────────────────────────────────────────── */
+  #side {
+    grid-area: side;
+    background: var(--bg2);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+  }
+  .side-search { padding: 6px; border-bottom: 1px solid var(--border); }
+  .side-search input { width: 100%; background: var(--card); border: 1px solid var(--border); border-radius: var(--r); color: var(--t1); padding: 4px 8px; font-size: 11px; outline: none; }
+  .side-search input::placeholder { color: var(--t3); }
+  .side-search input:focus { border-color: var(--border2); }
+
+  .tree { flex: 1; overflow-y: auto; padding: 4px; font-size: 11px; }
+  .tree-section-label { padding: 6px 6px 2px; font-size: 9px; font-weight: 700; color: var(--t3); letter-spacing: 0.1em; text-transform: uppercase; }
+  .tree-group { margin-bottom: 2px; }
+  .tree-group-header { display: flex; align-items: center; gap: 4px; padding: 4px 6px; border-radius: var(--r); cursor: pointer; font-weight: 600; font-size: 11px; transition: background var(--dur); }
+  .tree-group-header:hover { background: var(--card2); }
+  .tree-group-header .material-symbols-outlined { font-size: 13px; color: var(--t3); }
+  .tree-group-header.orange { color: var(--orange); }
+  .tree-group-header.cyan   { color: var(--cyan); }
+  .tree-group-header.green  { color: var(--green); }
+  .tree-children { padding-left: 18px; }
+  .tree-leaf { display: flex; align-items: center; justify-content: space-between; padding: 3px 6px; border-radius: var(--r); cursor: pointer; color: var(--t2); font-size: 10.5px; transition: all var(--dur); }
+  .tree-leaf:hover { background: var(--card); color: var(--t1); }
+  .tree-dot { width: 6px; height: 6px; border-radius: 50%; flex: none; }
+  .tree-dot.green  { background: var(--green); }
+  .tree-dot.amber  { background: var(--amber); animation: blink 1.4s ease-in-out infinite; }
+  .tree-dot.grey   { background: var(--t3); }
+
+  /* ── MAIN ─────────────────────────────────────────────────────────────── */
+  #main {
+    grid-area: main;
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+    padding: 4px;
+    background: var(--bg);
+  }
+
+  /* ── STATUS BANNER ────────────────────────────────────────────────────── */
+  #banner {
+    flex: none;
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--r2);
+    display: flex;
+    align-items: center;
+    padding: 6px 12px;
+    gap: 16px;
+    flex-wrap: nowrap;
+    overflow: hidden;
+  }
+  .banner-section { display: flex; flex-direction: column; gap: 1px; flex: none; }
+  .banner-label { font-size: 8px; font-weight: 700; color: var(--t3); text-transform: uppercase; letter-spacing: 0.08em; }
+  .banner-val { display: flex; align-items: baseline; gap: 3px; }
+  .banner-val .big { font-family: var(--font-mono); font-size: 22px; font-weight: 700; line-height: 1; color: var(--cyan); }
+  .banner-val .unit { font-size: 9px; color: var(--t2); }
+  .banner-tag { display: flex; align-items: center; gap: 4px; font-size: 10px; font-weight: 700; }
+  .tag-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); animation: blink 1.4s ease-in-out infinite; }
+  .tag-text { color: var(--orange); letter-spacing: 0.06em; text-transform: uppercase; }
+  .banner-divider { width: 1px; height: 32px; background: var(--border2); flex: none; }
+  .banner-flight-status { background: var(--green-dim); border: 1px solid var(--green); border-radius: var(--r); padding: 3px 8px; display: flex; flex-direction: column; align-items: center; }
+  .banner-flight-status .fs-label { font-size: 8px; color: var(--t3); text-transform: uppercase; }
+  .banner-flight-status .fs-val { font-size: 11px; font-weight: 700; color: var(--green); }
+  .banner-val .big.orange { color: var(--orange2); }
+  .banner-val .big.green  { color: var(--green); }
+  .banner-aos { background: var(--orange-dim); border: 1px solid var(--orange); border-radius: var(--r); padding: 4px 10px; display: flex; align-items: center; gap: 6px; margin-left: auto; }
+  .banner-aos .aos-label { font-size: 8px; color: var(--t3); text-transform: uppercase; letter-spacing: 0.06em; }
+  .banner-aos .aos-val { font-family: var(--font-mono); font-size: 13px; font-weight: 700; color: var(--orange2); }
+  .banner-aos .material-symbols-outlined { color: var(--orange); font-size: 18px; }
+
+  /* ── CONTENT GRID ─────────────────────────────────────────────────────── */
+  #content {
+    flex: 1;
+    min-height: 0;
+    display: grid;
+    grid-template-columns: 320px 1fr 220px;
+    grid-template-rows: 1fr 180px;
+    gap: 4px;
+  }
+
+  /* ── Generic Card ─────────────────────────────────────────────────────── */
+  .card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: var(--r2);
+    overflow: hidden;
+    display: flex;
+    flex-direction: column;
+  }
+  .card-head {
+    flex: none;
+    height: 28px;
+    background: var(--card2);
+    border-bottom: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 8px;
+    gap: 6px;
+  }
+  .card-head-left { display: flex; align-items: center; gap: 5px; }
+  .card-head-title { font-size: 9.5px; font-weight: 700; color: var(--t1); letter-spacing: 0.06em; text-transform: uppercase; }
+  .card-head .material-symbols-outlined { font-size: 14px; color: var(--cyan); }
+  .card-body { flex: 1; overflow: hidden; display: flex; flex-direction: column; }
+  .live-pill { font-family: var(--font-mono); font-size: 8px; font-weight: 700; color: var(--green); padding: 1px 5px; border-radius: 99px; border: 1px solid var(--green); letter-spacing: 0.06em; }
+
+  /* ── ORBIT PANEL ──────────────────────────────────────────────────────── */
+  #orbitPanel { grid-row: 1 / 2; grid-column: 1 / 2; }
+  #orbitSvgWrap { flex: 1; min-height: 0; position: relative; background: #050b18; overflow: hidden; }
+  #orbitSvgWrap svg { position: absolute; inset: 0; width: 100%; height: 100%; }
+  .orbit-hud { position: absolute; top: 6px; left: 6px; background: rgba(7,13,26,0.88); border: 1px solid var(--border2); border-radius: var(--r); padding: 5px 8px; backdrop-filter: blur(4px); }
+  .orbit-hud-row { display: flex; align-items: center; gap: 5px; margin-bottom: 2px; }
+  .orbit-hud-row:last-child { margin-bottom: 0; }
+  .orbit-hud-label { font-size: 8px; color: var(--t3); width: 24px; }
+  .orbit-hud-val { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--t1); }
+  .orbit-track-badge { position: absolute; top: 6px; right: 6px; background: rgba(7,13,26,0.88); border: 1px solid var(--border2); border-radius: var(--r); padding: 5px 8px; text-align: right; backdrop-filter: blur(4px); }
+  .orbit-track-badge .gs-name { font-size: 9px; color: var(--green); font-weight: 700; }
+  .orbit-track-badge .rev { font-family: var(--font-mono); font-size: 9px; color: var(--t2); margin-top: 1px; }
+
+  .gs-contacts { flex: none; padding: 6px; background: var(--card2); border-top: 1px solid var(--border); display: grid; grid-template-columns: repeat(3, 1fr); gap: 4px; }
+  .gs-contact { background: var(--card3); border-radius: var(--r); padding: 5px 6px; }
+  .gs-contact .gs-c-name { font-size: 8px; font-weight: 700; color: var(--t3); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 2px; }
+  .gs-contact .gs-c-aos { font-family: var(--font-mono); font-size: 10px; font-weight: 700; }
+  .gs-contact .gs-c-aos.orange { color: var(--orange2); }
+  .gs-contact .gs-c-aos.cyan   { color: var(--cyan); }
+  .gs-contact .gs-c-dur { font-size: 9px; color: var(--t3); margin-top: 1px; }
+
+  /* ── CHARTS COLUMN ────────────────────────────────────────────────────── */
+  #chartsCol { grid-row: 1 / 2; grid-column: 2 / 3; display: flex; flex-direction: column; gap: 4px; overflow: hidden; }
+
+  .chart-card { background: var(--card); border: 1px solid var(--border); border-radius: var(--r2); overflow: hidden; display: flex; flex-direction: column; }
+  .chart-head { flex: none; height: 28px; background: var(--card2); border-bottom: 1px solid var(--border); display: flex; align-items: center; justify-content: space-between; padding: 0 8px; }
+  .chart-head-left { display: flex; align-items: center; gap: 5px; }
+  .chart-head-title { font-size: 9.5px; font-weight: 700; color: var(--t1); text-transform: uppercase; letter-spacing: 0.05em; }
+  .chart-head .material-symbols-outlined { font-size: 14px; }
+  .chart-livevals { display: flex; align-items: center; gap: 8px; }
+  .clv { display: flex; align-items: center; gap: 3px; }
+  .clv-swatch { width: 14px; height: 2px; border-radius: 1px; }
+  .clv-text { font-family: var(--font-mono); font-size: 10px; font-weight: 600; }
+  .chart-canvas-wrap { flex: 1; min-height: 0; background: var(--bg); position: relative; }
+  .chart-canvas-wrap canvas { width: 100%; height: 100%; }
+  .chart-axis-labels { position: absolute; bottom: 2px; left: 0; right: 0; display: flex; justify-content: space-between; padding: 0 8px; pointer-events: none; }
+  .chart-axis-labels span { font-family: var(--font-mono); font-size: 8px; color: var(--t3); }
+  .chart-lim-hi { position: absolute; right: 6px; top: 4px; font-family: var(--font-mono); font-size: 8px; }
+
+  /* propulsion section */
+  .prop-card { flex: 1; min-height: 0; background: var(--card); border: 1px solid var(--border); border-radius: var(--r2); overflow: hidden; display: flex; flex-direction: column; }
+  .prop-body { flex: 1; min-height: 0; overflow: hidden; padding: 6px; display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 6px; }
+  .tank-block { background: var(--card2); border-radius: var(--r); padding: 6px; display: flex; flex-direction: column; gap: 4px; }
+  .tank-header { display: flex; justify-content: space-between; align-items: center; }
+  .tank-name { font-size: 8px; font-weight: 700; color: var(--t3); text-transform: uppercase; letter-spacing: 0.06em; }
+  .tank-pressure { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--green); }
+  .tank-bar-wrap { height: 5px; background: var(--card3); border-radius: 3px; overflow: hidden; }
+  .tank-bar { height: 100%; border-radius: 3px; transition: width 1s linear; }
+  .tank-bar.green { background: var(--green); }
+  .tank-bar.cyan  { background: var(--cyan); }
+  .tank-mass { font-family: var(--font-mono); font-size: 9px; color: var(--t3); }
+  .delta-v-badge { font-family: var(--font-mono); font-size: 10px; font-weight: 700; color: var(--cyan); }
+
+  .rcs-row { flex: none; padding: 4px 6px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 6px; }
+  .rcs-label { font-size: 8px; color: var(--t3); font-weight: 600; letter-spacing: 0.06em; white-space: nowrap; }
+  .rcs-pods { display: flex; gap: 2px; }
+  .rcs-pod { width: 14px; height: 14px; border-radius: 2px; background: var(--green-dim); border: 1px solid var(--green); display: grid; place-items: center; font-family: var(--font-mono); font-size: 7px; font-weight: 700; color: var(--green); }
+  .rcs-pod.warn { background: var(--amber-dim); border-color: var(--amber); color: var(--amber); }
+
+  /* attitude block */
+  .attitude-block { flex: none; padding: 4px 6px; border-top: 1px solid var(--border); display: flex; align-items: center; gap: 8px; background: var(--card2); }
+  .att-item { display: flex; align-items: center; gap: 3px; }
+  .att-label { font-size: 8px; color: var(--t3); }
+  .att-val { font-family: var(--font-mono); font-size: 10px; font-weight: 600; color: var(--cyan); }
+  .att-badge { font-size: 8px; font-weight: 700; padding: 1px 5px; border-radius: var(--r); background: var(--green-dim); border: 1px solid var(--green); color: var(--green); }
+
+  /* ── TELEMETRY MATRIX ─────────────────────────────────────────────────── */
+  #telemPanel { grid-row: 1 / 2; grid-column: 3 / 4; }
+  .telem-filter-bar { flex: none; padding: 4px; border-bottom: 1px solid var(--border); }
+  .telem-filter-bar input { width: 100%; background: var(--card2); border: 1px solid var(--border); border-radius: var(--r); color: var(--t1); padding: 3px 6px; font-size: 10px; outline: none; }
+  .telem-rows { flex: 1; overflow-y: auto; }
+  .telem-row { display: flex; align-items: center; justify-content: space-between; padding: 4px 8px; border-bottom: 1px solid var(--border); transition: background var(--dur); }
+  .telem-row:hover { background: var(--card2); }
+  .telem-row.warn-row { background: var(--amber-dim); }
+  .telem-row.warn-row:hover { background: rgba(245,158,11,0.18); }
+  .telem-row.msod-row { background: var(--red-dim); }
+  .telem-row.msod-row:hover { background: rgba(239,68,68,0.18); }
+  .ch-id-label { font-family: var(--font-mono); font-size: 8.5px; color: var(--t3); width: 48px; flex: none; }
+  .ch-name-label { font-size: 10px; color: var(--t2); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .ch-right { display: flex; align-items: center; gap: 4px; flex: none; }
+  .ch-value { font-family: var(--font-mono); font-size: 10.5px; font-weight: 600; color: var(--t1); }
+  .ch-value.warn  { color: var(--amber); }
+  .ch-value.alarm { color: var(--red); }
+  .ch-value.msod  { color: var(--red); }
+  .ch-unit  { font-size: 8.5px; color: var(--t3); }
+  .ch-badge { font-size: 7.5px; font-weight: 700; padding: 1px 4px; border-radius: 3px; letter-spacing: 0.04em; }
+  .ch-badge.ok     { background: var(--green-dim);  color: var(--green); border: 1px solid rgba(0,228,117,0.3); }
+  .ch-badge.warn   { background: var(--amber-dim);  color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+  .ch-badge.msod   { background: var(--red-dim);    color: var(--red);   border: 1px solid rgba(239,68,68,0.3); }
+  .ch-badge.nom    { background: var(--green-dim);  color: var(--green); border: 1px solid rgba(0,228,117,0.3); }
+  .telem-foot { flex: none; padding: 4px 6px; border-top: 1px solid var(--border); display: flex; gap: 4px; background: var(--card2); }
+  .telem-foot .btn-ghost { flex: 1; padding: 4px; border-radius: var(--r); border: 1px solid var(--border2); font-size: 9px; font-weight: 600; color: var(--t2); text-align: center; transition: all var(--dur); }
+  .telem-foot .btn-ghost:hover { border-color: var(--cyan); color: var(--cyan); }
+  .telem-foot .btn-primary { flex: 1; padding: 4px; border-radius: var(--r); border: 1px solid var(--orange); font-size: 9px; font-weight: 700; color: var(--orange); text-align: center; background: var(--orange-dim); transition: all var(--dur); }
+  .telem-foot .btn-primary:hover { background: var(--orange); color: #fff; }
+
+  /* ── EVENT LOG ────────────────────────────────────────────────────────── */
+  #eventPanel {
+    grid-row: 2 / 3;
+    grid-column: 1 / 4;
+  }
+  .event-table { width: 100%; border-collapse: collapse; font-size: 10.5px; }
+  .event-table thead th { position: sticky; top: 0; background: var(--card2); padding: 4px 8px; text-align: left; font-size: 8.5px; font-weight: 700; color: var(--t3); text-transform: uppercase; letter-spacing: 0.07em; white-space: nowrap; border-bottom: 1px solid var(--border); }
+  .event-table tbody td { padding: 5px 8px; border-bottom: 1px solid var(--border); white-space: nowrap; }
+  .event-table tbody tr:hover td { background: var(--card2); }
+  .event-table .evt-time  { font-family: var(--font-mono); color: var(--t2); }
+  .event-table .evt-met   { font-family: var(--font-mono); color: var(--cyan); }
+  .event-table .evt-sub   { font-weight: 700; }
+  .event-table .evt-sub.orange { color: var(--orange2); }
+  .event-table .evt-sub.cyan   { color: var(--cyan); }
+  .event-table .evt-sub.green  { color: var(--green); }
+  .event-table .evt-sub.red    { color: var(--red); }
+  .event-type { padding: 1px 5px; border-radius: 3px; font-size: 8.5px; font-weight: 700; letter-spacing: 0.04em; }
+  .event-type.system  { background: var(--cyan-dim);   color: var(--cyan); border: 1px solid rgba(0,227,253,0.25); }
+  .event-type.warn    { background: var(--amber-dim);  color: var(--amber); border: 1px solid rgba(245,158,11,0.3); }
+  .event-type.privacy { background: var(--red-dim);    color: var(--red);   border: 1px solid rgba(239,68,68,0.3); }
+  .event-type.net     { background: var(--green-dim);  color: var(--green); border: 1px solid rgba(0,228,117,0.3); }
+  .event-detail { color: var(--t1); white-space: normal; max-width: 380px; }
+  .event-dispatch { color: var(--t3); font-family: var(--font-mono); font-size: 9px; }
+  .event-scroll { flex: 1; overflow-y: auto; min-height: 0; }
+  .event-head-right { display: flex; align-items: center; gap: 6px; }
+  .auto-scroll-check { display: flex; align-items: center; gap: 3px; font-size: 9px; color: var(--t2); }
+  .auto-scroll-check input { accent-color: var(--orange); }
+  .btn-export { display: flex; align-items: center; gap: 3px; font-size: 9px; color: var(--t2); padding: 2px 6px; border-radius: var(--r); border: 1px solid var(--border2); transition: all var(--dur); }
+  .btn-export:hover { color: var(--cyan); border-color: var(--cyan); }
+  .buf-pill { background: var(--green-dim); border: 1px solid var(--green); border-radius: 99px; font-size: 8px; font-weight: 700; color: var(--green); padding: 1px 7px; letter-spacing: 0.06em; }
+
+  /* ── FOOTER ───────────────────────────────────────────────────────────── */
+  #foot {
+    grid-area: foot;
+    background: var(--bg2);
+    border-top: 1px solid var(--border);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 0 10px;
+    font-size: 10px;
+  }
+  .foot-label { color: var(--t3); font-weight: 700; letter-spacing: 0.07em; text-transform: uppercase; flex: none; }
+  .foot-time { font-family: var(--font-mono); color: var(--t2); flex: none; }
+  .time-bar-wrap { flex: 1; height: 6px; background: var(--card2); border-radius: 3px; overflow: hidden; }
+  .time-bar { height: 100%; background: var(--orange); border-radius: 3px; }
+  .foot-btns { display: flex; gap: 3px; flex: none; }
+  .foot-btn { width: 22px; height: 22px; border-radius: var(--r); background: var(--card2); border: 1px solid var(--border2); display: grid; place-items: center; color: var(--t2); transition: all var(--dur); }
+  .foot-btn:hover { border-color: var(--orange); color: var(--orange); }
+  .foot-btn .material-symbols-outlined { font-size: 12px; }
+  .foot-btn.pause-btn { background: var(--orange); border-color: var(--orange); color: #fff; }
+  .foot-rate { font-family: var(--font-mono); color: var(--t2); flex: none; }
+</style>
+</head>
+<body>
+<div id="shell">
+
+<!-- ══ HEADER ════════════════════════════════════════════════════════════════ -->
+<header id="hdr">
+
+  <!-- Brand: fixed-width, never shrinks -->
+  <div class="hdr-brand">
+    <span class="hdr-brand-top">ISRO ISTRAC</span>
+    <span class="hdr-brand-sub">GAGANYAAN-H1 &amp; CHANDRAYAAN-4</span>
+  </div>
+
+  <!-- Clocks: fixed-width, never shrinks -->
+  <div class="hdr-clocks">
+    <div class="hdr-clock"><span class="hdr-clock-label">MET (T+)</span><span class="hdr-clock-val met" id="metClock">--:--:--.--</span></div>
+    <div class="hdr-clock"><span class="hdr-clock-label">UTC</span><span class="hdr-clock-val" id="utcClock">--:--:--</span></div>
+    <div class="hdr-clock"><span class="hdr-clock-label">IST</span><span class="hdr-clock-val ist" id="istClock">--:--:--</span></div>
+  </div>
+
+  <!-- Nav: takes remaining space, clips excess tabs -->
+  <nav class="hdr-nav">
+    <button class="nav-tab active">Telemetry Overview</button>
+    <button class="nav-tab">Trajectory &amp; Orbit 3D</button>
+    <button class="nav-tab">Subsystem Health</button>
+    <button class="nav-tab">Command &amp; Uplink Log</button>
+    <button class="nav-tab">Alarms &amp; Events</button>
+  </nav>
+
+  <!-- Controls: fixed-width, text only -->
+  <div class="hdr-right">
+    <div id="wsStatusPill" class="ws-status"><span class="ws-dot"></span><span id="wsStatusText">Connecting…</span></div>
+    <button class="btn-mode active">REALTIME STREAM</button>
+    <button class="btn-mode inactive">HISTORICAL REPLAY</button>
+    <div class="hdr-operator">
+      <span class="hdr-operator-name">DR. A. SHARMA</span>
+      <span class="hdr-operator-role">FD-1 · FLIGHT DIR</span>
+    </div>
+  </div>
+
+</header>
+
+<!-- ══ SIDEBAR ════════════════════════════════════════════════════════════════ -->
+<aside id="side">
+  <div class="side-search">
+    <input type="text" placeholder="🔍  Search Telemetry Objects…"/>
+  </div>
+  <div class="tree">
+    <div class="tree-section-label">Object Tree Discovery</div>
+
+    <div class="tree-group">
+      <div class="tree-group-header orange">▾ GAGANYAAN-H1 (Orbital Module)</div>
+      <div class="tree-children">
+        <div class="tree-leaf"><span>Propulsion &amp; RCS (Bipropellant)</span><span class="tree-dot green"></span></div>
+        <div class="tree-leaf"><span>ECLSS (Life Support &amp; Cabin)</span><span class="tree-dot green"></span></div>
+        <div class="tree-leaf"><span>Electrical Power System (EPS)</span><span class="tree-dot green"></span></div>
+        <div class="tree-leaf"><span>GNC &amp; Avionics (NavIC Sensors)</span><span class="tree-dot green"></span></div>
+        <div class="tree-leaf"><span>Thermal Control Subsystem (TCS)</span><span class="tree-dot green"></span></div>
+      </div>
+    </div>
+
+    <div class="tree-group">
+      <div class="tree-group-header cyan">▾ CHANDRAYAAN-4 (Lunar Return)</div>
+      <div class="tree-children">
+        <div class="tree-leaf"><span>Lander Telemetry &amp; Propulsion</span><span class="tree-dot green"></span></div>
+        <div class="tree-leaf"><span>Rover &amp; Drill Payloads</span><span class="tree-dot grey"></span></div>
+      </div>
+    </div>
+
+    <div class="tree-group">
+      <div class="tree-group-header green">▾ Ground Stations (ISTRAC Network)</div>
+      <div class="tree-children">
+        <div class="tree-leaf"><span>ISTRAC Bengaluru (DSN-32m)</span><span class="tree-dot green"></span></div>
+        <div class="tree-leaf"><span>Port Blair Ground Station</span><span class="tree-dot green"></span></div>
+        <div class="tree-leaf"><span>Brunei Tracking Station</span><span class="tree-dot green"></span></div>
+        <div class="tree-leaf"><span>Biak Station (Awaiting AOS)</span><span class="tree-dot amber"></span></div>
+      </div>
+    </div>
+  </div>
+</aside>
+
+<!-- ══ MAIN ═══════════════════════════════════════════════════════════════════ -->
+<main id="main">
+
+  <!-- STATUS BANNER -->
+  <div id="banner">
+    <div class="banner-section">
+      <div class="banner-tag"><span class="tag-dot"></span><span class="tag-text">GAGANYAAN-H1 // LEO INJECTION</span></div>
+      <div class="banner-val">
+        <span id="apogeeVal" class="big">400.2</span>
+        <span class="unit">×</span>
+        <span id="perigeeVal" class="big">392.8</span>
+        <span class="unit">km (inc 51.64°)</span>
+      </div>
+    </div>
+    <div class="banner-flight-status"><span class="fs-label">FLIGHT STATUS</span><span class="fs-val">NOMINAL</span></div>
+    <div class="banner-divider"></div>
+    <div class="banner-section">
+      <div class="banner-label">ORBITAL VELOCITY</div>
+      <div class="banner-val"><span id="velocityVal" class="big">7.682</span><span class="unit">km/s</span></div>
+    </div>
+    <div class="banner-divider"></div>
+    <div class="banner-section">
+      <div class="banner-label">ECLSS CABIN P</div>
+      <div class="banner-val"><span id="cabinPressVal" class="big green">101.3</span><span class="unit">kPa</span></div>
+    </div>
+    <div class="banner-section">
+      <div class="banner-label">pO2 / CABIN T</div>
+      <div class="banner-val"><span id="po2Val" class="big" style="font-size:18px;color:var(--t1)">21.2</span><span class="unit">kPa</span><span style="color:var(--t3);margin:0 2px">|</span><span id="cabinTempVal" class="big" style="font-size:18px;color:var(--t1)">21.4</span><span class="unit">°C</span></div>
+    </div>
+    <div class="banner-divider"></div>
+    <div class="banner-section">
+      <div class="banner-label">SOLAR ARR / SOC</div>
+      <div class="banner-val"><span id="solarPowerVal" class="big orange" style="font-size:16px">4.82</span><span class="unit">kW</span><span style="color:var(--t3);margin:0 2px">|</span><span id="socVal" class="big" style="font-size:16px;color:var(--green)">94.6</span><span class="unit">%</span></div>
+    </div>
+    <div class="banner-section">
+      <div class="banner-label">NavIC FIX // DOP</div>
+      <div class="banner-val"><span id="navicSvVal" class="big" style="font-size:16px;color:var(--cyan)">8 SVs</span><span id="navicDopVal" style="font-family:var(--font-mono);font-size:10px;color:var(--t2);align-self:flex-end;margin-bottom:2px">DOP 1.1</span></div>
+    </div>
+    <div class="banner-aos">
+      <div class="aos-label">NEXT PASS // PORT BLAIR</div>
+      <div class="aos-val" id="aosCountdown">AOS IN 00:08:42</div>
+    </div>
+  </div>
+
+  <!-- CONTENT GRID -->
+  <div id="content">
+
+    <!-- ── ORBIT PANEL ── -->
+    <div class="card" id="orbitPanel">
+      <div class="card-head">
+        <span class="card-head-title">Orbit Track &amp; Ground Footprint</span>
+        <div style="display:flex;align-items:center;gap:8px">
+          <span id="orbitFrameRate" style="font-family:var(--font-mono);font-size:9px;color:var(--t3)">1.0 Hz</span>
+          <div class="live-pill">LIVE</div>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="orbitSvgWrap">
+          <svg id="orbitSvg" viewBox="0 0 360 220" preserveAspectRatio="xMidYMid meet">
+            <!-- Background grid -->
+            <rect width="360" height="220" fill="#050b18"/>
+            <line stroke="#1a2844" stroke-width="0.5" x1="0" x2="360" y1="36.7" y2="36.7"/>
+            <line stroke="#1a2844" stroke-width="0.5" x1="0" x2="360" y1="73.3" y2="73.3"/>
+            <line stroke="#1f3060" stroke-width="0.8" x1="0" x2="360" y1="110" y2="110"/>
+            <line stroke="#1a2844" stroke-width="0.5" x1="0" x2="360" y1="146.7" y2="146.7"/>
+            <line stroke="#1a2844" stroke-width="0.5" x1="0" x2="360" y1="183.3" y2="183.3"/>
+            <line stroke="#1a2844" stroke-width="0.5" x1="90" x2="90" y1="0" y2="220"/>
+            <line stroke="#1a2844" stroke-width="0.5" x1="180" x2="180" y1="0" y2="220"/>
+            <line stroke="#1a2844" stroke-width="0.5" x1="270" x2="270" y1="0" y2="220"/>
+            <!-- Lat labels -->
+            <text x="2" y="113" fill="#2a3d5a" font-size="7" font-family="JetBrains Mono">0°</text>
+            <text x="2" y="40" fill="#2a3d5a" font-size="7" font-family="JetBrains Mono">60°N</text>
+            <text x="2" y="186" fill="#2a3d5a" font-size="7" font-family="JetBrains Mono">60°S</text>
+            <!-- Continent silhouettes (simplified polygons) -->
+            <path d="M 155 50 L 175 47 L 185 70 L 180 100 L 170 115 L 163 95 L 160 75 Z" fill="#162035" opacity="0.7"/>
+            <path d="M 115 42 L 150 47 L 148 108 L 130 135 L 118 100 Z" fill="#162035" opacity="0.6"/>
+            <path d="M 188 90 L 218 88 L 230 112 L 210 124 Z" fill="#162035" opacity="0.6"/>
+            <path d="M 215 130 L 248 125 L 244 165 L 218 158 Z" fill="#162035" opacity="0.6"/>
+            <path d="M 48 75 L 88 65 L 96 95 L 78 108 L 55 100 Z" fill="#162035" opacity="0.5"/>
+            <path d="M 25 115 L 58 118 L 55 148 L 30 150 Z" fill="#162035" opacity="0.5"/>
+            <!-- Terminator (day/night) -->
+            <defs>
+              <linearGradient id="terminatorGrad" x1="0%" y1="0%" x2="100%" y2="0%">
+                <stop offset="0%" style="stop-color:#070d1a;stop-opacity:0.7"/>
+                <stop offset="100%" style="stop-color:#070d1a;stop-opacity:0"/>
+              </linearGradient>
+            </defs>
+            <path id="terminator" d="M 0 0 C 100 40, 130 160, 170 220 L 0 220 Z" fill="url(#terminatorGrad)"/>
+            <!-- Ground station visibility cones -->
+            <circle cx="185" cy="112" r="28" fill="none" stroke="#00e475" stroke-dasharray="3 2" stroke-width="0.8" opacity="0.4"/>
+            <circle cx="215" cy="116" r="24" fill="none" stroke="#00e3fd" stroke-dasharray="2 2" stroke-width="0.8" opacity="0.4"/>
+            <circle cx="250" cy="113" r="18" fill="none" stroke="#ff6600" stroke-dasharray="2 3" stroke-width="0.8" opacity="0.3"/>
+            <!-- Ground station dots -->
+            <circle cx="185" cy="112" r="2.5" fill="#00e475"/>
+            <text x="188" y="108" fill="#00e475" font-size="6" font-family="JetBrains Mono">ISTRAC-BLR</text>
+            <circle cx="215" cy="116" r="2.5" fill="#00e3fd"/>
+            <text x="218" y="113" fill="#00e3fd" font-size="6" font-family="JetBrains Mono">PORT BLAIR (AOS)</text>
+            <circle cx="250" cy="113" r="2.5" fill="#ff6600"/>
+            <text x="253" y="110" fill="#ff6600" font-size="6" font-family="JetBrains Mono">BIAK</text>
+            <!-- Orbit trace (built by JS) -->
+            <path id="prevOrbitTrace" d="" fill="none" stroke="#1e3a5a" stroke-dasharray="3 3" stroke-width="1.2"/>
+            <path id="orbitTrace" d="" fill="none" stroke="#00e3fd" stroke-width="1.6" opacity="0.85"/>
+            <!-- Spacecraft marker -->
+            <g id="scMarker" transform="translate(195,115)">
+              <circle r="9" fill="#00e3fd" fill-opacity="0.08" class="pulse-ring"/>
+              <circle r="4.5" fill="#00e3fd"/>
+              <polygon points="0,-8 5,5 0,2 -5,5" fill="#ff6600"/>
+            </g>
+          </svg>
+          <div class="orbit-hud">
+            <div class="orbit-hud-row"><span class="orbit-hud-label">LAT:</span><span class="orbit-hud-val" id="latDisplay">—</span></div>
+            <div class="orbit-hud-row"><span class="orbit-hud-label">LON:</span><span class="orbit-hud-val" id="lonDisplay">—</span></div>
+            <div class="orbit-hud-row"><span class="orbit-hud-label">ALT:</span><span class="orbit-hud-val" style="color:var(--cyan)" id="altDisplay">—</span></div>
+          </div>
+          <div class="orbit-track-badge">
+            <div class="gs-name">TRACKING: BLR-DSN32</div>
+            <div class="rev" id="revDisplay">REV #224</div>
+          </div>
+        </div>
+        <!-- Ground contacts -->
+        <div class="gs-contacts">
+          <div class="gs-contact">
+            <div class="gs-c-name">Port Blair (X-Band)</div>
+            <div class="gs-c-aos orange">AOS 13:50:52</div>
+            <div class="gs-c-dur">DUR: 13m 33s</div>
+          </div>
+          <div class="gs-contact">
+            <div class="gs-c-name">Biak Station</div>
+            <div class="gs-c-aos cyan">AOS 14:18:10</div>
+            <div class="gs-c-dur">DUR: 09m 40s</div>
+          </div>
+          <div class="gs-contact">
+            <div class="gs-c-name">Svalbard Polar</div>
+            <div class="gs-c-aos" style="color:var(--t2)">AOS 15:02:44</div>
+            <div class="gs-c-dur">DUR: 11m 15s</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── CHARTS COLUMN ── -->
+    <div id="chartsCol">
+
+      <!-- Propulsion Chamber Pressure -->
+      <div class="chart-card" style="flex:1.2;min-height:0;">
+        <div class="chart-head">
+          <span class="chart-head-title">StripChart: PROP_CHAMBER_PC (MPa)</span>
+          <div class="chart-livevals">
+            <div class="clv"><span class="clv-swatch" style="background:var(--cyan)"></span><span class="clv-text" id="propChamberVal" style="color:var(--cyan)">2.41 MPa</span></div>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="propChart"></canvas>
+          <div class="chart-lim-hi">
+            <div style="color:var(--orange2);font-size:8px;margin-bottom:2px">HI-HI: 3.20 MPa</div>
+            <div style="color:var(--green);font-size:8px">NOM: 2.40 MPa</div>
+          </div>
+          <div class="chart-axis-labels">
+            <span>T-00:02:00</span><span>T-00:01:00</span><span style="color:var(--cyan)">NOW (T+<span id="propNowLabel">--</span>)</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Thermal Gradient -->
+      <div class="chart-card" style="flex:1;min-height:0;">
+        <div class="chart-head">
+          <span class="chart-head-title">Thermal Gradient: CM INNER vs OUTER (°C)</span>
+          <div class="chart-livevals">
+            <div class="clv"><span class="clv-swatch" style="background:var(--cyan)"></span><span class="clv-text" style="color:var(--cyan)">INNER: <span id="innerTempVal">21.4°C</span></span></div>
+            <div class="clv"><span class="clv-swatch" style="background:var(--orange)"></span><span class="clv-text" style="color:var(--orange)">OUTER: <span id="outerTempVal">-14.8°C</span></span></div>
+          </div>
+        </div>
+        <div class="chart-canvas-wrap">
+          <canvas id="thermalChart"></canvas>
+          <div class="chart-axis-labels">
+            <span>UMBRA ENTRY</span><span>PENUMBRA</span><span>SOLAR FLUX</span><span style="color:var(--cyan)">REALTIME</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Propulsion & RCS -->
+      <div class="prop-card">
+        <div class="chart-head">
+          <span class="chart-head-title">Propulsion &amp; Bipropellant Tanks</span>
+          <span class="delta-v-badge">ΔV RESIDUAL: <span id="deltaVVal">342.6 m/s</span> (+18%)</span>
+        </div>
+        <div class="prop-body">
+          <div class="tank-block">
+            <div class="tank-header">
+              <span class="tank-name">OXIDIZER (NTO)</span>
+              <span id="oxBarVal" class="tank-pressure">18.2 bar</span>
+            </div>
+            <div class="tank-bar-wrap"><div id="oxFill" class="tank-bar green" style="width:75%"></div></div>
+            <span id="oxMassVal" class="tank-mass">MASS: 842.0 kg</span>
+          </div>
+          <div class="tank-block">
+            <div class="tank-header">
+              <span class="tank-name">FUEL (MMH)</span>
+              <span id="fuelBarVal" class="tank-pressure">17.9 bar</span>
+            </div>
+            <div class="tank-bar-wrap"><div id="fuelFill" class="tank-bar green" style="width:72%"></div></div>
+            <span id="fuelMassVal" class="tank-mass">MASS: 512.4 kg</span>
+          </div>
+          <div class="tank-block">
+            <div class="tank-header">
+              <span class="tank-name">He BOTTLE</span>
+              <span class="tank-pressure" style="color:var(--cyan)" id="heBarVal">220.4 bar</span>
+            </div>
+            <div class="tank-bar-wrap"><div class="tank-bar cyan" style="width:88%"></div></div>
+            <span class="tank-mass">REGULATED: NOM</span>
+          </div>
+        </div>
+        <div class="rcs-row">
+          <span class="rcs-label">RCS THRUSTER PODS (P1..P16 Quadrants):</span>
+          <div class="rcs-pods" id="rcsPods"></div>
+        </div>
+        <div class="attitude-block">
+          <div class="att-item"><span class="att-label">PITCH:</span><span class="att-val" id="pitchVal">-0.42°</span></div>
+          <div class="att-item"><span class="att-label">ROLL:</span><span class="att-val" id="rollVal">-0.08°</span></div>
+          <div class="att-item"><span class="att-label">YAW:</span><span class="att-val" id="yawVal">180.12°</span></div>
+          <span class="att-badge">GNC 3-AXIS LOCKED</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- ── TELEMETRY MATRIX ── -->
+    <div class="card" id="telemPanel">
+      <div class="card-head">
+        <span class="card-head-title">Telemetry Matrix</span>
+        <div style="display:flex;align-items:center;gap:5px">
+          <button style="font-size:9px;font-weight:700;color:var(--t2);padding:1px 5px;border-radius:3px;background:var(--card3);border:1px solid var(--border2)">ALL (148)</button>
+          <button id="warnFilterBtn" style="font-size:9px;font-weight:700;color:var(--amber);padding:1px 5px;border-radius:3px;background:var(--amber-dim);border:1px solid rgba(245,158,11,0.3)">WARN (1)</button>
+        </div>
+      </div>
+      <div class="telem-filter-bar">
+        <input type="text" placeholder="Filter parameter / ID…"/>
+      </div>
+      <div class="telem-rows" id="channelTable"></div>
+      <div class="telem-foot">
+        <button class="btn-ghost">QUERY ARCHIVE</button>
+        <button class="btn-primary">LIMIT SETTINGS</button>
+      </div>
+    </div>
+
+    <!-- ── EVENT LOG ── -->
+    <div class="card" id="eventPanel">
+      <div class="card-head">
+        <div class="card-head-left">
+          <span class="card-head-title">Flight Event Sequence &amp; Command Uplink Audit</span>
+          <span class="buf-pill">BUFFER: SYNCED</span>
+        </div>
+        <div class="event-head-right">
+          <label class="auto-scroll-check"><input type="checkbox" checked id="autoScrollChk"/> AUTO SCROLL</label>
+          <button class="btn-export">EXPORT LOG</button>
+        </div>
+      </div>
+      <div class="event-scroll">
+        <table class="event-table">
+          <thead>
+            <tr>
+              <th>IST TIME</th><th>MET (T+)</th><th>SUBSYSTEM</th><th>EVENT CLASSIFICATION</th><th>STATUS / TELEMETRY DETAIL</th><th>DISPATCHER</th>
+            </tr>
+          </thead>
+          <tbody id="eventLog">
+            <tr>
+              <td class="evt-time">19:12:18</td>
+              <td class="evt-met">T+ 14:32:16</td>
+              <td class="evt-sub orange">GNC_AVIONICS</td>
+              <td><span class="event-type system">SYSTEM</span></td>
+              <td class="event-detail">Inertial Guidance Platform re-aligned with Star Sensor #2. Kalman residual 0.004 mrad.</td>
+              <td class="event-dispatch">AUTO_FDIR</td>
+            </tr>
+            <tr>
+              <td class="evt-time">19:12:02</td>
+              <td class="evt-met">T+ 14:32:00</td>
+              <td class="evt-sub cyan">COMM_S_BAND</td>
+              <td><span class="event-type net">CREW_AUDIO</span></td>
+              <td class="event-detail">VHF / S-band Comm check nominal with Houston and Moscow ground relays. Intelligibility 5/5.</td>
+              <td class="event-dispatch">CAPCOM-1</td>
+            </tr>
+            <tr>
+              <td class="evt-time">19:10:45</td>
+              <td class="evt-met">T+ 14:30:34</td>
+              <td class="evt-sub green">GROUND_NET</td>
+              <td><span class="event-type system">TELEM_EVENT</span></td>
+              <td class="event-detail">Port Blair tracking station carrier phase lock acquired. Doppler residual +124 Hz.</td>
+              <td class="event-dispatch">ISTRAC_NET</td>
+            </tr>
+            <tr>
+              <td class="evt-time">19:08:12</td>
+              <td class="evt-met">T+ 14:28:01</td>
+              <td class="evt-sub orange">EPS_SOLAR</td>
+              <td><span class="event-type system">AUTO_CMD</span></td>
+              <td class="event-detail">Solar Array Wing Beta Gimbal angle adjusted +34.2° for optimal sun acquisition.</td>
+              <td class="event-dispatch">EPS_AUTO_FDIR</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+
+  </div><!-- /#content -->
+</main>
+
+<!-- ══ FOOTER ══════════════════════════════════════════════════════════════════ -->
+<footer id="foot">
+  <span class="foot-label">Time Conductor</span>
+  <span class="foot-time">-30m</span>
+  <span class="foot-time">-1h</span>
+  <span class="foot-time">-8h</span>
+  <div class="time-bar-wrap"><div class="time-bar" style="width:90%"></div></div>
+  <span class="foot-time" id="footNow">--:--:--</span>
+  <div class="foot-btns">
+    <button class="foot-btn">|◀</button>
+    <button class="foot-btn pause-btn">‖</button>
+    <button class="foot-btn">▶|</button>
+  </div>
+  <span class="foot-rate">RATE: 1.0× REALTIME</span>
+</footer>
+
+</div><!-- /#shell -->
+
+<style>
+  @keyframes scPulse { 0%,100%{r:9;opacity:0.15} 50%{r:14;opacity:0.05} }
+  .pulse-ring { animation: scPulse 2s ease-in-out infinite; }
+</style>
+
+<script>
+// ── CONSTANTS ─────────────────────────────────────────────────────────────────
+const MET_OFFSET_S   = 14 * 3600 + 32 * 60 + 8;
+const MET_START_MS   = Date.now() - (MET_OFFSET_S * 1000 + 420);
+const ORBIT_PERIOD_S = 5560;
+const INCLINATION    = 51.64;
+const CHART_LEN      = 120;
+
+function pad(n, d = 2) { return String(n).padStart(d, '0'); }
+function r2(n)         { return Math.round(n * 100) / 100; }
+
+// ── CLOCKS ────────────────────────────────────────────────────────────────────
+function formatMET(ms) {
+  const s  = Math.floor(ms / 1000);
+  const cs = Math.floor((ms % 1000) / 10);
+  const h  = Math.floor(s / 3600);
+  const m  = Math.floor((s % 3600) / 60);
+  const sc = s % 60;
+  return `${pad(h)}:${pad(m)}:${pad(sc)}.${pad(cs)}`;
+}
+
+setInterval(() => {
+  const now   = new Date();
+  const metMs = Date.now() - MET_START_MS;
+  document.getElementById('metClock').textContent = formatMET(metMs);
+  const utc   = now.toUTCString().match(/\d\d:\d\d:\d\d/)?.[0] || '--:--:--';
+  document.getElementById('utcClock').textContent = utc;
+  document.getElementById('footNow').textContent  = utc;
+
+  const ist    = new Date(now.getTime() + 5.5 * 3600_000);
+  document.getElementById('istClock').textContent =
+    `${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())}:${pad(ist.getUTCSeconds())}`;
+
+  const metLabel = formatMET(metMs).slice(0, 8);
+  const propNow  = document.getElementById('propNowLabel');
+  if (propNow) propNow.textContent = metLabel;
+}, 100);
+
+// ── AOS COUNTDOWN ─────────────────────────────────────────────────────────────
+let aosSec = 8 * 60 + 42;
+const aosEl = document.getElementById('aosCountdown');
+setInterval(() => {
+  aosSec--;
+  if (aosSec <= 0) { aosEl.textContent = 'AOS ACQUIRED — TRACKING'; aosSec = 22 * 60 + 18; return; }
+  const m = Math.floor(aosSec / 60), s = aosSec % 60;
+  aosEl.textContent = `AOS IN ${pad(m)}:${pad(s)}`;
+}, 1000);
+
+// ── STRIP CHART CLASS ─────────────────────────────────────────────────────────
+class StripChart {
+  constructor(id, opts) {
+    this.el   = document.getElementById(id);
+    this.opts = opts;
+    this.buf  = opts.initial.map(a => [...a]);
+    this._ro  = new ResizeObserver(() => this._resize());
+    this._ro.observe(this.el.parentElement);
+    this._resize();
+    this._raf();
+  }
+  _resize() {
+    const p   = this.el.parentElement;
+    const dpr = window.devicePixelRatio || 1;
+    this.w    = p.clientWidth;
+    this.h    = p.clientHeight - 18; // leave room for axis labels
+    this.el.width  = this.w  * dpr;
+    this.el.height = this.h  * dpr;
+    this.el.style.width  = this.w  + 'px';
+    this.el.style.height = this.h  + 'px';
+    this.ctx  = this.el.getContext('2d');
+    this.ctx.scale(dpr, dpr);
+  }
+  push(...values) {
+    values.forEach((v, i) => {
+      if (!this.buf[i]) this.buf[i] = [];
+      this.buf[i].push(v);
+      if (this.buf[i].length > CHART_LEN) this.buf[i].shift();
+    });
+  }
+  _y(v) {
+    const { min, max } = this.opts;
+    return this.h - Math.max(0, Math.min(this.h, ((v - min) / (max - min)) * this.h));
+  }
+  _draw() {
+    const { ctx, w, h, opts } = this;
+    ctx.clearRect(0, 0, w, h);
+
+    // Grid
+    ctx.strokeStyle = '#1a2235'; ctx.lineWidth = 0.5;
+    for (let i = 1; i < 4; i++) {
+      const y = (h / 4) * i;
+      ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(w, y); ctx.stroke();
+    }
+    // Limit lines
+    if (opts.limitHi !== undefined) {
+      const ly = this._y(opts.limitHi);
+      ctx.strokeStyle = '#ff6600'; ctx.lineWidth = 1; ctx.setLineDash([4, 3]);
+      ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(w, ly); ctx.stroke();
+      ctx.setLineDash([]);
+    }
+    if (opts.nomLine !== undefined) {
+      const ly = this._y(opts.nomLine);
+      ctx.strokeStyle = 'rgba(0,228,117,0.35)'; ctx.lineWidth = 0.8;
+      ctx.beginPath(); ctx.moveTo(0, ly); ctx.lineTo(w, ly); ctx.stroke();
+    }
+    // Traces
+    this.buf.forEach((data, si) => {
+      if (!data.length) return;
+      const color = opts.colors[si];
+      const step  = w / (CHART_LEN - 1);
+      const off   = CHART_LEN - data.length;
+
+      // Area fill
+      const grad = ctx.createLinearGradient(0, 0, 0, h);
+      grad.addColorStop(0, color + '28');
+      grad.addColorStop(1, color + '04');
+      ctx.beginPath();
+      data.forEach((v, i) => {
+        const x = (off + i) * step, y = this._y(v);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.lineTo((off + data.length - 1) * step, h);
+      ctx.lineTo(off * step, h);
+      ctx.closePath();
+      ctx.fillStyle = grad; ctx.fill();
+
+      // Line
+      ctx.beginPath();
+      data.forEach((v, i) => {
+        const x = (off + i) * step, y = this._y(v);
+        i === 0 ? ctx.moveTo(x, y) : ctx.lineTo(x, y);
+      });
+      ctx.strokeStyle = color; ctx.lineWidth = 1.8; ctx.lineJoin = 'round';
+      ctx.stroke();
+
+      // Live dot
+      const lv = data[data.length - 1];
+      ctx.beginPath();
+      ctx.arc((off + data.length - 1) * step, this._y(lv), 3.5, 0, Math.PI * 2);
+      ctx.fillStyle = color; ctx.fill();
+      ctx.strokeStyle = '#070d1a'; ctx.lineWidth = 1.5; ctx.stroke();
+    });
+  }
+  _raf() { this._draw(); requestAnimationFrame(() => this._raf()); }
+}
+
+const propChart = new StripChart('propChart', {
+  min: 0, max: 3.5, colors: ['#00e3fd'], limitHi: 3.2, nomLine: 2.4,
+  initial: [Array.from({length: CHART_LEN}, (_, i) => 2.41 + Math.sin(i / 10) * 0.02)]
+});
+const thermalChart = new StripChart('thermalChart', {
+  min: -50, max: 35, colors: ['#00e3fd', '#ff6600'],
+  initial: [
+    Array.from({length: CHART_LEN}, () => 21.4 + (Math.random() - 0.5) * 0.1),
+    Array.from({length: CHART_LEN}, (_, i) => -14.8 + Math.sin(i / 20) * 28 + (Math.random() - 0.5))
+  ]
+});
+
+// ── ORBIT TRACK ───────────────────────────────────────────────────────────────
+const tracePoints = [];
+function latLonToSvg(lat, lon, W = 360, H = 220) {
+  return [((lon + 180) / 360) * W, ((90 - lat) / 180) * H];
+}
+
+// ── RCS PODS ──────────────────────────────────────────────────────────────────
+(function() {
+  const c = document.getElementById('rcsPods');
+  for (let i = 1; i <= 16; i++) {
+    const el = document.createElement('div');
+    el.id = `rcsP${i}`;
+    el.className = `rcs-pod${i === 4 ? ' warn' : ''}`;
+    el.textContent = i;
+    c.appendChild(el);
+  }
+})();
+
+// ── CHANNEL TABLE ─────────────────────────────────────────────────────────────
+const CH_DEFS = [
+  {id:'CH-101', name:'CM_INTERNAL_TEMP',   valId:'v101',  unit:'°C',   status:'OK'},
+  {id:'CH-102', name:'CM_CABIN_PRES',       valId:'v102',  unit:'kPa',  status:'OK'},
+  {id:'CH-108', name:'SM_SOLAR_VOLT_A',     valId:'v108',  unit:'V',    status:'OK'},
+  {id:'CH-109', name:'SM_SOLAR_VOLT_B',     valId:'v109',  unit:'V',    status:'OK'},
+  {id:'CH-204', name:'RCS_POD_1_TEMP',      valId:'v204',  unit:'°C',   status:'WARN'},
+  {id:'CH-212', name:'NAVIC_CARRIER_LOCK',  valId:'v212',  unit:'',     status:'OK'},
+  {id:'CH-301', name:'UPLINK_BITRATE',      valId:'v301',  unit:'Mbps', status:'OK'},
+  {id:'CH-302', name:'DOWNLINK_SNR',        valId:'v302',  unit:'dB',   status:'OK'},
+  {id:'CH-405', name:'CRYO_LH2_STORAG…',   valId:'v405',  unit:'bar',  status:'OK'},
+  {id:'CH-511', name:'PYRO_BUS_A_ARM',      valId:'v511',  unit:'',     status:'OK'},
+  {id:'CH-COORD', name:'CLASSIFI…',         valId:'vCoord',unit:'',     status:'MSOD', sensitive:true},
+  {id:'CH-OPR',   name:'OPE…',             valId:'vOpr',  unit:'',     status:'MSOD', sensitive:true},
+];
+
+(function buildTable() {
+  const tbody = document.getElementById('channelTable');
+  CH_DEFS.forEach(ch => {
+    const div = document.createElement('div');
+    const warnCls = ch.status === 'WARN' ? 'warn-row' : ch.sensitive ? 'msod-row' : '';
+    div.className = `telem-row ${warnCls}`;
+    const valCls  = ch.status === 'WARN' ? 'warn' : ch.sensitive ? 'msod' : '';
+    const badgeCls = ch.status === 'WARN' ? 'warn' : ch.sensitive ? 'msod' : 'ok';
+    const badgeTxt = ch.status === 'WARN' ? 'WARN' : ch.sensitive ? 'MSOD' : 'OK';
+    div.innerHTML = `
+      <span class="ch-id-label">${ch.id}</span>
+      <span class="ch-name-label">${ch.name}</span>
+      <div class="ch-right">
+        <span id="${ch.valId}" class="ch-value ${valCls}">—</span>
+        <span class="ch-unit">${ch.unit}</span>
+        <span class="ch-badge ${badgeCls}">${badgeTxt}</span>
+      </div>`;
+    tbody.appendChild(div);
+  });
+})();
+
+// ── SIMULATION ────────────────────────────────────────────────────────────────
+function simFrame() {
+  const met   = (Date.now() - MET_START_MS) / 1000;
+  const phase = (met % ORBIT_PERIOD_S) / ORBIT_PERIOD_S * 2 * Math.PI;
+  const lat   = INCLINATION * Math.sin(phase);
+  const lon   = ((77.51 + (met / ORBIT_PERIOD_S) * 360 * 0.0694 + met / 30) % 360) - 180;
+  const inEcl = Math.sin(phase + 0.8) < -0.4;
+  const rcs4t = 48.2 + (Math.random() - 0.5) * 0.6;
+  return {
+    spacecraft: 'GAGANYAAN-H1', met_seconds: met,
+    orbit: { apogee_km: 400.2 + (Math.random()-0.5)*0.05, perigee_km: 392.8 + (Math.random()-0.5)*0.05,
+             velocity_kms: 7.682 + (Math.random()-0.5)*0.002, lat_deg: lat, lon_deg: lon,
+             alt_km: 398.42 + 3.7*Math.sin(phase*2) + (Math.random()-0.5)*0.1, rev: 224 + Math.floor(met/ORBIT_PERIOD_S) },
+    eclss: { cabin_pressure_kpa: 101.3+(Math.random()-0.5)*0.06, po2_kpa: 21.2+(Math.random()-0.5)*0.04, cabin_temp_c: 21.4+(Math.random()-0.5)*0.1 },
+    eps: { solar_power_kw: (inEcl?0:4.82)+(Math.random()-0.5)*0.08, soc_pct: 94.6+(Math.random()-0.5)*0.1, eclipse: inEcl },
+    propulsion: { chamber_pressure_mpa: 2.41+Math.sin(met/30)*0.02+(Math.random()-0.5)*0.016,
+                  oxidizer_bar:18.2+(Math.random()-0.5)*0.04, oxidizer_kg:Math.max(0,842-met*0.0008),
+                  fuel_bar:17.9+(Math.random()-0.5)*0.04, fuel_kg:Math.max(0,512.4-met*0.0005),
+                  he_bar:220.4+(Math.random()-0.5)*0.15, delta_v_residual_ms:342.6 },
+    thermal: { cm_inner_c: 21.4+(Math.random()-0.5)*0.1, cm_outer_c: -14.8+Math.sin(phase)*28+(Math.random()-0.5)*0.8 },
+    comm: { snr_db: 18.4+(Math.random()-0.5)*0.4, navic_sv: 8, navic_dop: 1.1+(Math.random()-0.5)*0.04 },
+    operator_id: 'USRC/SCI-SE/20911',
+    channels: [
+      {id:'CH-101', value:(21.4+(Math.random()-0.5)*0.1).toFixed(1),    status:'OK'},
+      {id:'CH-102', value:(101.3+(Math.random()-0.5)*0.06).toFixed(1),  status:'OK'},
+      {id:'CH-108', value:(124.6+(Math.random()-0.5)*0.4).toFixed(1),   status:'OK'},
+      {id:'CH-109', value:(123.8+(Math.random()-0.5)*0.4).toFixed(1),   status:'OK'},
+      {id:'CH-204', value:rcs4t.toFixed(1),                              status:'WARN'},
+      {id:'CH-212', value:'TRUE',                                         status:'OK'},
+      {id:'CH-301', value:'2.048',                                        status:'OK'},
+      {id:'CH-302', value:(18.4+(Math.random()-0.5)*0.4).toFixed(1),    status:'OK'},
+      {id:'CH-405', value:(3.41+(Math.random()-0.5)*0.02).toFixed(2),   status:'OK'},
+      {id:'CH-511', value:'SAFE',                                         status:'OK'},
+      {id:'CH-COORD', value:`${Math.abs(lat).toFixed(2)}${lat>=0?'N':'S'} ${Math.abs(lon).toFixed(2)}${lon>=0?'E':'W'}`, status:'MSOD', sensitive:true},
+      {id:'CH-OPR',   value:'USRC/SCI-SE/20911', status:'MSOD', sensitive:true},
+    ]
+  };
+}
+
+// ── DOM UPDATER ───────────────────────────────────────────────────────────────
+function updateUI(f) {
+  if (!f || typeof f !== 'object') return;
+  const o = f.orbit || {}, e = f.eclss || {}, p = f.propulsion || {},
+        t = f.thermal || {}, c = f.comm || {}, eps = f.eps || {};
+
+  const set = (id, v) => { const el = document.getElementById(id); if (el && v !== undefined) el.textContent = v; };
+
+  set('apogeeVal',   o.apogee_km?.toFixed(1));
+  set('perigeeVal',  o.perigee_km?.toFixed(1));
+  set('velocityVal', o.velocity_kms?.toFixed(3));
+  set('cabinPressVal', e.cabin_pressure_kpa?.toFixed(1));
+  set('po2Val',      e.po2_kpa?.toFixed(1));
+  set('cabinTempVal', e.cabin_temp_c?.toFixed(1));
+  set('solarPowerVal', eps.solar_power_kw?.toFixed(2));
+  set('socVal',      eps.soc_pct?.toFixed(1));
+  set('navicSvVal',  c.navic_sv ? `${c.navic_sv} SVs` : undefined);
+  set('navicDopVal', c.navic_dop ? `DOP ${c.navic_dop.toFixed(2)}` : undefined);
+
+  // Propulsion
+  if (p.chamber_pressure_mpa) {
+    set('propChamberVal', `${p.chamber_pressure_mpa.toFixed(3)} MPa`);
+    propChart.push(p.chamber_pressure_mpa);
+  }
+  set('deltaVVal',  p.delta_v_residual_ms ? `${p.delta_v_residual_ms.toFixed(1)} m/s` : undefined);
+  set('oxBarVal',   p.oxidizer_bar ? `${p.oxidizer_bar.toFixed(1)} bar` : undefined);
+  set('oxMassVal',  p.oxidizer_kg ? `MASS: ${p.oxidizer_kg.toFixed(1)} kg` : undefined);
+  set('fuelBarVal', p.fuel_bar ? `${p.fuel_bar.toFixed(1)} bar` : undefined);
+  set('fuelMassVal', p.fuel_kg ? `MASS: ${p.fuel_kg.toFixed(1)} kg` : undefined);
+  set('heBarVal',   p.he_bar ? `${p.he_bar.toFixed(1)} bar` : undefined);
+  if (p.oxidizer_kg) { const el = document.getElementById('oxFill');   if (el) el.style.width = Math.min(100, p.oxidizer_kg / 1100 * 100) + '%'; }
+  if (p.fuel_kg)     { const el = document.getElementById('fuelFill'); if (el) el.style.width = Math.min(100, p.fuel_kg / 710 * 100) + '%'; }
+
+  // Thermal
+  if (t.cm_inner_c !== undefined && t.cm_outer_c !== undefined) {
+    set('innerTempVal', `${t.cm_inner_c.toFixed(1)}°C`);
+    set('outerTempVal', `${t.cm_outer_c.toFixed(1)}°C`);
+    thermalChart.push(t.cm_inner_c, t.cm_outer_c);
+  }
+
+  // Orbit track
+  if (o.lat_deg !== undefined && o.lon_deg !== undefined) {
+    const [sx, sy] = latLonToSvg(o.lat_deg, o.lon_deg);
+    document.getElementById('scMarker')?.setAttribute('transform', `translate(${sx.toFixed(1)},${sy.toFixed(1)})`);
+    set('latDisplay', `${Math.abs(o.lat_deg).toFixed(2)}° ${o.lat_deg >= 0 ? 'N' : 'S'}`);
+    set('lonDisplay', `${Math.abs(o.lon_deg).toFixed(2)}° ${o.lon_deg >= 0 ? 'E' : 'W'}`);
+    if (o.alt_km) set('altDisplay', `${o.alt_km.toFixed(2)} km`);
+    if (o.rev)    set('revDisplay', `REV #${o.rev}`);
+
+    tracePoints.push([sx, sy]);
+    if (tracePoints.length > 90) tracePoints.shift();
+    if (tracePoints.length > 1) {
+      const d = 'M ' + tracePoints.map(([x, y]) => `${x.toFixed(1)},${y.toFixed(1)}`).join(' L ');
+      document.getElementById('orbitTrace')?.setAttribute('d', d);
+    }
+  }
+
+  // Channel table
+  const ID_MAP = { 'CH-COORD': 'vCoord', 'CH-OPR': 'vOpr' };
+  if (Array.isArray(f.channels)) {
+    f.channels.forEach(ch => {
+      const elId = ID_MAP[ch.id] || ('v' + ch.id.replace('CH-', ''));
+      set(elId, ch.value);
+    });
+  }
+}
+
+// ── WEBSOCKET ─────────────────────────────────────────────────────────────────
+let ws = null, wsConnected = false, simTimer = null;
+
+function setWsStatus(live) {
+  const pill = document.getElementById('wsStatusPill');
+  const text = document.getElementById('wsStatusText');
+  if (live) { pill.className = 'ws-status live'; text.textContent = 'DSN-32 BLR LOCK (WS LIVE)'; }
+  else       { pill.className = 'ws-status';      text.textContent = 'JS SIMULATION MODE'; }
+}
+
+function connectWS() {
+  try {
+    ws = new WebSocket(`ws://127.0.0.1:8001/ws/gaganyaan`);
+    ws.onopen = () => { wsConnected = true; clearInterval(simTimer); simTimer = null; setWsStatus(true); };
+    ws.onmessage = e => { try { updateUI(JSON.parse(e.data)); } catch (_) {} };
+    ws.onclose = ws.onerror = () => { wsConnected = false; setWsStatus(false); startSim(); setTimeout(connectWS, 4000); };
+  } catch (_) { setWsStatus(false); startSim(); }
+}
+
+function startSim() {
+  if (simTimer) return;
+  simTimer = setInterval(() => { if (!wsConnected) updateUI(simFrame()); }, 1000);
+}
+
+// ── EVENT LOG INJECTOR ────────────────────────────────────────────────────────
+const EVTS = [
+  {sys:'GNC_AVIONICS', cls:'orange', type:'system', typeL:'SYSTEM',    msg:'Attitude quaternion corrected. Delta quaternion norm 0.0012 rad.',                 disp:'AUTO_FDIR'},
+  {sys:'ECLSS',        cls:'cyan',   type:'system', typeL:'TELEM_EVENT',msg:'CO₂ scrubber LiOH canister swap initiated. Remaining life 4h 12m.',              disp:'ECLSS_AUTO'},
+  {sys:'EPS_SOLAR',    cls:'orange', type:'system', typeL:'AUTO_CMD',   msg:'Solar array beta gimbal adjusted +2.1° for peak irradiance.',                     disp:'EPS_AUTO_FDIR'},
+  {sys:'COMM_SBAND',   cls:'green',  type:'net',    typeL:'NET_EVENT',  msg:'Handover from BLR-DSN32 to PORT BLAIR X-band initiated.',                        disp:'ISTRAC_NET'},
+  {sys:'THERMAL',      cls:'cyan',   type:'system', typeL:'TELEM_EVENT',msg:'CM outer hull entering penumbra. Predicted dip to -31°C over 14 min.',            disp:'TCS_AUTO'},
+  {sys:'RCS_THERMAL',  cls:'orange', type:'warn',   typeL:'WARN',       msg:'Pod 4 temperature 48.4°C (Soft limit: 45°C). Monitoring. No action required.',   disp:'AUTO_FDIR'},
+  {sys:'PRIVYBROWSE',  cls:'red',    type:'privacy',typeL:'PRIVACY',    msg:'MSOD filter active: CLASSIFIED_COORD intercepted from WebSocket → [RESTRICTED_COORDINATES]. Agent digest sanitized.', disp:'PRIVYBROWSE-X'},
+];
+
+function injectEvent() {
+  const ev  = EVTS[Math.floor(Math.random() * EVTS.length)];
+  const now = new Date();
+  const ist = new Date(now.getTime() + 5.5 * 3600_000);
+  const ist_str = `${pad(ist.getUTCHours())}:${pad(ist.getUTCMinutes())}:${pad(ist.getUTCSeconds())}`;
+  const metMs = Date.now() - MET_START_MS;
+  const met_str = 'T+ ' + formatMET(metMs).slice(0, 8);
+
+  const tbody = document.getElementById('eventLog');
+  const tr = document.createElement('tr');
+  tr.innerHTML = `
+    <td class="evt-time">${ist_str}</td>
+    <td class="evt-met">${met_str}</td>
+    <td class="evt-sub ${ev.cls}">${ev.sys}</td>
+    <td><span class="event-type ${ev.type}">${ev.typeL}</span></td>
+    <td class="event-detail">${ev.msg}</td>
+    <td class="event-dispatch">${ev.disp}</td>`;
+  tbody.insertBefore(tr, tbody.firstChild);
+  while (tbody.children.length > 20) tbody.removeChild(tbody.lastChild);
+  const scrollCheck = document.getElementById('autoScrollChk');
+  if (scrollCheck?.checked) tbody.parentElement.parentElement.scrollTop = 0;
+  setTimeout(injectEvent, 15000 + Math.random() * 20000);
+}
+
+// ── BOOT ──────────────────────────────────────────────────────────────────────
+startSim();
+connectWS();
+setTimeout(injectEvent, 8000);
+
+// ── NAV TABS ─────────────────────────────────────────────────────────────────
+document.querySelectorAll('.nav-tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.nav-tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+  });
+});
+</script>
+</body>
+</html>

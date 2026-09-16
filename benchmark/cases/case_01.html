@@ -1,0 +1,28 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>ISRO ISTRAC Portal — Sign In</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f0f4f8;display:flex;align-items:center;justify-content:center;height:100vh}
+.card{background:#fff;border-radius:8px;box-shadow:0 4px 20px rgba(0,0,0,.12);padding:48px 40px;width:440px}
+.logo{display:flex;align-items:center;gap:12px;margin-bottom:32px}
+.logo-mark{width:40px;height:40px;background:#0a3d91;border-radius:6px;display:flex;align-items:center;justify-content:center;color:#fff;font-weight:700;font-size:18px}
+h1{font-size:20px;font-weight:700;color:#1a202c;margin-bottom:4px}
+.sub{font-size:13px;color:#718096;margin-bottom:28px}
+label{display:block;font-size:12px;font-weight:600;color:#4a5568;margin-bottom:6px;text-transform:uppercase;letter-spacing:.05em}
+input{width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px;font-size:14px;color:#2d3748;outline:none;margin-bottom:20px}
+input:focus{border-color:#0a3d91;box-shadow:0 0 0 3px rgba(10,61,145,.1)}
+.btn{width:100%;padding:12px;background:#0a3d91;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="logo"><div class="logo-mark">I</div><div><h1>ISTRAC Secure Portal</h1><p class="sub">Mission Operations Access — Authenticated Personnel Only</p></div></div>
+  <label for="uname">Employee ID / Username</label>
+  <input id="uname" type="text" autocomplete="username" placeholder="emp.id@isro.gov.in"/>
+  <label for="pwd">Password</label>
+  <input id="pwd" type="password" autocomplete="current-password" placeholder="Enter your secure password"/>
+  <button class="btn">Sign In Securely</button>
+</div>
+</body>
+</html>

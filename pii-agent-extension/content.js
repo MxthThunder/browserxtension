@@ -12,6 +12,85 @@
 if (window.__PRIVIBROWSE_CONTENT_INITIALIZED__) return;
 window.__PRIVIBROWSE_CONTENT_INITIALIZED__ = true;
 
+// ── WebSocket Telemetry Intercept (MSOD Layer) ─────────────────────────────
+// Monkey-patches window.WebSocket before any page script runs.
+// Every incoming message is forwarded to data_adapter.js via window.postMessage
+// using the PRIVIBROWSE_TELEMETRY_FRAME channel, which the adapter already listens for.
+//
+// This works on ANY page that uses WebSockets — not just our own OpenMCT dashboard.
+// The patch is transparent: the page receives its WebSocket instance back unchanged.
+//
+// We capture at document_start (before page JS), so we intercept 100% of frames.
+(function patchWebSocket() {
+  const _NativeWS = window.WebSocket;
+  if (!_NativeWS || window.__PRIVIBROWSE_WS_PATCHED__) return;
+  window.__PRIVIBROWSE_WS_PATCHED__ = true;
+
+  function PriviBrowseWebSocket(url, protocols) {
+    const ws = protocols ? new _NativeWS(url, protocols) : new _NativeWS(url);
+
+    ws.addEventListener("message", (evt) => {
+      try {
+        // Only forward parseable JSON frames — binary/non-JSON WS traffic is left alone
+        const data = typeof evt.data === "string" ? JSON.parse(evt.data) : null;
+        if (!data || typeof data !== "object") return;
+
+        // Determine if this looks like telemetry (has known telemetry signals)
+        const isTelemetry =
+          data.channels || data.mnemonic || data.spacecraft ||
+          data.met_seconds !== undefined || Array.isArray(data);
+
+        if (!isTelemetry) return;
+
+        // Normalize to the adapter's expected format:
+        // - If it's a Gaganyaan rich frame (object with .channels), send channels as payload
+        // - If it's the legacy flat array, send as-is
+        const payload = data.channels ? data.channels : data;
+
+        window.postMessage({
+          type: "PRIVIBROWSE_TELEMETRY_FRAME",
+          payload,
+          // Also forward the full frame for the HUD's "WS Intercept" panel
+          fullFrame: data,
+          wsUrl: url,
+          ts: Date.now(),
+        }, "*");
+
+        // Signal to background.js (which forwards to HUD) — carries the full frame
+        // so the HUD can render the raw vs. sanitized comparison panel.
+        try {
+          if (typeof chrome !== "undefined" && chrome.runtime?.sendMessage) {
+            chrome.runtime.sendMessage({
+              type: "PRIVIBROWSE_WS_FRAME_INTERCEPTED",
+              fullFrame: data,
+              wsUrl: url,
+              byteLength: typeof evt.data === "string" ? evt.data.length : 0,
+              ts: Date.now(),
+            }).catch(() => {}); // background may not be ready yet — safe to ignore
+          }
+        } catch (_) {}
+
+      } catch (_) {
+        // Not JSON — silently ignore (binary protocols like protobuf, CBOR)
+      }
+    });
+
+    return ws;
+  }
+
+  // Copy all static properties (CONNECTING, OPEN, CLOSING, CLOSED) and prototype
+  Object.setPrototypeOf(PriviBrowseWebSocket, _NativeWS);
+  PriviBrowseWebSocket.prototype = _NativeWS.prototype;
+  Object.defineProperties(PriviBrowseWebSocket, {
+    CONNECTING: { value: 0, writable: false }, OPEN: { value: 1, writable: false },
+    CLOSING:    { value: 2, writable: false }, CLOSED: { value: 3, writable: false },
+  });
+
+  window.WebSocket = PriviBrowseWebSocket;
+  window.__PRIVIBROWSE_NATIVE_WS__ = _NativeWS; // preserve for internal use
+})();
+// ── End WebSocket Intercept ────────────────────────────────────────────────
+
 // Sensitive Autocomplete Standard Tokens
 const SENSITIVE_AUTOCOMPLETE_TOKENS = [
   "cc-number", "cc-exp", "cc-exp-month", "cc-exp-year", "cc-csc", "cc-name", "cc-type",
@@ -849,6 +928,38 @@ function scanPageForSensitiveElements() {
 
   cachedMatches = matches;
   updateFloatingBadge(matches.length);
+
+  // ── Benchmark Mode Hook ────────────────────────────────────────────────────
+  // Activated ONLY when URL contains ?bm=<case_id> (set by Puppeteer runner).
+  // Serialises detected boxes and POSTs them to the local FastAPI benchmark
+  // endpoint, then writes to window.__BM_RESULT for synchronous CDP reading.
+  // Has zero effect in normal browsing — the URL param check ensures this.
+  try {
+    const _bmParam = new URLSearchParams(window.location.search).get("bm");
+    if (_bmParam) {
+      const _t0 = performance.now();
+      const _bmBoxes = matches.map((m) => ({
+        category: m.category,
+        reason: m.reason,
+        box: [m.x, m.y, m.width, m.height],
+      }));
+      window.__BM_RESULT = { case_id: _bmParam, boxes: _bmBoxes, ts: Date.now() };
+      const _latMs = Math.round(performance.now() - _t0 + (window.__BM_PAGE_LOAD_T0
+        ? Date.now() - window.__BM_PAGE_LOAD_T0 : 0));
+      fetch("http://127.0.0.1:8001/api/benchmark/report", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          case_id: _bmParam,
+          boxes: _bmBoxes,
+          layer_counts: { dom: _bmBoxes.length },
+          latency_ms: _latMs,
+        }),
+      }).catch(() => {}); // silently ignore if server is down
+    }
+  } catch (_bmErr) { /* never let benchmark code crash the extension */ }
+  // ──────────────────────────────────────────────────────────────────────────
+
   return matches;
 }
 

@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>Receipt Scanner — Upload Statement</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#1a1a2e;color:#eee;display:flex;flex-direction:column;align-items:center;padding:60px 20px}
+h1{font-size:22px;margin-bottom:8px}
+p{color:#aaa;margin-bottom:32px;font-size:14px}
+.canvas-wrap{background:#fff;border-radius:8px;padding:20px}
+canvas{display:block}
+.label{font-size:12px;color:#888;margin-top:12px;text-align:center}
+</style>
+</head>
+<body>
+<h1>Scanned Bank Statement</h1>
+<p>Preview of uploaded document — sensitive fields are rendered as pixel content, not DOM text.</p>
+<div class="canvas-wrap">
+  <canvas id="doc" width="520" height="280"></canvas>
+</div>
+<p class="label">PII is drawn directly onto canvas — DOM scanner cannot read this text</p>
+<script>
+window.__BM_PAGE_LOAD_T0 = Date.now();
+const canvas = document.getElementById('doc');
+const ctx = canvas.getContext('2d');
+ctx.fillStyle = '#f8f8f8'; ctx.fillRect(0, 0, 520, 280);
+ctx.fillStyle = '#0a3d91'; ctx.fillRect(0, 0, 520, 50);
+ctx.fillStyle = '#fff'; ctx.font = 'bold 15px Arial';
+ctx.fillText('STATE BANK OF INDIA — Account Statement', 18, 32);
+ctx.fillStyle = '#333'; ctx.font = '13px "Courier New"';
+ctx.fillText('Account Holder : PRIYA MENON', 24, 82);
+ctx.fillText('Account Number : 3928 4712 0056', 24, 106);
+ctx.fillText('IFSC Code      : SBIN0001234', 24, 130);
+ctx.fillText('PAN Card       : BNZPM4756K', 24, 154);
+ctx.fillText('Mobile Linked  : +91 98760 43210', 24, 178);
+ctx.fillStyle = '#666'; ctx.font = '11px Arial';
+ctx.fillText('15/09/2026   UPI to Flipkart      -₹2,499.00    Bal: ₹48,302', 24, 214);
+ctx.fillText('14/09/2026   NEFT from ISRO HQ   +₹85,000.00   Bal: ₹50,801', 24, 236);
+ctx.strokeStyle = '#ccc'; ctx.lineWidth = 1;
+ctx.strokeRect(0.5, 0.5, 519, 279);
+</script>
+</body>
+</html>

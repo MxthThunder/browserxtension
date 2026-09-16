@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="en">
+<head><meta charset="utf-8"/><title>MFA — Two Factor Authentication</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:'Segoe UI',sans-serif;background:#f0f4f8;display:flex;align-items:center;justify-content:center;height:100vh}
+.card{background:#fff;border-radius:10px;box-shadow:0 4px 20px rgba(0,0,0,.1);padding:48px 40px;width:440px;text-align:center}
+.shield{font-size:48px;margin-bottom:16px}
+h1{font-size:20px;font-weight:700;color:#1a202c;margin-bottom:8px}
+.sub{font-size:13px;color:#718096;margin-bottom:28px}
+label{display:block;font-size:12px;font-weight:600;color:#4a5568;text-transform:uppercase;letter-spacing:.05em;margin-bottom:8px;text-align:left}
+/* ADVERSARIAL: type="text" but contains a password — no type=password signal */
+input.disguised{
+  width:100%; border:2px solid #e2e8f0; border-radius:6px;
+  padding:14px 16px; font-size:18px; letter-spacing:.3em; text-align:center;
+  color:#2d3748; outline:none; margin-bottom:8px; font-family:'Courier New',monospace;
+}
+input.disguised:focus{border-color:#6366f1}
+.hint{font-size:11px;color:#a0aec0;margin-bottom:24px}
+/* Second field: name="pwd" but type="text" */
+input.secret{width:100%;border:1px solid #e2e8f0;border-radius:6px;padding:10px 14px;
+  font-size:14px;color:#2d3748;outline:none;margin-bottom:20px}
+.btn{width:100%;padding:12px;background:#6366f1;color:#fff;border:none;border-radius:6px;font-size:15px;font-weight:600;cursor:pointer}
+</style>
+</head>
+<body>
+<div class="card">
+  <div class="shield">🔐</div>
+  <h1>Two-Factor Authentication</h1>
+  <p class="sub">Enter the 6-digit one-time code sent to your registered device.</p>
+
+  <label for="otp-code">One-Time Passcode</label>
+  <!--
+    ADVERSARIAL CASE 1: autocomplete=one-time-code but type=text (not password).
+    Many real MFA implementations use type=text for OTP fields to allow paste.
+    Tests whether autocomplete attribute is checked independently of type.
+  -->
+  <input class="disguised" id="otp-code" type="text"
+         autocomplete="one-time-code" inputmode="numeric"
+         maxlength="6" placeholder="······"/>
+  <p class="hint">Code expires in 2:47</p>
+
+  <label for="backup-code">Backup Recovery Code (if OTP unavailable)</label>
+  <!--
+    ADVERSARIAL CASE 2: type="text" but name="pwd" and placeholder says "password".
+    No type=password signal — only name-pattern heuristic can catch this.
+  -->
+  <input class="secret" id="backup-code" type="text"
+         name="pwd" placeholder="Enter 8-character backup password"
+         autocomplete="off"/>
+
+  <button class="btn">Verify & Continue</button>
+</div>
+</body>
+</html>
