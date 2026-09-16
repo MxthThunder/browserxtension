@@ -16,6 +16,8 @@ import os
 import sys
 
 def main():
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8", errors="replace")
     script_dir = os.path.dirname(os.path.abspath(__file__))
     actual_path = os.path.join(script_dir, "actual_benchmark_results.json")
 

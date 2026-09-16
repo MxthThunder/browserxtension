@@ -160,7 +160,9 @@ async function initFaceDetector() {
           delegate: "CPU", // GPU delegate not always available in offscreen context
         },
         runningMode: "IMAGE",
-        minDetectionConfidence: 0.35,
+        // 0.72 eliminates avatar icons, dark gradients and hero-banner false
+        // positives that fired at 0.35. Real faces still score >= 0.80.
+        minDetectionConfidence: 0.72,
         minSuppressionThreshold: 0.3,
       });
       faceDetectorReady = true;
@@ -300,10 +302,30 @@ async function detectFaces(img, imgWidth, imgHeight) {
   }
 
   const deduped = dedupeFaces(found);
-  if (deduped.length) {
-    logEvent("offscreen", `BlazeFace found ${deduped.length} face(s) (${found.length} raw detection(s) before dedupe)`);
+
+  // Post-detection sanity filter — remove boxes that are clearly not faces:
+  //   • Too small  (< 30 px): UI avatar placeholders, tiny icons
+  //   • Too large  (> 40 % of frame width): hero banners, background gradients
+  //   • Wrong aspect ratio (> 2.5:1 either axis): banners, landscape crops
+  //   • Low confidence remnants after tiling dedupe
+  const maxFaceW = imgWidth  * 0.40;
+  const maxFaceH = imgHeight * 0.60;
+  const filtered = deduped.filter((f) => {
+    if (f.w < 30 || f.h < 30)           return false; // avatar icon / tiny UI element
+    if (f.w > maxFaceW)                  return false; // hero/banner false positive
+    if (f.h > maxFaceH)                  return false; // full-column false positive
+    const ar = Math.max(f.w / f.h, f.h / f.w);
+    if (ar > 2.5)                        return false; // non-face aspect ratio
+    if (f.confidence < 0.60)             return false; // below confidence floor
+    return true;
+  });
+
+  if (filtered.length) {
+    logEvent("offscreen", `BlazeFace: ${filtered.length} face(s) kept (${deduped.length} after dedupe, ${found.length} raw)`);
+  } else if (deduped.length) {
+    logEvent("offscreen", `BlazeFace: ${deduped.length} detection(s) rejected by size/aspect/confidence filter`, null, "warn");
   }
-  return deduped;
+  return filtered;
 }
 
 // ── Tesseract OCR ─────────────────────────────────────────────────────────────
@@ -320,10 +342,8 @@ const OCR_PII_PATTERNS = [
   { category: "govIds",      label: "PAN Card",           re: /\b[A-Z]{5}\d{4}[A-Z]\b/ },
   { category: "govIds",      label: "Passport Number",    re: /\b[A-Z]\d{7}\b/ },
   { category: "contactInfo", label: "Email Address",      re: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/ },
-  // Grouping-agnostic (see content.js's INLINE_PII_PATTERNS.PHONE for the
-  // full rationale): the previous 3-3-4-only pattern missed the Indian
-  // mobile format and Korean-style 3-4-4 numbers, both verified misses.
-  { category: "contactInfo", label: "Phone Number",       re: /\b\+?\(?\d{2,5}\)?(?:[-.\s]\d{2,5}){1,4}\b/ },
+  { category: "contactInfo", label: "Phone Number",
+    re: /\b\+?\(?\d{2,5}\)?(?:[-.\s]\d{2,5}){1,4}\b/ },
   { category: "govIds",      label: "Bank IFSC Code",     re: /\b[A-Z]{4}0[A-Z0-9]{6}\b/ },
   { category: "govIds",      label: "Account Number",     re: /\b\d{9,18}\b/ },
   // Credentials rendered INSIDE an image — a screenshot of a login form, a

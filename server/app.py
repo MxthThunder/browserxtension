@@ -326,6 +326,21 @@ def generate_gaganyaan_frame() -> Dict[str, Any]:
          "unit": "", "status": "OK", "subsystem": "OPS",     "sensitive": True},
     ]
 
+    # ── Simulated PII injection for PrivyBrowse-X demonstration ──────────────
+    # In a real mission system, crew medical records, emergency contacts, or
+    # operator credentials can accidentally leak into telemetry frames.
+    # We rotate through 5 PII types every ~10 seconds so the HUD alert feed
+    # demonstrates real-time WebSocket PII detection continuously.
+    _pii_bucket = int(met // 10) % 5
+    _pii_labels = [
+        ("crew_emergency_contact",   "+91 98450 76543"),          # PHONE
+        ("crew_national_id",          "9876 5432 1098"),           # AADHAAR
+        ("operator_pan",              "BNZPM4756K"),               # PAN
+        ("ground_payment_ref",        "4532-****-****-1123"),      # CREDIT_CARD (masked)
+        ("mission_contact_email",     "arjun.pilot@isro.gov.in"), # EMAIL
+    ]
+    pii_key, pii_val = _pii_labels[_pii_bucket]
+
     return {
         "spacecraft": "GAGANYAAN-H1",
         "met_seconds": round(met, 2),
@@ -373,10 +388,14 @@ def generate_gaganyaan_frame() -> Dict[str, Any]:
             "dsn_dbm":      round(-98.4 + random.gauss(0, 0.3), 1),
             "ground_station": "BLR-DSN32",
         },
-        # Sensitive: operator badge (MSOD-sensitive, must be masked to [OPERATOR_ID])
+        # Sensitive fields — always present, always intercepted
         "operator_id": operator_id,
+        # Rotating PII injection — demonstrates detection of different PII types
+        # in the live telemetry stream (phone, Aadhaar, PAN, card, email)
+        pii_key: pii_val,
         "channels": channels,
     }
+
 
 
 @app.get("/console", response_class=HTMLResponse)

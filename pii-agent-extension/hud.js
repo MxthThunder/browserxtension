@@ -33,28 +33,56 @@ let lastResultPayload = null;
 // raw vs. sanitized split view plus the live channel table.
 
 let wsFrameCount = 0;
+let wsPiiAlertCount = 0;
 let lastWsUrl = null;
+const WS_ALERT_MAX = 50; // ring-buffer cap for the alert feed
 
-// MSOD redaction patterns (mirrors data_adapter.js _maskSensitiveString)
+// MSOD redaction patterns — mirrors data_adapter.js _maskSensitiveString,
+// PLUS inline PII patterns so that actual PII arriving over WebSocket is
+// caught and highlighted before it can ever reach the LLM prompt.
 const MSOD_RULES = [
-  { re: /\b\d{1,2}(?:\.\d+)?°?\s*[NS][,\s]+\d{1,3}(?:\.\d+)?°?\s*[EW]\b/gi,
+  // ── Mission-Sensitive Operational Data ──────────────────────────────────
+  { label: "COORDINATES",
+    re: /\b\d{1,2}(?:\.\d+)?°?\s*[NS][,\s]+\d{1,3}(?:\.\d+)?°?\s*[EW]\b/gi,
     replacement: "[RESTRICTED_COORDINATES]" },
-  { re: /\b(?:OP-[A-Z0-9]{4,10}|USRC\/[A-Z0-9\/-]+)\b/gi,
+  { label: "OPERATOR_ID",
+    re: /\b(?:OP-[A-Z0-9]{4,10}|USRC\/[A-Z0-9\/-]+)\b/gi,
     replacement: "[OPERATOR_ID]" },
-  { re: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g,
+  { label: "INTERNAL_IP",
+    re: /\b(?:10\.\d{1,3}\.\d{1,3}\.\d{1,3}|192\.168\.\d{1,3}\.\d{1,3})\b/g,
     replacement: "[INTERNAL_IP]" },
+  // ── Inline PII (same as content.js INLINE_PII_PATTERNS) ─────────────────
+  { label: "PHONE",
+    re: /\b\+?\(?\d{2,5}\)?(?:[-.\s]\d{2,5}){1,4}\b/g,
+    replacement: "[PHONE_REDACTED]" },
+  { label: "AADHAAR",
+    re: /(?<!\d)\d{4} \d{4} \d{4}(?!\d)/g,
+    replacement: "[AADHAAR_REDACTED]" },
+  { label: "PAN",
+    re: /\b[A-Z]{5}[0-9]{4}[A-Z]{1}\b/g,
+    replacement: "[PAN_REDACTED]" },
+  { label: "CREDIT_CARD",
+    re: /\b\d{4}(?:[ \-\u2013\u2014][\d*Xx]{4}){2}[ \-\u2013\u2014]\d{4}\b/g,
+    replacement: "[CARD_REDACTED]" },
+  { label: "EMAIL",
+    re: /\b[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}\b/g,
+    replacement: "[EMAIL_REDACTED]" },
+  { label: "SSN",
+    re: /\b\d{3}-\d{2}-\d{4}\b/g,
+    replacement: "[SSN_REDACTED]" },
 ];
 
 function applyMsod(str) {
-  if (typeof str !== "string") return { out: str, masked: false };
+  if (typeof str !== "string") return { out: str, masked: false, labels: [] };
   let out = str;
   let masked = false;
-  for (const { re, replacement } of MSOD_RULES) {
+  const labels = [];
+  for (const { re, replacement, label } of MSOD_RULES) {
     const replaced = out.replace(re, replacement);
-    if (replaced !== out) masked = true;
+    if (replaced !== out) { masked = true; if (label && !labels.includes(label)) labels.push(label); }
     out = replaced;
   }
-  return { out, masked };
+  return { out, masked, labels };
 }
 
 function sanitizeFrameForLLM(frame) {
@@ -139,6 +167,72 @@ function renderChannelRows(channels) {
   }).join("");
 }
 
+// ── WS PII Alert Feed ───────────────────────────────────────────────────────
+// Ring buffer of detected PII events from the WebSocket stream.
+const wsAlertFeed = [];
+
+function pushWsAlert(mnemonic, piiLabel, rawValue, maskedValue, ts) {
+  wsAlertFeed.unshift({ mnemonic, piiLabel, rawValue, maskedValue, ts });
+  if (wsAlertFeed.length > WS_ALERT_MAX) wsAlertFeed.length = WS_ALERT_MAX;
+  wsPiiAlertCount++;
+
+  // Update counter badge
+  const ctr = document.getElementById("valWsPiiAlerts");
+  if (ctr) {
+    ctr.textContent = String(wsPiiAlertCount);
+    ctr.closest(".stat")?.classList.add("stat-alert");
+  }
+
+  // Re-render the alert feed list
+  renderWsAlertFeed();
+}
+
+function renderWsAlertFeed() {
+  const feed = document.getElementById("wsAlertFeed");
+  if (!feed) return;
+  feed.innerHTML = wsAlertFeed.map(a => {
+    const time = new Date(a.ts).toLocaleTimeString();
+    return `<div class="ws-alert-row">
+      <span class="ws-alert-time">${time}</span>
+      <span class="ws-alert-label">${a.piiLabel}</span>
+      <span class="ws-alert-mnemonic">${a.mnemonic}</span>
+      <span class="ws-alert-raw">${escHtml(String(a.rawValue ?? "").slice(0, 40))}</span>
+      <span class="ws-alert-masked">${escHtml(String(a.maskedValue ?? "").slice(0, 40))}</span>
+    </div>`;
+  }).join("");
+  const empty = document.getElementById("wsAlertEmpty");
+  if (empty) empty.hidden = wsAlertFeed.length > 0;
+}
+
+function escHtml(s) {
+  return s.replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;");
+}
+
+// Deep-walk a frame object, run MSOD+PII rules on every string leaf,
+// and push an alert for every hit found.
+function scanFrameForPii(frame, wsUrl) {
+  const now = Date.now();
+  const walk = (obj, path) => {
+    if (typeof obj === "string") {
+      const { out, masked, labels } = applyMsod(obj);
+      if (masked) {
+        for (const lbl of labels) {
+          pushWsAlert(path, lbl, obj, out, now);
+        }
+      }
+      return;
+    }
+    if (Array.isArray(obj)) {
+      obj.forEach((v, i) => walk(v, `${path}[${i}]`));
+      return;
+    }
+    if (obj && typeof obj === "object") {
+      for (const [k, v] of Object.entries(obj)) walk(v, path ? `${path}.${k}` : k);
+    }
+  };
+  walk(frame, "");
+}
+
 function handleInterceptedFrame(fullFrame, wsUrl) {
   wsFrameCount++;
   valWsFrames.textContent = String(wsFrameCount);
@@ -156,6 +250,9 @@ function handleInterceptedFrame(fullFrame, wsUrl) {
 
   // Timestamp
   document.getElementById("rawFrameTs").textContent = new Date().toLocaleTimeString();
+
+  // ── PII scan on the raw frame ────────────────────────────────────────────
+  scanFrameForPii(fullFrame, wsUrl);
 
   // Sanitize
   const sanitized = sanitizeFrameForLLM(fullFrame);
@@ -180,8 +277,58 @@ function handleInterceptedFrame(fullFrame, wsUrl) {
   }
 }
 
-// Listen for WS frame notifications forwarded by the background script
-// (content.js → background.js → HUD via chrome.runtime)
+// ── Direct HUD WebSocket ─────────────────────────────────────────────────────
+// The HUD connects directly to the server's telemetry stream.
+// This is more reliable than the background.js relay (which suffers from
+// MV3 service worker lifecycle issues) and gives the HUD 1 Hz live data
+// without depending on which tab is active or focused.
+(function startHudWs() {
+  const WS_URL = "ws://127.0.0.1:8001/ws/gaganyaan";
+  let hudWs = null;
+  let reconnectTimer = null;
+
+  function connect() {
+    if (hudWs && (hudWs.readyState === WebSocket.OPEN || hudWs.readyState === WebSocket.CONNECTING)) return;
+    try {
+      hudWs = new WebSocket(WS_URL);
+
+      hudWs.onopen = () => {
+        const pill = document.getElementById("wsStatusPill");
+        const statusText = document.getElementById("wsStatusText");
+        const urlLabel = document.getElementById("wsUrlLabel");
+        if (pill) pill.className = "ws-pill connected";
+        if (statusText) statusText.textContent = "WS CONNECTED";
+        if (urlLabel) urlLabel.textContent = "127.0.0.1:8001/ws/gaganyaan";
+        if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = null; }
+      };
+
+      hudWs.onmessage = (evt) => {
+        try {
+          const data = JSON.parse(evt.data);
+          if (data && typeof data === "object") {
+            handleInterceptedFrame(data, WS_URL);
+          }
+        } catch (_) {}
+      };
+
+      hudWs.onclose = hudWs.onerror = () => {
+        const pill = document.getElementById("wsStatusPill");
+        const statusText = document.getElementById("wsStatusText");
+        if (pill) pill.className = "ws-pill connecting";
+        if (statusText) statusText.textContent = "Reconnecting…";
+        hudWs = null;
+        reconnectTimer = setTimeout(connect, 3000);
+      };
+    } catch (e) {
+      reconnectTimer = setTimeout(connect, 5000);
+    }
+  }
+
+  connect();
+})();
+
+// Also keep the chrome.runtime.onMessage listener as a fallback —
+// it will receive frames from other pages the extension is active on.
 if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
   chrome.runtime.onMessage.addListener((msg) => {
     if (msg.type === "PRIVIBROWSE_WS_FRAME_CAPTURED" && msg.fullFrame) {
@@ -189,6 +336,7 @@ if (typeof chrome !== "undefined" && chrome.runtime?.onMessage) {
     }
   });
 }
+
 
 async function runCapture() {
   btnCapture.disabled = true;
@@ -616,3 +764,38 @@ metricsModal.addEventListener("click", (e) => {
 
 // Auto-run once on launch
 setTimeout(runCapture, 500);
+
+// \u2500\u2500 WS PII Alert Feed \u2014 Clear button \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+const btnClearWsAlerts = document.getElementById("btnClearWsAlerts");
+if (btnClearWsAlerts) {
+  btnClearWsAlerts.addEventListener("click", () => {
+    wsAlertFeed.length = 0;
+    wsPiiAlertCount = 0;
+    const ctr = document.getElementById("valWsPiiAlerts");
+    if (ctr) { ctr.textContent = "0"; ctr.closest(".stat")?.classList.remove("stat-alert"); }
+    const countLbl = document.getElementById("wsPiiAlertCountLabel");
+    if (countLbl) countLbl.textContent = "0 events";
+    renderWsAlertFeed();
+  });
+}
+
+// Keep the "N events" label in wsPiiAlertCountLabel in sync every time
+// pushWsAlert is called (patched via renderWsAlertFeed extension).
+const _origRenderWsAlertFeed = renderWsAlertFeed;
+// eslint-disable-next-line no-global-assign
+// (renderWsAlertFeed is module-scoped; we call the count update directly from pushWsAlert)
+// Sync the count label whenever the feed updates:
+function syncWsPiiCountLabel() {
+  const lbl = document.getElementById("wsPiiAlertCountLabel");
+  if (lbl) lbl.textContent = `${wsPiiAlertCount} event${wsPiiAlertCount !== 1 ? "s" : ""}`;
+}
+// Extend pushWsAlert to also sync the label (non-destructive monkey-patch not needed \u2014
+// just call it at the end of renderWsAlertFeed by overriding the inner call):
+const _baseRender = renderWsAlertFeed;
+Object.defineProperty(window, "_hudSyncCount", { get() { syncWsPiiCountLabel(); return 0; } });
+// Simpler: just observe the valWsPiiAlerts element via MutationObserver
+const _alertCtrEl = document.getElementById("valWsPiiAlerts");
+if (_alertCtrEl) {
+  new MutationObserver(() => syncWsPiiCountLabel()).observe(_alertCtrEl, { childList: true, characterData: true, subtree: true });
+}
+

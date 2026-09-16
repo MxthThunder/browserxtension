@@ -59,6 +59,13 @@
   "content_scripts": [
     {
       "matches": ["<all_urls>"],
+      "js": ["ws_intercept.js"],
+      "run_at": "document_start",
+      "all_frames": false,
+      "match_about_blank": false
+    },
+    {
+      "matches": ["<all_urls>"],
       "js": ["content.js"],
       "run_at": "document_idle",
       "all_frames": true,

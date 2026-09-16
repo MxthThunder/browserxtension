@@ -1,266 +1,828 @@
 {
-  "timestamp": "2026-09-09T11:43:43Z",
-  "total_test_cases": 15,
-  "total_ground_truth_pii": 32,
-  "total_true_positives": 32,
-  "total_false_positives": 1,
-  "total_false_negatives": 0,
-  "overall_precision": 96.97,
-  "overall_recall": 100.0,
-  "overall_f1": 98.46,
-  "rubric_scores": {
-    "criterion_1_visual_context_accuracy": {
-      "metric": "Visual Context Accuracy (80 COCO Classes + DOM tree)",
-      "weight": "25%",
-      "score_percent": 96.5,
-      "status": "EXCELLENT"
-    },
-    "criterion_2_sensitive_pii_recall_precision": {
-      "metric": "Sensitive / PII Detection Recall & Precision",
-      "weight": "20%",
-      "precision_percent": 96.97,
-      "recall_percent": 100.0,
-      "f1_percent": 98.46,
-      "status": "OUTSTANDING (100% Recall on passwords, cards, faces)"
-    },
-    "criterion_3_redaction_precision": {
-      "metric": "Precision of Redaction (Exact Bounding Masking)",
-      "weight": "20%",
-      "mean_iou": 0.94,
-      "zero_leakage_verified": true,
-      "status": "VERIFIED (Solid canvas blackout with zero unmasked pixels)"
-    },
-    "criterion_4_client_resource_utilization": {
-      "metric": "Client-Side Resource Utilization",
-      "weight": "20%",
-      "ram_consumption_mb": 48.5,
-      "model_size_mb": 5.9,
-      "hardware_backend": "WebGPU with WASM Fallback",
-      "status": "LIGHTWEIGHT (Runs on standard client laptop)"
-    },
-    "criterion_5_end_to_end_latency": {
-      "metric": "Overall End-to-End Task Latency",
-      "weight": "15%",
-      "latency_warm_ms": 504.8,
-      "latency_cold_ms": 2407.8,
-      "status": "FAST (~0.5s warm on WebGPU)"
-    }
-  },
-  "resource_profile": {
-    "model_weights_size_mb": 5.9,
-    "wasm_runtime_size_mb": 12.9,
-    "peak_browser_ram_mb": 48.5,
-    "cpu_usage_avg_percent": 11.2,
-    "gpu_utilization_avg_percent": 24.0,
-    "zero_memory_leakage": true
-  },
-  "latency_breakdown_ms": {
-    "dom_pii_scan": 3.8,
-    "viewport_capture": 16.4,
-    "webgpu_vision_inference_warm": 462.0,
-    "canvas_redaction_paint": 6.5,
-    "network_round_trip": 11.2,
-    "server_vlm_reasoning": 0.12,
-    "client_dom_action_execution": 4.8,
-    "total_end_to_end_latency_warm": 504.8,
-    "webgpu_vision_inference_cold": 2365.0,
-    "total_end_to_end_latency_cold": 2407.8
-  },
+  "timestamp": "2026-09-16T08:19:38.993Z",
+  "runner": "Puppeteer E2E (real Chrome + extension)",
+  "total_cases": 15,
+  "cases_passed": 12,
+  "cases_failed": 3,
+  "total_tp": 23,
+  "total_fp": 27,
+  "total_fn": 5,
+  "overall_precision_pct": 46,
+  "overall_recall_pct": 82.1,
+  "overall_f1_pct": 59,
+  "average_latency_ms": 782,
+  "peak_js_heap_mb": 2.8,
   "case_by_case": [
     {
       "id": "case_01",
-      "name": "Standard Login Screen",
+      "name": "Standard Corporate Login",
       "category": "form_pii",
-      "ground_truth_pii": 1,
-      "detected_pii": 1,
+      "ground_truth_count": 1,
+      "expected_min_detections": 1,
+      "detected_count": 2,
+      "detected_boxes": [
+        {
+          "category": "contactInfo",
+          "reason": "autocomplete=name",
+          "box": [
+            460,
+            384,
+            360,
+            38
+          ]
+        },
+        {
+          "category": "passwords",
+          "reason": "type=password",
+          "box": [
+            460,
+            464,
+            360,
+            38
+          ]
+        }
+      ],
       "tp": 1,
-      "fp": 0,
+      "fp": 1,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 50,
+      "recall": 100,
+      "f1_score": 66.7,
+      "latency_ms": 459,
+      "js_heap_mb": 2,
+      "total_memory_mb": 2,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_02",
-      "name": "E-Commerce Checkout Flow",
+      "name": "E-Commerce Checkout \u00e2\u20ac\u201d Multi-field PII",
       "category": "financial",
-      "ground_truth_pii": 4,
-      "detected_pii": 4,
-      "tp": 4,
-      "fp": 0,
+      "ground_truth_count": 9,
+      "expected_min_detections": 5,
+      "detected_count": 9,
+      "detected_boxes": [
+        {
+          "category": "names",
+          "reason": "person name field",
+          "box": [
+            377,
+            173,
+            510,
+            36
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "type=email",
+          "box": [
+            377,
+            244,
+            510,
+            36
+          ]
+        },
+        {
+          "category": "creditCards",
+          "reason": "autocomplete=cc-number",
+          "box": [
+            377,
+            415,
+            510,
+            36
+          ]
+        },
+        {
+          "category": "creditCards",
+          "reason": "autocomplete=cc-exp",
+          "box": [
+            377,
+            486,
+            249,
+            36
+          ]
+        },
+        {
+          "category": "creditCards",
+          "reason": "autocomplete=cc-csc",
+          "box": [
+            638,
+            486,
+            249,
+            36
+          ]
+        },
+        {
+          "category": "creditCards",
+          "reason": "autocomplete=cc-name",
+          "box": [
+            377,
+            558,
+            510,
+            36
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "autocomplete=street-address",
+          "box": [
+            377,
+            728,
+            510,
+            36
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "autocomplete=postal-code",
+          "box": [
+            377,
+            800,
+            249,
+            36
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "type=tel",
+          "box": [
+            638,
+            800,
+            249,
+            36
+          ]
+        }
+      ],
+      "tp": 5,
+      "fp": 4,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 55.6,
+      "recall": 100,
+      "f1_score": 71.4,
+      "latency_ms": 477,
+      "js_heap_mb": 2,
+      "total_memory_mb": 2,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_03",
-      "name": "Banking KYC Portal with Webcam Video",
-      "category": "mixed_kyc",
-      "ground_truth_pii": 6,
-      "detected_pii": 6,
-      "tp": 6,
+      "name": "PII Drawn on Canvas \u00e2\u20ac\u201d DOM Blind",
+      "category": "visual_canvas",
+      "ground_truth_count": 1,
+      "expected_min_detections": 0,
+      "detected_count": 0,
+      "detected_boxes": [],
+      "tp": 0,
       "fp": 0,
-      "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "fn": 1,
+      "precision": 0,
+      "recall": 0,
+      "f1_score": 0,
+      "latency_ms": 485,
+      "js_heap_mb": 1.9,
+      "total_memory_mb": 1.9,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_04",
-      "name": "Single Person Video Call Feed",
-      "category": "visual_face",
-      "ground_truth_pii": 1,
-      "detected_pii": 1,
+      "name": "Aadhaar Card in Base64 Image",
+      "category": "visual_image",
+      "ground_truth_count": 2,
+      "expected_min_detections": 0,
+      "detected_count": 1,
+      "detected_boxes": [
+        {
+          "category": "govIds",
+          "reason": "img: aadhaar identity card",
+          "box": [
+            400,
+            141,
+            480,
+            200
+          ]
+        }
+      ],
       "tp": 1,
       "fp": 0,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 100,
+      "recall": 100,
+      "f1_score": 100,
+      "latency_ms": 698,
+      "js_heap_mb": 2,
+      "total_memory_mb": 2,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_05",
-      "name": "Medical Patient Intake",
-      "category": "form_pii",
-      "ground_truth_pii": 3,
-      "detected_pii": 3,
-      "tp": 3,
+      "name": "Shadow DOM Password Fields",
+      "category": "shadow_dom",
+      "ground_truth_count": 2,
+      "expected_min_detections": 2,
+      "detected_count": 2,
+      "detected_boxes": [
+        {
+          "category": "passwords",
+          "reason": "shadow-dom: type=password",
+          "box": [
+            471,
+            351,
+            368,
+            43
+          ]
+        },
+        {
+          "category": "passwords",
+          "reason": "shadow-dom: type=password",
+          "box": [
+            471,
+            428,
+            368,
+            43
+          ]
+        }
+      ],
+      "tp": 2,
       "fp": 0,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 100,
+      "recall": 100,
+      "f1_score": 100,
+      "latency_ms": 445,
+      "js_heap_mb": 1.9,
+      "total_memory_mb": 1.9,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_06",
-      "name": "Tax / Income Filing Statement",
-      "category": "financial",
-      "ground_truth_pii": 4,
-      "detected_pii": 4,
-      "tp": 4,
-      "fp": 0,
+      "name": "ContentEditable Aadhaar & Phone",
+      "category": "form_pii",
+      "ground_truth_count": 2,
+      "expected_min_detections": 1,
+      "detected_count": 6,
+      "detected_boxes": [
+        {
+          "category": "govIds",
+          "reason": "label match: \"aadhaar-field XXXX  XXXX  XXXX Aadhaar n\"",
+          "box": [
+            440,
+            313,
+            400,
+            44
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "autocomplete=bday",
+          "box": [
+            440,
+            417,
+            400,
+            40
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "value matches PHONE",
+          "box": [
+            440,
+            499,
+            400,
+            44
+          ]
+        },
+        {
+          "category": "govIds",
+          "reason": "visible text: AADHAAR",
+          "box": [
+            480,
+            361,
+            77,
+            14
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "visible text: PHONE",
+          "box": [
+            480,
+            361,
+            77,
+            14
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "visible text: PHONE",
+          "box": [
+            465,
+            510,
+            143,
+            18
+          ]
+        }
+      ],
+      "tp": 1,
+      "fp": 5,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 16.7,
+      "recall": 100,
+      "f1_score": 28.6,
+      "latency_ms": 465,
+      "js_heap_mb": 2,
+      "total_memory_mb": 2,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_07",
-      "name": "Dual Interview Video Conference",
-      "category": "visual_face",
-      "ground_truth_pii": 2,
-      "detected_pii": 2,
-      "tp": 2,
-      "fp": 0,
+      "name": "Disguised Fields \u00e2\u20ac\u201d type=text with sensitive autocomplete/name",
+      "category": "form_pii",
+      "ground_truth_count": 2,
+      "expected_min_detections": 1,
+      "detected_count": 2,
+      "detected_boxes": [
+        {
+          "category": "passwords",
+          "reason": "autocomplete=one-time-code",
+          "box": [
+            460,
+            381,
+            360,
+            52
+          ]
+        },
+        {
+          "category": "passwords",
+          "reason": "label match: \"pwd backup-code Enter 8-character backup\"",
+          "box": [
+            460,
+            503,
+            360,
+            38
+          ]
+        }
+      ],
+      "tp": 1,
+      "fp": 1,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 50,
+      "recall": 100,
+      "f1_score": 66.7,
+      "latency_ms": 482,
+      "js_heap_mb": 1.8,
+      "total_memory_mb": 1.8,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_08",
-      "name": "Two-Factor Auth OTP Screen",
-      "category": "form_pii",
-      "ground_truth_pii": 1,
-      "detected_pii": 1,
+      "name": "PII in JS-Triggered Tooltips",
+      "category": "dynamic_visibility",
+      "ground_truth_count": 3,
+      "expected_min_detections": 0,
+      "detected_count": 4,
+      "detected_boxes": [
+        {
+          "category": "contactInfo",
+          "reason": "visible text: EMAIL",
+          "box": [
+            517,
+            183,
+            139,
+            18
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "visible text: PHONE (unmeasurable range \u00e2\u20ac\u201d block fallback)",
+          "box": [
+            340,
+            166,
+            600,
+            54
+          ]
+        },
+        {
+          "category": "govIds",
+          "reason": "visible text: AADHAAR (unmeasurable range \u00e2\u20ac\u201d block fallback)",
+          "box": [
+            340,
+            239,
+            600,
+            54
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "visible text: PHONE (unmeasurable range \u00e2\u20ac\u201d block fallback)",
+          "box": [
+            340,
+            239,
+            600,
+            54
+          ]
+        }
+      ],
       "tp": 1,
-      "fp": 0,
+      "fp": 3,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 25,
+      "recall": 100,
+      "f1_score": 40,
+      "latency_ms": 435,
+      "js_heap_mb": 2,
+      "total_memory_mb": 2,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_09",
-      "name": "Government Passport Renewal Form",
-      "category": "mixed_kyc",
-      "ground_truth_pii": 3,
-      "detected_pii": 3,
-      "tp": 3,
+      "name": "Partially Masked Financial Data",
+      "category": "partial_masking",
+      "ground_truth_count": 3,
+      "expected_min_detections": 1,
+      "detected_count": 0,
+      "detected_boxes": [],
+      "tp": 0,
       "fp": 0,
-      "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "fn": 1,
+      "precision": 0,
+      "recall": 0,
+      "f1_score": 0,
+      "latency_ms": 442,
+      "js_heap_mb": 1.9,
+      "total_memory_mb": 1.9,
+      "status": "REPORTED",
+      "pass": false
     },
     {
       "id": "case_10",
-      "name": "Crypto Wallet Key Recovery",
-      "category": "financial",
-      "ground_truth_pii": 2,
-      "detected_pii": 2,
-      "tp": 2,
+      "name": "Dynamically Injected PII Fields (3s delay)",
+      "category": "dynamic_injection",
+      "ground_truth_count": 5,
+      "expected_min_detections": 3,
+      "detected_count": 0,
+      "detected_boxes": [],
+      "tp": 0,
       "fp": 0,
-      "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "fn": 3,
+      "precision": 0,
+      "recall": 0,
+      "f1_score": 0,
+      "latency_ms": 5041,
+      "js_heap_mb": 1.9,
+      "total_memory_mb": 1.9,
+      "status": "REPORTED",
+      "pass": false
     },
     {
       "id": "case_11",
-      "name": "Shipping & Delivery Address",
-      "category": "form_pii",
-      "ground_truth_pii": 4,
-      "detected_pii": 5,
-      "tp": 4,
+      "name": "Product Catalog \u00e2\u20ac\u201d Zero PII (False Positive Test)",
+      "category": "negative_control",
+      "ground_truth_count": 0,
+      "expected_min_detections": 0,
+      "detected_count": 1,
+      "detected_boxes": [
+        {
+          "category": "contactInfo",
+          "reason": "label match: \"Search products, SKUs, or mission names\u00e2\u20ac\u00a6\"",
+          "box": [
+            207,
+            128,
+            809,
+            19
+          ]
+        }
+      ],
+      "tp": 0,
       "fp": 1,
       "fn": 0,
-      "precision": 80.0,
-      "recall": 100.0,
-      "f1_score": 88.9
+      "precision": 0,
+      "recall": 100,
+      "f1_score": 0,
+      "latency_ms": 499,
+      "js_heap_mb": 2,
+      "total_memory_mb": 2,
+      "status": "REPORTED",
+      "pass": false
     },
     {
       "id": "case_12",
-      "name": "Desk Workspace with Person and Cell Phone",
-      "category": "visual_face",
-      "ground_truth_pii": 1,
-      "detected_pii": 1,
-      "tp": 1,
-      "fp": 0,
+      "name": "Same-Origin Iframe Payment Widget",
+      "category": "iframe_pii",
+      "ground_truth_count": 4,
+      "expected_min_detections": 2,
+      "detected_count": 7,
+      "detected_boxes": [
+        {
+          "category": "names",
+          "reason": "person name field",
+          "box": [
+            345,
+            163,
+            590,
+            38
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "label match: \" YOUR NAME TRANSFER AMOUNT (INR) TRANSFE\"",
+          "box": [
+            345,
+            241,
+            590,
+            38
+          ]
+        },
+        {
+          "category": "creditCards",
+          "reason": "payment frame: Stripe/Payment Gateway",
+          "box": [
+            322,
+            394,
+            637,
+            260
+          ]
+        },
+        {
+          "category": "creditCards",
+          "reason": "iframe: autocomplete=cc-number",
+          "box": [
+            342,
+            434,
+            582,
+            35
+          ]
+        },
+        {
+          "category": "creditCards",
+          "reason": "iframe: autocomplete=cc-exp",
+          "box": [
+            342,
+            502,
+            286,
+            35
+          ]
+        },
+        {
+          "category": "passwords",
+          "reason": "iframe: label match: \"cvv 123  CVV CVV EXPIRY EXPIRY CVV CVV D\"",
+          "box": [
+            637,
+            502,
+            286,
+            35
+          ]
+        },
+        {
+          "category": "passwords",
+          "reason": "iframe: type=password",
+          "box": [
+            342,
+            570,
+            582,
+            35
+          ]
+        }
+      ],
+      "tp": 2,
+      "fp": 5,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 28.6,
+      "recall": 100,
+      "f1_score": 44.4,
+      "latency_ms": 471,
+      "js_heap_mb": 2.8,
+      "total_memory_mb": 2.8,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_13",
-      "name": "Public News Article (Zero PII Baseline)",
-      "category": "negative_control",
-      "ground_truth_pii": 0,
-      "detected_pii": 0,
-      "tp": 0,
-      "fp": 0,
+      "name": "PII in SVG Text Elements",
+      "category": "visual_svg",
+      "ground_truth_count": 5,
+      "expected_min_detections": 0,
+      "detected_count": 6,
+      "detected_boxes": [
+        {
+          "category": "govIds",
+          "reason": "visible text: AADHAAR",
+          "box": [
+            580,
+            237,
+            101,
+            14
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "visible text: PHONE",
+          "box": [
+            580,
+            237,
+            101,
+            14
+          ]
+        },
+        {
+          "category": "govIds",
+          "reason": "visible text: PAN",
+          "box": [
+            580,
+            263,
+            72,
+            14
+          ]
+        },
+        {
+          "category": "govIds",
+          "reason": "visible text: AADHAAR",
+          "box": [
+            580,
+            289,
+            101,
+            14
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "visible text: PHONE",
+          "box": [
+            580,
+            289,
+            101,
+            14
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "visible text: PHONE",
+          "box": [
+            587,
+            341,
+            101,
+            14
+          ]
+        }
+      ],
+      "tp": 1,
+      "fp": 5,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 16.7,
+      "recall": 100,
+      "f1_score": 28.6,
+      "latency_ms": 438,
+      "js_heap_mb": 1.9,
+      "total_memory_mb": 1.9,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_14",
-      "name": "E-Commerce Public Product Catalog",
-      "category": "negative_control",
-      "ground_truth_pii": 0,
-      "detected_pii": 0,
-      "tp": 0,
-      "fp": 0,
+      "name": "Full KYC Portal \u00e2\u20ac\u201d All PII Types",
+      "category": "mixed_kyc",
+      "ground_truth_count": 20,
+      "expected_min_detections": 8,
+      "detected_count": 10,
+      "detected_boxes": [
+        {
+          "category": "names",
+          "reason": "person name field",
+          "box": [
+            317,
+            201,
+            309,
+            35
+          ]
+        },
+        {
+          "category": "names",
+          "reason": "person name field",
+          "box": [
+            638,
+            201,
+            309,
+            35
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "autocomplete=bday",
+          "box": [
+            317,
+            269,
+            309,
+            37
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "label match: \" GENDER GENDER DATE OF BIRTH DATE OF BIR\"",
+          "box": [
+            638,
+            269,
+            309,
+            36
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "type=email",
+          "box": [
+            317,
+            339,
+            630,
+            35
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "type=tel",
+          "box": [
+            317,
+            408,
+            309,
+            35
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "type=tel",
+          "box": [
+            638,
+            408,
+            309,
+            35
+          ]
+        },
+        {
+          "category": "govIds",
+          "reason": "value matches AADHAAR",
+          "box": [
+            317,
+            582,
+            309,
+            35
+          ]
+        },
+        {
+          "category": "govIds",
+          "reason": "value matches PAN",
+          "box": [
+            638,
+            582,
+            309,
+            35
+          ]
+        },
+        {
+          "category": "passwords",
+          "reason": "label match: \"passport  IDENTITY DOCUMENTS AADHAAR NUM\"",
+          "box": [
+            317,
+            650,
+            630,
+            35
+          ]
+        }
+      ],
+      "tp": 8,
+      "fp": 2,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 80,
+      "recall": 100,
+      "f1_score": 88.9,
+      "latency_ms": 467,
+      "js_heap_mb": 2.3,
+      "total_memory_mb": 2.3,
+      "status": "REPORTED",
+      "pass": true
     },
     {
       "id": "case_15",
-      "name": "Public Documentation / Code Viewer",
+      "name": "Public News Article \u00e2\u20ac\u201d Zero PII Baseline",
       "category": "negative_control",
-      "ground_truth_pii": 0,
-      "detected_pii": 0,
+      "ground_truth_count": 0,
+      "expected_min_detections": 0,
+      "detected_count": 0,
+      "detected_boxes": [],
       "tp": 0,
       "fp": 0,
       "fn": 0,
-      "precision": 100.0,
-      "recall": 100.0,
-      "f1_score": 100.0
+      "precision": 100,
+      "recall": 100,
+      "f1_score": 100,
+      "latency_ms": 433,
+      "js_heap_mb": 1.9,
+      "total_memory_mb": 1.9,
+      "status": "REPORTED",
+      "pass": true
     }
   ]
 }

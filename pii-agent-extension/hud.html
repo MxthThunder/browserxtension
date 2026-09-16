@@ -11,7 +11,7 @@
   <link rel="stylesheet" href="hud.css" />
   <style>
     /* Telemetry panel — inherits all hud.css tokens, only layout overrides */
-    .strip { grid-template-columns: repeat(5, 1fr); }
+    .strip { grid-template-columns: repeat(6, 1fr); }
     .telem-split { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
     .telem-raw  { background: var(--surface-2); border-radius: var(--radius); padding: 10px 12px;
                   font-family: var(--font-mono); font-size: 10px; line-height: 1.55; color: var(--text-2);
@@ -46,7 +46,22 @@
     .ws-pill .ws-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; }
     .ws-pill.connected .ws-dot { animation: wsPulse 1.4s ease-in-out infinite; }
     @keyframes wsPulse { 0%,100%{opacity:1} 50%{opacity:.3} }
-    @media (max-width: 1000px) { .strip { grid-template-columns: repeat(3, 1fr); } .telem-split { grid-template-columns: 1fr; } }
+    /* WS PII Alert Feed */
+    .ws-alert-row { display:grid; grid-template-columns:54px 90px 120px 1fr 1fr; gap:6px;
+                    align-items:center; padding:3px 6px; border-radius:var(--radius);
+                    font-size:9.5px; font-family:var(--font-mono); border-bottom:1px solid var(--border); }
+    .ws-alert-row:hover { background:var(--surface-2); }
+    .ws-alert-time { color:var(--text-3); flex:none; }
+    .ws-alert-label { font-weight:700; color:var(--status-critical);
+                      background:color-mix(in srgb,var(--status-critical) 12%,transparent);
+                      padding:1px 5px; border-radius:var(--radius-full); font-size:8.5px; }
+    .ws-alert-mnemonic { color:var(--text-2); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ws-alert-raw { color:var(--status-critical); opacity:0.8; overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    .ws-alert-masked { color:var(--status-good); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+    /* stat tile turns red when WS PII is detected */
+    .stat.stat-alert .s-val { color:var(--status-critical); }
+    .stat.stat-alert .s-label { color:var(--status-critical); }
+    @media (max-width: 1200px) { .strip { grid-template-columns: repeat(3, 1fr); } .telem-split { grid-template-columns: 1fr; } }
   </style>
 </head>
 <body>
@@ -103,6 +118,11 @@
       <span class="s-val">0</span>
       <span class="s-note">raw pixels sent</span>
     </div>
+    <div class="stat" id="statWsPii">
+      <span class="s-label">WS PII alerts</span>
+      <span class="s-val" id="valWsPiiAlerts">0</span>
+      <span class="s-note">in stream data</span>
+    </div>
   </section>
 
   <!-- ── Telemetry Intercept Panel ───────────────────────────────────── -->
@@ -151,6 +171,19 @@
         <span class="muted" id="warnCount" style="color:var(--status-warn);font-family:var(--font-mono);font-size:9.5px;"></span>
       </div>
       <div id="telemChannelRows"></div>
+    </div>
+
+    <!-- ── WS PII Alert Feed ── -->
+    <div id="wsPiiAlertSection" style="margin-top:12px;">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:6px;">
+        <span class="s-label" style="font-size:9.5px;">
+          <span style="display:inline-block;width:5px;height:5px;border-radius:50%;background:var(--status-critical);margin-right:4px;vertical-align:middle;"></span>
+          PII DETECTED IN STREAM — <span id="wsPiiAlertCountLabel" style="color:var(--status-critical);font-family:var(--font-mono);">0 events</span>
+        </span>
+        <button id="btnClearWsAlerts" style="font-size:9px;padding:1px 7px;border-radius:var(--radius-full);background:var(--surface-2);border:1px solid var(--border);color:var(--text-3);cursor:pointer;">Clear</button>
+      </div>
+      <div id="wsAlertFeed" style="max-height:180px;overflow-y:auto;"></div>
+      <div id="wsAlertEmpty" style="font-size:10px;color:var(--text-3);padding:8px 0;font-family:var(--font-mono);">No PII detected in WebSocket frames yet. Waiting…</div>
     </div>
   </section>
 

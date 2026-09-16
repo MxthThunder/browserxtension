@@ -1,16 +1,16 @@
 {
-  "timestamp": "2026-09-16T08:19:38.993Z",
+  "timestamp": "2026-09-16T15:01:09.545Z",
   "runner": "Puppeteer E2E (real Chrome + extension)",
   "total_cases": 15,
-  "cases_passed": 12,
-  "cases_failed": 3,
-  "total_tp": 23,
-  "total_fp": 27,
-  "total_fn": 5,
-  "overall_precision_pct": 46,
-  "overall_recall_pct": 82.1,
-  "overall_f1_pct": 59,
-  "average_latency_ms": 782,
+  "cases_passed": 15,
+  "cases_failed": 0,
+  "total_tp": 27,
+  "total_fp": 29,
+  "total_fn": 1,
+  "overall_precision_pct": 48.2,
+  "overall_recall_pct": 96.4,
+  "overall_f1_pct": 64.3,
+  "average_latency_ms": 744,
   "peak_js_heap_mb": 2.8,
   "case_by_case": [
     {
@@ -48,7 +48,7 @@
       "precision": 50,
       "recall": 100,
       "f1_score": 66.7,
-      "latency_ms": 459,
+      "latency_ms": 438,
       "js_heap_mb": 2,
       "total_memory_mb": 2,
       "status": "REPORTED",
@@ -66,7 +66,7 @@
           "category": "names",
           "reason": "person name field",
           "box": [
-            377,
+            378,
             173,
             510,
             36
@@ -76,7 +76,7 @@
           "category": "contactInfo",
           "reason": "type=email",
           "box": [
-            377,
+            378,
             244,
             510,
             36
@@ -86,8 +86,8 @@
           "category": "creditCards",
           "reason": "autocomplete=cc-number",
           "box": [
-            377,
-            415,
+            378,
+            414,
             510,
             36
           ]
@@ -96,8 +96,8 @@
           "category": "creditCards",
           "reason": "autocomplete=cc-exp",
           "box": [
-            377,
-            486,
+            378,
+            485,
             249,
             36
           ]
@@ -106,8 +106,8 @@
           "category": "creditCards",
           "reason": "autocomplete=cc-csc",
           "box": [
-            638,
-            486,
+            639,
+            485,
             249,
             36
           ]
@@ -116,8 +116,8 @@
           "category": "creditCards",
           "reason": "autocomplete=cc-name",
           "box": [
-            377,
-            558,
+            378,
+            556,
             510,
             36
           ]
@@ -126,8 +126,8 @@
           "category": "contactInfo",
           "reason": "autocomplete=street-address",
           "box": [
-            377,
-            728,
+            378,
+            726,
             510,
             36
           ]
@@ -136,8 +136,8 @@
           "category": "contactInfo",
           "reason": "autocomplete=postal-code",
           "box": [
-            377,
-            800,
+            378,
+            797,
             249,
             36
           ]
@@ -146,8 +146,8 @@
           "category": "contactInfo",
           "reason": "type=tel",
           "box": [
-            638,
-            800,
+            639,
+            797,
             249,
             36
           ]
@@ -159,7 +159,7 @@
       "precision": 55.6,
       "recall": 100,
       "f1_score": 71.4,
-      "latency_ms": 477,
+      "latency_ms": 435,
       "js_heap_mb": 2,
       "total_memory_mb": 2,
       "status": "REPORTED",
@@ -179,7 +179,7 @@
       "precision": 0,
       "recall": 0,
       "f1_score": 0,
-      "latency_ms": 485,
+      "latency_ms": 438,
       "js_heap_mb": 1.9,
       "total_memory_mb": 1.9,
       "status": "REPORTED",
@@ -210,7 +210,7 @@
       "precision": 100,
       "recall": 100,
       "f1_score": 100,
-      "latency_ms": 698,
+      "latency_ms": 539,
       "js_heap_mb": 2,
       "total_memory_mb": 2,
       "status": "REPORTED",
@@ -251,7 +251,7 @@
       "precision": 100,
       "recall": 100,
       "f1_score": 100,
-      "latency_ms": 445,
+      "latency_ms": 438,
       "js_heap_mb": 1.9,
       "total_memory_mb": 1.9,
       "status": "REPORTED",
@@ -270,7 +270,7 @@
           "reason": "label match: \"aadhaar-field XXXX  XXXX  XXXX Aadhaar n\"",
           "box": [
             440,
-            313,
+            312,
             400,
             44
           ]
@@ -282,7 +282,7 @@
             440,
             417,
             400,
-            40
+            41
           ]
         },
         {
@@ -290,7 +290,7 @@
           "reason": "value matches PHONE",
           "box": [
             440,
-            499,
+            500,
             400,
             44
           ]
@@ -300,9 +300,9 @@
           "reason": "visible text: AADHAAR",
           "box": [
             480,
-            361,
+            360,
             77,
-            14
+            15
           ]
         },
         {
@@ -310,9 +310,9 @@
           "reason": "visible text: PHONE",
           "box": [
             480,
-            361,
+            360,
             77,
-            14
+            15
           ]
         },
         {
@@ -320,9 +320,9 @@
           "reason": "visible text: PHONE",
           "box": [
             465,
-            510,
+            511,
             143,
-            18
+            17
           ]
         }
       ],
@@ -332,7 +332,7 @@
       "precision": 16.7,
       "recall": 100,
       "f1_score": 28.6,
-      "latency_ms": 465,
+      "latency_ms": 421,
       "js_heap_mb": 2,
       "total_memory_mb": 2,
       "status": "REPORTED",
@@ -361,7 +361,7 @@
           "reason": "label match: \"pwd backup-code Enter 8-character backup\"",
           "box": [
             460,
-            503,
+            504,
             360,
             38
           ]
@@ -373,7 +373,7 @@
       "precision": 50,
       "recall": 100,
       "f1_score": 66.7,
-      "latency_ms": 482,
+      "latency_ms": 427,
       "js_heap_mb": 1.8,
       "total_memory_mb": 1.8,
       "status": "REPORTED",
@@ -392,9 +392,9 @@
           "reason": "visible text: EMAIL",
           "box": [
             517,
-            183,
+            185,
             139,
-            18
+            19
           ]
         },
         {
@@ -402,7 +402,7 @@
           "reason": "visible text: PHONE (unmeasurable range — block fallback)",
           "box": [
             340,
-            166,
+            167,
             600,
             54
           ]
@@ -412,7 +412,7 @@
           "reason": "visible text: AADHAAR (unmeasurable range — block fallback)",
           "box": [
             340,
-            239,
+            241,
             600,
             54
           ]
@@ -422,7 +422,7 @@
           "reason": "visible text: PHONE (unmeasurable range — block fallback)",
           "box": [
             340,
-            239,
+            241,
             600,
             54
           ]
@@ -434,7 +434,7 @@
       "precision": 25,
       "recall": 100,
       "f1_score": 40,
-      "latency_ms": 435,
+      "latency_ms": 424,
       "js_heap_mb": 2,
       "total_memory_mb": 2,
       "status": "REPORTED",
@@ -446,19 +446,40 @@
       "category": "partial_masking",
       "ground_truth_count": 3,
       "expected_min_detections": 1,
-      "detected_count": 0,
-      "detected_boxes": [],
-      "tp": 0,
-      "fp": 0,
-      "fn": 1,
-      "precision": 0,
-      "recall": 0,
-      "f1_score": 0,
-      "latency_ms": 442,
+      "detected_count": 2,
+      "detected_boxes": [
+        {
+          "category": "creditCards",
+          "reason": "visible text: CREDIT_CARD",
+          "box": [
+            717,
+            189,
+            160,
+            16
+          ]
+        },
+        {
+          "category": "creditCards",
+          "reason": "visible text: CREDIT_CARD",
+          "box": [
+            795,
+            407,
+            160,
+            16
+          ]
+        }
+      ],
+      "tp": 1,
+      "fp": 1,
+      "fn": 0,
+      "precision": 50,
+      "recall": 100,
+      "f1_score": 66.7,
+      "latency_ms": 423,
       "js_heap_mb": 1.9,
       "total_memory_mb": 1.9,
       "status": "REPORTED",
-      "pass": false
+      "pass": true
     },
     {
       "id": "case_10",
@@ -466,19 +487,70 @@
       "category": "dynamic_injection",
       "ground_truth_count": 5,
       "expected_min_detections": 3,
-      "detected_count": 0,
-      "detected_boxes": [],
-      "tp": 0,
-      "fp": 0,
-      "fn": 3,
-      "precision": 0,
-      "recall": 0,
-      "f1_score": 0,
-      "latency_ms": 5041,
-      "js_heap_mb": 1.9,
-      "total_memory_mb": 1.9,
+      "detected_count": 5,
+      "detected_boxes": [
+        {
+          "category": "passwords",
+          "reason": "label match: \"salary  ANNUAL INCOME (INR) PRIMARY BANK\"",
+          "box": [
+            395,
+            325,
+            490,
+            38
+          ]
+        },
+        {
+          "category": "govIds",
+          "reason": "value matches AADHAAR",
+          "box": [
+            395,
+            403,
+            490,
+            38
+          ]
+        },
+        {
+          "category": "passwords",
+          "reason": "label match: \"ifsc  ANNUAL INCOME (INR) PRIMARY BANK A\"",
+          "box": [
+            395,
+            481,
+            490,
+            38
+          ]
+        },
+        {
+          "category": "contactInfo",
+          "reason": "type=tel",
+          "box": [
+            395,
+            559,
+            490,
+            38
+          ]
+        },
+        {
+          "category": "govIds",
+          "reason": "value matches PAN",
+          "box": [
+            395,
+            637,
+            490,
+            38
+          ]
+        }
+      ],
+      "tp": 3,
+      "fp": 2,
+      "fn": 0,
+      "precision": 60,
+      "recall": 100,
+      "f1_score": 75,
+      "latency_ms": 5022,
+      "js_heap_mb": 2.2,
+      "total_memory_mb": 2.2,
       "status": "REPORTED",
-      "pass": false
+      "pass": true
     },
     {
       "id": "case_11",
@@ -486,30 +558,19 @@
       "category": "negative_control",
       "ground_truth_count": 0,
       "expected_min_detections": 0,
-      "detected_count": 1,
-      "detected_boxes": [
-        {
-          "category": "contactInfo",
-          "reason": "label match: \"Search products, SKUs, or mission names…\"",
-          "box": [
-            207,
-            128,
-            809,
-            19
-          ]
-        }
-      ],
+      "detected_count": 0,
+      "detected_boxes": [],
       "tp": 0,
-      "fp": 1,
+      "fp": 0,
       "fn": 0,
-      "precision": 0,
+      "precision": 100,
       "recall": 100,
-      "f1_score": 0,
-      "latency_ms": 499,
+      "f1_score": 100,
+      "latency_ms": 418,
       "js_heap_mb": 2,
       "total_memory_mb": 2,
       "status": "REPORTED",
-      "pass": false
+      "pass": true
     },
     {
       "id": "case_12",
@@ -544,8 +605,8 @@
           "reason": "payment frame: Stripe/Payment Gateway",
           "box": [
             322,
-            394,
-            637,
+            395,
+            636,
             260
           ]
         },
@@ -554,8 +615,8 @@
           "reason": "iframe: autocomplete=cc-number",
           "box": [
             342,
-            434,
-            582,
+            435,
+            581,
             35
           ]
         },
@@ -564,7 +625,7 @@
           "reason": "iframe: autocomplete=cc-exp",
           "box": [
             342,
-            502,
+            504,
             286,
             35
           ]
@@ -573,8 +634,8 @@
           "category": "passwords",
           "reason": "iframe: label match: \"cvv 123  CVV CVV EXPIRY EXPIRY CVV CVV D\"",
           "box": [
-            637,
-            502,
+            638,
+            504,
             286,
             35
           ]
@@ -584,8 +645,8 @@
           "reason": "iframe: type=password",
           "box": [
             342,
-            570,
-            582,
+            573,
+            581,
             35
           ]
         }
@@ -596,7 +657,7 @@
       "precision": 28.6,
       "recall": 100,
       "f1_score": 44.4,
-      "latency_ms": 471,
+      "latency_ms": 467,
       "js_heap_mb": 2.8,
       "total_memory_mb": 2.8,
       "status": "REPORTED",
@@ -677,7 +738,7 @@
       "precision": 16.7,
       "recall": 100,
       "f1_score": 28.6,
-      "latency_ms": 438,
+      "latency_ms": 427,
       "js_heap_mb": 1.9,
       "total_memory_mb": 1.9,
       "status": "REPORTED",
@@ -695,8 +756,8 @@
           "category": "names",
           "reason": "person name field",
           "box": [
-            317,
-            201,
+            318,
+            203,
             309,
             35
           ]
@@ -705,8 +766,8 @@
           "category": "names",
           "reason": "person name field",
           "box": [
-            638,
-            201,
+            639,
+            203,
             309,
             35
           ]
@@ -715,8 +776,8 @@
           "category": "contactInfo",
           "reason": "autocomplete=bday",
           "box": [
-            317,
-            269,
+            318,
+            272,
             309,
             37
           ]
@@ -725,18 +786,18 @@
           "category": "contactInfo",
           "reason": "label match: \" GENDER GENDER DATE OF BIRTH DATE OF BIR\"",
           "box": [
-            638,
-            269,
+            639,
+            272,
             309,
-            36
+            37
           ]
         },
         {
           "category": "contactInfo",
           "reason": "type=email",
           "box": [
-            317,
-            339,
+            318,
+            343,
             630,
             35
           ]
@@ -745,8 +806,8 @@
           "category": "contactInfo",
           "reason": "type=tel",
           "box": [
-            317,
-            408,
+            318,
+            412,
             309,
             35
           ]
@@ -755,8 +816,8 @@
           "category": "contactInfo",
           "reason": "type=tel",
           "box": [
-            638,
-            408,
+            639,
+            412,
             309,
             35
           ]
@@ -765,8 +826,8 @@
           "category": "govIds",
           "reason": "value matches AADHAAR",
           "box": [
-            317,
-            582,
+            318,
+            588,
             309,
             35
           ]
@@ -775,8 +836,8 @@
           "category": "govIds",
           "reason": "value matches PAN",
           "box": [
-            638,
-            582,
+            639,
+            588,
             309,
             35
           ]
@@ -785,8 +846,8 @@
           "category": "passwords",
           "reason": "label match: \"passport  IDENTITY DOCUMENTS AADHAAR NUM\"",
           "box": [
-            317,
-            650,
+            318,
+            657,
             630,
             35
           ]
@@ -798,7 +859,7 @@
       "precision": 80,
       "recall": 100,
       "f1_score": 88.9,
-      "latency_ms": 467,
+      "latency_ms": 430,
       "js_heap_mb": 2.3,
       "total_memory_mb": 2.3,
       "status": "REPORTED",
@@ -818,7 +879,7 @@
       "precision": 100,
       "recall": 100,
       "f1_score": 100,
-      "latency_ms": 433,
+      "latency_ms": 419,
       "js_heap_mb": 1.9,
       "total_memory_mb": 1.9,
       "status": "REPORTED",
